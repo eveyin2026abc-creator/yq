@@ -1,10 +1,23 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
 # Package ######################################################################
 
 [project]
 name = "liuren_modeling"
+version = "0.1.0"
 description = "Light-weight full-system simulation framework"
 readme = "README.md"
 requires-python = ">=3.9"
+
+[project.scripts]
+msmodeling-completion = "cli.completion:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cli*", "serving_cast*", "tensor_cast*"]
+namespaces = true
 
 # Linter tools #################################################################
 

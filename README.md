@@ -54,6 +54,28 @@ Alternatively, if you already have a python environment which does not contain `
 pip install -r requirements.txt
 ```
 
+To enable low-latency Tab completion for the Python module entry points after
+`pip install .`, run one setup command:
+
+```bash
+msmodeling-completion install
+```
+
+The installed completion is static shell code, so pressing Tab does not start
+Python or import heavyweight runtime dependencies. It covers
+`python3 -m cli.inference.<Tab>` module-name completion and long options for
+`cli.inference.text_generate`, `cli.inference.video_generate`,
+`cli.inference.throughput_optimizer`, and `serving_cast.main`/`serving_cast/main.py`.
+For zsh, use `msmodeling-completion install --shell zsh`.
+
+This project uses static bash/zsh completion instead of `argcomplete` because
+the CLI modules import PyTorch, transformers, and simulator runtime code before
+argument parsing. Re-entering those imports on every Tab press would make
+completion noticeably slower and would still not solve `python3 -m
+cli.inference.<Tab>` module-path completion by itself. The trade-off is that
+long-option lists live in `cli/completion.py`; re-run `msmodeling-completion
+install` after changing those lists.
+
 **Supported Python versions:** 3.10+
 
 > [!Warning]
