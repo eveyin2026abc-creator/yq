@@ -333,11 +333,31 @@ def _detect_shell() -> str:
             return "powershell"
     except OSError:
         pass
-    shell = Path(os.environ.get("SHELL", "")).name
-    if shell in {"bash", "zsh"}:
-        return shell
+
+    shell_path = Path(os.environ.get("SHELL", ""))
+    shell_name = shell_path.name.lower() if shell_path.name else ""
+
+    # Git Bash / MSYS2 / Cygwin still run on Windows, but `$SHELL` points at bash/zsh.
+    if shell_name in {"bash", "zsh"}:
+        return shell_name
+
+    powershell_signals = ("PSModulePath", "POWERSHELL_DISTRIBUTION_CHANNEL")
+
+    msys_signals = ("MSYSTEM", "MINGW_PREFIX", "CHERE_INVOKING")
+
+    # Prefer bash/zsh on MSYS/Git Bash shells even inside Windows Terminal.
+    if (
+        shell_name != "bash"
+        and os.name == "nt"
+        and not any(os.environ.get(k) for k in msys_signals)
+        and any(os.environ.get(k) for k in powershell_signals)
+    ):
+        return "powershell"
+
     if os.environ.get("PSModulePath"):
         return "powershell"
+
+    # Last resort fallback.
     return "bash"
 
 
