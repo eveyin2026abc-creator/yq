@@ -6,11 +6,11 @@ deliberately shell-local:
 
     . <(msmodeling-tab)
 
-For PowerShell:
+For PowerShell (explicit print, avoids argparse dropping a top-level --shell):
 
-    msmodeling-tab --shell powershell | iex
+    msmodeling-tab print --shell powershell | iex
 
-That one-liner sources the generated script into the current shell without
+That one-liner evaluates the generated script in the current shell without
 editing ``~/.bashrc``, ``~/.zshrc``, or any other user shell startup file.
 """
 
@@ -408,8 +408,8 @@ def _install(args: argparse.Namespace) -> int:
     print()
     print("To activate completion in the current shell without touching $HOME:")
     print("  bash/zsh:    . <(msmodeling-tab)")
-    print("  PowerShell:  msmodeling-tab --shell powershell | iex")
-    print("  (or)         python -m cli.completion --shell powershell | iex")
+    print("  PowerShell:  msmodeling-tab print --shell powershell | iex")
+    print("  (or)         python -m cli.completion print --shell powershell | iex")
     return 0
 
 
@@ -475,12 +475,6 @@ def build_parser() -> argparse.ArgumentParser:
             "points. Default behavior never modifies $HOME."
         ),
     )
-    parser.add_argument(
-        "--shell",
-        choices=("auto", "bash", "zsh", "powershell"),
-        default="auto",
-        help="target shell for default output; auto detects the current shell",
-    )
     subparsers = parser.add_subparsers(dest="command")
 
     install_parser = subparsers.add_parser(
@@ -526,6 +520,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     if not getattr(args, "func", None):
+        args.shell = "auto"
         return _print(args)
     return args.func(args)
 
