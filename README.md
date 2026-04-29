@@ -54,27 +54,66 @@ Alternatively, if you already have a python environment which does not contain `
 pip install -r requirements.txt
 ```
 
-To enable low-latency Tab completion for the Python module entry points after
-`pip install .`, run one setup command:
+### Tab completion (does not modify any $HOME shell config)
+
+After installing the package from this project directory:
 
 ```bash
-msmodeling-completion install
+cd /home/yinqian/msmodeling/msmodeling && pip install .
 ```
 
-The installed completion is static shell code, so pressing Tab does not start
-Python or import heavyweight runtime dependencies. It covers
-`python3 -m cli.inference.<Tab>` module-name completion and long options for
-`cli.inference.text_generate`, `cli.inference.video_generate`,
-`cli.inference.throughput_optimizer`, and `serving_cast.main`/`serving_cast/main.py`.
-For zsh, use `msmodeling-completion install --shell zsh`.
+or equivalently:
+
+```bash
+cd /home/yinqian/msmodeling/msmodeling && uv pip install .
+```
+
+enable Tab completion in the current bash/zsh shell with the officially
+recommended one-liner:
+
+```bash
+. <(msmodeling-tab)
+```
+
+Verification, after running the line above in the same shell:
+
+* `python3 -m cli.inference.te<Tab>` completes module names.
+* `python -m cli.inference.text_generate --de<Tab>` completes long options.
+* `python serving_cast/main.py --in<Tab>` completes long options.
+* `python cli/inference/throughput_optimizer.py --tp<Tab>` completes long options.
+
+The completion payload is static shell code, so pressing Tab does not start
+Python and does not import PyTorch, transformers, or simulator runtime code.
+It covers `python3 -m cli.inference.<Tab>` module-name completion and long
+options for `cli.inference.text_generate`, `cli.inference.video_generate`,
+`cli.inference.throughput_optimizer`, and `serving_cast.main` /
+`serving_cast/main.py`.
+
+`pip install .` alone cannot make an already-open `python` / `python3` command
+gain completion without some shell-side loading step: pip runs in a child
+process, while completion functions live in the current parent shell's memory.
+Only the shell itself can register `complete` / `compdef` state, either by
+reading startup files or by the user sourcing/evaluating a script in that
+shell. This project uses the explicit one-liner above and never writes to
+`~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshrc`, `~/.zprofile`, fish
+config, or any other shell startup file.
+
+Optional: if you want rendered scripts on disk for external shell tooling, run
+`msmodeling-completion install`. It writes only under the Python install prefix,
+for example `<prefix>/share/bash-completion/completions/` and
+`<prefix>/share/zsh/site-functions/`. It does not edit `$HOME` shell config.
+Older versions of `msmodeling-completion install` appended a marked block to
+`~/.bashrc` / `~/.zshrc`; use `msmodeling-completion cleanup-legacy --dry-run`
+to preview removal, then `msmodeling-completion cleanup-legacy` to remove that
+legacy block and data directory.
 
 This project uses static bash/zsh completion instead of `argcomplete` because
 the CLI modules import PyTorch, transformers, and simulator runtime code before
 argument parsing. Re-entering those imports on every Tab press would make
-completion noticeably slower and would still not solve `python3 -m
-cli.inference.<Tab>` module-path completion by itself. The trade-off is that
-long-option lists live in `cli/completion.py`; re-run `msmodeling-completion
-install` after changing those lists.
+completion noticeably slower and would still not solve
+`python3 -m cli.inference.<Tab>` module-path completion by itself. The trade-off
+is that long-option lists live in `cli/completion.py`; re-run
+`. <(msmodeling-tab)` after upgrading or changing those lists.
 
 **Supported Python versions:** 3.10+
 

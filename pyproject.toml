@@ -13,6 +13,7 @@ requires-python = ">=3.9"
 
 [project.scripts]
 msmodeling-completion = "cli.completion:main"
+msmodeling-tab = "cli.completion:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
