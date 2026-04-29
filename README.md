@@ -68,11 +68,19 @@ or equivalently:
 cd /home/yinqian/msmodeling/msmodeling && uv pip install .
 ```
 
-enable Tab completion in the current bash/zsh shell with the officially
-recommended one-liner:
+enable Tab completion in the current shell with the officially recommended
+one-liner.
+
+Bash/zsh:
 
 ```bash
 . <(msmodeling-tab)
+```
+
+PowerShell:
+
+```powershell
+msmodeling-tab --shell powershell | iex
 ```
 
 Verification, after running the line above in the same shell:
@@ -82,38 +90,41 @@ Verification, after running the line above in the same shell:
 * `python serving_cast/main.py --in<Tab>` completes long options.
 * `python cli/inference/throughput_optimizer.py --tp<Tab>` completes long options.
 
-The completion payload is static shell code, so pressing Tab does not start
-Python and does not import PyTorch, transformers, or simulator runtime code.
-It covers `python3 -m cli.inference.<Tab>` module-name completion and long
-options for `cli.inference.text_generate`, `cli.inference.video_generate`,
-`cli.inference.throughput_optimizer`, and `serving_cast.main` /
-`serving_cast/main.py`.
+The completion payload is static shell code for bash, zsh, and PowerShell, so
+pressing Tab does not start Python and does not import PyTorch, transformers,
+or simulator runtime code. It covers `python3 -m cli.inference.<Tab>`
+module-name completion and long options for `cli.inference.text_generate`,
+`cli.inference.video_generate`, `cli.inference.throughput_optimizer`, and
+`serving_cast.main` / `serving_cast/main.py`.
 
 `pip install .` alone cannot make an already-open `python` / `python3` command
 gain completion without some shell-side loading step: pip runs in a child
 process, while completion functions live in the current parent shell's memory.
-Only the shell itself can register `complete` / `compdef` state, either by
-reading startup files or by the user sourcing/evaluating a script in that
-shell. This project uses the explicit one-liner above and never writes to
-`~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshrc`, `~/.zprofile`, fish
-config, or any other shell startup file.
+Only the shell itself can register completion state (`complete`, `compdef`, or
+PowerShell `Register-ArgumentCompleter`), either by reading startup files or by
+the user sourcing/evaluating a script in that shell. This project uses the
+explicit one-liners above and never writes to `~/.bashrc`, `~/.bash_profile`,
+`~/.profile`, `~/.zshrc`, `~/.zprofile`, PowerShell profiles, fish config, or
+any other shell startup file.
 
 Optional: if you want rendered scripts on disk for external shell tooling, run
 `msmodeling-completion install`. It writes only under the Python install prefix,
 for example `<prefix>/share/bash-completion/completions/` and
-`<prefix>/share/zsh/site-functions/`. It does not edit `$HOME` shell config.
+`<prefix>/share/zsh/site-functions/`, plus a PowerShell script under
+`<prefix>/share/powershell/Completions/`. It does not edit `$HOME` shell config.
 Older versions of `msmodeling-completion install` appended a marked block to
 `~/.bashrc` / `~/.zshrc`; use `msmodeling-completion cleanup-legacy --dry-run`
 to preview removal, then `msmodeling-completion cleanup-legacy` to remove that
 legacy block and data directory.
 
-This project uses static bash/zsh completion instead of `argcomplete` because
-the CLI modules import PyTorch, transformers, and simulator runtime code before
+This project uses static shell completion instead of `argcomplete` because the
+CLI modules import PyTorch, transformers, and simulator runtime code before
 argument parsing. Re-entering those imports on every Tab press would make
 completion noticeably slower and would still not solve
 `python3 -m cli.inference.<Tab>` module-path completion by itself. The trade-off
 is that long-option lists live in `cli/completion.py`; re-run
-`. <(msmodeling-tab)` after upgrading or changing those lists.
+`. <(msmodeling-tab)` in bash/zsh or `msmodeling-tab --shell powershell | iex`
+in PowerShell after upgrading or changing those lists.
 
 **Supported Python versions:** 3.10+
 
