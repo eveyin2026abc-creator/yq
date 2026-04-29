@@ -248,10 +248,10 @@ def render_powershell_completion() -> str:
 
 $script:MsmodelingModules = {_ps_array(MODULES)}
 $script:MsmodelingOptions = @{{
-    text_generate = {_ps_array(OPTIONS["text_generate"])}
-    video_generate = {_ps_array(OPTIONS["video_generate"])}
-    throughput_optimizer = {_ps_array(OPTIONS["throughput_optimizer"])}
-    serving_cast_main = {_ps_array(OPTIONS["serving_cast_main"])}
+    'text_generate' = {_ps_array(OPTIONS["text_generate"])}
+    'video_generate' = {_ps_array(OPTIONS["video_generate"])}
+    'throughput_optimizer' = {_ps_array(OPTIONS["throughput_optimizer"])}
+    'serving_cast_main' = {_ps_array(OPTIONS["serving_cast_main"])}
 }}
 
 function Get-MsmodelingCompletionTarget {{
@@ -389,6 +389,7 @@ def _install(args: argparse.Namespace) -> int:
     print("To activate completion in the current shell without touching $HOME:")
     print("  bash/zsh:    . <(msmodeling-tab)")
     print("  PowerShell:  msmodeling-tab --shell powershell | iex")
+    print("  (or)         python -m cli.completion --shell powershell | iex")
     return 0
 
 

@@ -80,7 +80,14 @@ Bash/zsh:
 PowerShell:
 
 ```powershell
+msmodeling-tab | iex
+```
+
+If this fails (empty output / parse error), use the explicit renderer or the module entry point:
+
+```powershell
 msmodeling-tab --shell powershell | iex
+python -m cli.completion --shell powershell | iex
 ```
 
 Verification, after running the line above in the same shell:
@@ -123,8 +130,9 @@ argument parsing. Re-entering those imports on every Tab press would make
 completion noticeably slower and would still not solve
 `python3 -m cli.inference.<Tab>` module-path completion by itself. The trade-off
 is that long-option lists live in `cli/completion.py`; re-run
-`. <(msmodeling-tab)` in bash/zsh or `msmodeling-tab --shell powershell | iex`
-in PowerShell after upgrading or changing those lists.
+`. <(msmodeling-tab)` in bash/zsh or `msmodeling-tab | iex` (or
+`msmodeling-tab --shell powershell | iex` / `python -m cli.completion --shell powershell | iex`
+if needed) in PowerShell after upgrading or changing those lists.
 
 **Supported Python versions:** 3.10+
 
