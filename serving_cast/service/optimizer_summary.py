@@ -13,12 +13,41 @@
 # limitations under the License.
 
 import logging
+from typing import Optional
 
 import pandas as pd
 from prettytable import PrettyTable
 
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_disagg_request_qps(
+    row: pd.Series, output_length: Optional[int]
+) -> Optional[float]:
+    """Per-phase request QPS for disaggregation summary rows.
+
+    Same formulas as ``pd_ratio_throughput_optimizer``: prefill uses
+    ``concurrency / ttft * 1000``, decode uses
+    ``concurrency / (tpot * output_length) * 1000``. Rows with both TTFT and
+    TPOT valid (aggregation-style) return ``None``.
+    """
+    conc = pd.to_numeric(row.get("concurrency"), errors="coerce")
+    if conc is None or pd.isna(conc) or float(conc) <= 0:
+        return None
+    conc_f = float(conc)
+    ttft = pd.to_numeric(row.get("ttft"), errors="coerce")
+    tpot = pd.to_numeric(row.get("tpot"), errors="coerce")
+    ttft_ok = not pd.isna(ttft) and float(ttft) > 0
+    tpot_ok = not pd.isna(tpot) and float(tpot) > 0
+
+    if ttft_ok and not tpot_ok:
+        return conc_f / float(ttft) * 1000.0
+    if tpot_ok and not ttft_ok:
+        if output_length is None or int(output_length) <= 0:
+            return None
+        return conc_f / (float(tpot) * float(output_length)) * 1000.0
+    return None
 
 
 TTFT_COLUMN = "TTFT (ms)"
@@ -69,7 +98,9 @@ class OptimizerSummary:
             and self.data_config.decode_devices_per_instance is not None
         )
 
-    def report_final_result(self, args):
+    def report_final_result(self, args, silent: bool = False):
+        if silent:
+            return
         if self._summary_df is None or self._summary_df.empty:
             logger.warning("Summary DataFrame is None. Please set it first.")
             return
@@ -146,7 +177,7 @@ class OptimizerSummary:
         final_out.append("  " + "-" * 76)
 
         table_buf = (
-            _get_disagg_table_buf(sorted_summary_df)
+            _get_disagg_table_buf(sorted_summary_df, self.data_config.output_length)
             if args.disagg
             else _get_agg_table_buf(sorted_summary_df)
         )
@@ -154,6 +185,102 @@ class OptimizerSummary:
         final_out.append("*" * 80)
 
         return final_out
+
+    def collect_comparison_row(self, device_label: str) -> Optional[dict]:
+        """Pick the best aggregation/disaggregation row for cross-hardware comparison."""
+        if self._summary_df is None or self._summary_df.empty:
+            return None
+        if self._is_pd_ratio_mode():
+            return None
+        filtered = self._prepare_agg_disagg_results()
+        if filtered.empty:
+            return None
+        return self._row_dict_from_filtered_best(device_label, filtered.iloc[0])
+
+    def collect_disagg_prefill_row(self, device_label: str) -> Optional[dict]:
+        """Best Prefill row from a disaggregation Prefill-phase summary (cross-hardware)."""
+        if self._summary_df is None or self._summary_df.empty:
+            return None
+        if self._is_pd_ratio_mode():
+            return None
+        if self.data_config.ttft_limits is None or self.data_config.tpot_limits is not None:
+            return None
+        filtered = self._prepare_agg_disagg_results()
+        if filtered.empty:
+            return None
+        return self._row_dict_from_filtered_best(device_label, filtered.iloc[0])
+
+    def collect_disagg_decode_row(self, device_label: str) -> Optional[dict]:
+        """Best Decode row from a disaggregation Decode-phase summary (cross-hardware)."""
+        if self._summary_df is None or self._summary_df.empty:
+            return None
+        if self._is_pd_ratio_mode():
+            return None
+        if self.data_config.tpot_limits is None or self.data_config.ttft_limits is not None:
+            return None
+        filtered = self._prepare_agg_disagg_results()
+        if filtered.empty:
+            return None
+        return self._row_dict_from_filtered_best(device_label, filtered.iloc[0])
+
+    def collect_pd_ratio_comparison_row(self, device_label: str) -> Optional[dict]:
+        """Pick the best PD-ratio row (max ``balanced_qps`` after filtering) for cross-hardware."""
+        if self._summary_df is None or self._summary_df.empty:
+            return None
+        if not self._is_pd_ratio_mode():
+            return None
+        filtered = self._prepare_pd_ratio_results()
+        if filtered.empty:
+            return None
+        r = filtered.iloc[0]
+        p_inst = None
+        d_inst = None
+        nd = self.data_config.num_devices
+        if nd is not None:
+            p_calc, d_calc = self._calculate_instance_distribution(
+                float(r["pd_ratio"]),
+                int(nd),
+                int(r["num_devices_p"]),
+                int(r["num_devices_d"]),
+            )
+            if p_calc > 0 and d_calc > 0:
+                p_inst, d_inst = p_calc, d_calc
+
+        return {
+            "device": device_label,
+            "balanced_qps": float(r["balanced_qps"]),
+            "pd_ratio": float(r["pd_ratio"]),
+            "p_qps": float(r["p_qps"]),
+            "d_qps": float(r["d_qps"]),
+            "ttft_p": float(r["ttft_p"]),
+            "tpot_d": float(r["tpot_d"]),
+            "parallel_p": r["parallel_p"],
+            "parallel_d": r["parallel_d"],
+            "p_instances": p_inst,
+            "d_instances": d_inst,
+            "total_devices": int(nd) if nd is not None else None,
+        }
+
+    def _row_dict_from_filtered_best(self, device_label: str, r: pd.Series) -> dict:
+        def _fnum(key: str):
+            v = r.get(key)
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return None
+            return float(v)
+
+        return {
+            "device": device_label,
+            "throughput_tps": float(r["token/s"]),
+            "ttft_ms": _fnum("ttft"),
+            "tpot_ms": _fnum("tpot"),
+            "concurrency": r["concurrency"],
+            "num_devices": r["num_devices"],
+            "parallel": r["parallel"],
+            "batch_size": r["batch_size"],
+            "qps_req_s": _compute_disagg_request_qps(
+                r, getattr(self.data_config, "output_length", None)
+            ),
+        }
 
     def _prepare_pd_ratio_results(self):
         """Prepare and filter results for PD ratio mode.
@@ -348,26 +475,33 @@ def _get_agg_table_buf(df: pd.DataFrame):
     return "\n".join(table_buf)
 
 
-def _get_disagg_table_buf(df: pd.DataFrame):
-    is_decode = df.get("ttft").loc[0] is None
-    local_column = SHOW_COLUMNS.copy()
+def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None):
+    ttft0 = df.iloc[0]["ttft"] if len(df) and "ttft" in df.columns else None
+    is_decode = ttft0 is None or pd.isna(ttft0)
     show_len = len(df)
     table_buf = []
     table = PrettyTable()
     if is_decode:
         table_buf.append(f"Top {show_len} Disaggregation (Decode) Configurations: ")
+        local_column = SHOW_COLUMNS.copy()
+        local_column.insert(2, "QPS (req/s)")
         local_column.remove(TTFT_COLUMN)
     else:
         table_buf.append(f"Top {show_len} Disaggregation (Prefill) Configurations: ")
+        local_column = SHOW_COLUMNS.copy()
+        local_column.insert(2, "QPS (req/s)")
         local_column.remove(TPOT_COLUMN)
 
     table.field_names = local_column
     for i in range(show_len):
         row = df.loc[i]
+        qps = _compute_disagg_request_qps(row, output_length)
+        qps_cell = f"{qps:.2f}" if qps is not None else "-"
         table.add_row(
             [
                 i + 1,
                 f"\033[1m{row['token/s']:.2f}\033[0m",
+                qps_cell,
                 f"{row['tpot']:.2f}" if is_decode else f"{row['ttft']:.2f}",
                 row["concurrency"],
                 row["num_devices"],
@@ -397,6 +531,7 @@ def _get_pd_ratio_table_buf(df: pd.DataFrame):
     table.field_names = [
         "Top",
         "PD Ratio",
+        "Balanced QPS (req/s)",
         "P QPS (req/s)",
         "D QPS (req/s)",
         "TTFT (ms)",
@@ -416,6 +551,7 @@ def _get_pd_ratio_table_buf(df: pd.DataFrame):
         row_data = [
             i + 1,
             f"{row['pd_ratio']:.2f}",
+            f"{row['balanced_qps']:.2f}",
             f"{row['p_qps']:.2f}",
             f"{row['d_qps']:.2f}",
             f"{row['ttft_p']:.2f}",
@@ -433,3 +569,286 @@ def _get_pd_ratio_table_buf(df: pd.DataFrame):
 
     table_buf.append(table.get_string())
     return "\n".join(table_buf)
+
+
+def render_cross_device_comparison(rows: list[dict]) -> str:
+    """Pretty-print a ranked table of best configs across hardware profiles."""
+    if not rows:
+        return ""
+    sorted_rows = sorted(
+        rows, key=lambda x: x.get("throughput_tps", 0.0), reverse=True
+    )
+    lines = [
+        "",
+        "*" * 100,
+        "  Cross-hardware comparison (best throughput config per device under TTFT/TPOT limits)",
+        "  " + "-" * 96,
+    ]
+    table = PrettyTable()
+    table.field_names = [
+        "Rank",
+        "Device",
+        "Throughput (token/s)",
+        "TTFT (ms)",
+        "TPOT (ms)",
+        "Concurrency",
+        "Parallel",
+        "Batch",
+        "num_devices",
+    ]
+    for i, row in enumerate(sorted_rows):
+        ttft = row.get("ttft_ms")
+        tpot = row.get("tpot_ms")
+        table.add_row(
+            [
+                i + 1,
+                row.get("device", ""),
+                f"{row['throughput_tps']:.2f}",
+                f"{ttft:.2f}" if ttft is not None else "-",
+                f"{tpot:.2f}" if tpot is not None else "-",
+                row.get("concurrency", ""),
+                row.get("parallel", ""),
+                row.get("batch_size", ""),
+                row.get("num_devices", ""),
+            ]
+        )
+    lines.append(table.get_string())
+    lines.append("*" * 100)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_cross_hardware_pd_ratio(rows: list[dict]) -> str:
+    """Cross-device PD ratio: one row per hardware (best balanced QPS after PD filtering)."""
+    if not rows:
+        return ""
+    sorted_rows = sorted(
+        rows, key=lambda x: x.get("balanced_qps", 0.0), reverse=True
+    )
+    banner_w = 120
+    lines = [
+        "",
+        "*" * banner_w,
+        "  Cross-hardware — PD ratio (best balanced QPS per device under TTFT/TPOT limits)",
+        "  " + "-" * (banner_w - 4),
+    ]
+    table = PrettyTable()
+    table.field_names = [
+        "Rank",
+        "Device",
+        "Balanced QPS (req/s)",
+        "PD Ratio (P:D inst)",
+        "P QPS (req/s)",
+        "D QPS (req/s)",
+        "TTFT (ms)",
+        "TPOT (ms)",
+        "P inst",
+        "D inst",
+    ]
+    for i, row in enumerate(sorted_rows):
+        p_inst = row.get("p_instances")
+        d_inst = row.get("d_instances")
+        table.add_row(
+            [
+                i + 1,
+                row.get("device", ""),
+                f"{row['balanced_qps']:.2f}",
+                f"{row['pd_ratio']:.2f}",
+                f"{row['p_qps']:.2f}",
+                f"{row['d_qps']:.2f}",
+                f"{row['ttft_p']:.2f}",
+                f"{row['tpot_d']:.2f}",
+                str(p_inst) if p_inst is not None else "-",
+                str(d_inst) if d_inst is not None else "-",
+            ]
+        )
+    lines.append(table.get_string())
+    if any(r.get("p_instances") is not None for r in sorted_rows):
+        td = sorted_rows[0].get("total_devices")
+        if td is not None:
+            lines.append(
+                "  P/D instance counts: heuristic integer split under "
+                f"--num-devices={td} (same rule as per-device Overall Best)."
+            )
+    lines.append("*" * banner_w)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_cross_hardware_disagg_prefill(rows: list[dict]) -> str:
+    """Cross-device table for disaggregation Prefill phase (TTFT-constrained)."""
+    if not rows:
+        return ""
+    sorted_rows = sorted(
+        rows, key=lambda x: x.get("throughput_tps", 0.0), reverse=True
+    )
+    lines = [
+        "",
+        "*" * 108,
+        "  Cross-hardware — Disaggregated Prefill (best token/s per device under TTFT limits)",
+        "  " + "-" * 104,
+    ]
+    table = PrettyTable()
+    table.field_names = [
+        "Rank",
+        "Device",
+        "Prefill throughput (token/s)",
+        "QPS (req/s)",
+        "TTFT (ms)",
+        "TPOT (ms)",
+        "Concurrency",
+        "Parallel",
+        "Batch",
+        "num_devices",
+    ]
+    for i, row in enumerate(sorted_rows):
+        ttft = row.get("ttft_ms")
+        qps = row.get("qps_req_s")
+        qps_str = f"{qps:.2f}" if qps is not None else "-"
+        table.add_row(
+            [
+                i + 1,
+                row.get("device", ""),
+                f"{row['throughput_tps']:.2f}",
+                qps_str,
+                f"{ttft:.2f}" if ttft is not None else "-",
+                "-",
+                row.get("concurrency", ""),
+                row.get("parallel", ""),
+                row.get("batch_size", ""),
+                row.get("num_devices", ""),
+            ]
+        )
+    lines.append(table.get_string())
+    lines.append("*" * 108)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
+    """Cross-device table for disaggregation Decode phase (TPOT-constrained)."""
+    if not rows:
+        return ""
+    sorted_rows = sorted(
+        rows, key=lambda x: x.get("throughput_tps", 0.0), reverse=True
+    )
+    lines = [
+        "",
+        "*" * 108,
+        "  Cross-hardware — Disaggregated Decode (best token/s per device under TPOT limits)",
+        "  " + "-" * 104,
+    ]
+    table = PrettyTable()
+    table.field_names = [
+        "Rank",
+        "Device",
+        "Decode throughput (token/s)",
+        "QPS (req/s)",
+        "TTFT (ms)",
+        "TPOT (ms)",
+        "Concurrency",
+        "Parallel",
+        "Batch",
+        "num_devices",
+    ]
+    for i, row in enumerate(sorted_rows):
+        tpot = row.get("tpot_ms")
+        qps = row.get("qps_req_s")
+        qps_str = f"{qps:.2f}" if qps is not None else "-"
+        table.add_row(
+            [
+                i + 1,
+                row.get("device", ""),
+                f"{row['throughput_tps']:.2f}",
+                qps_str,
+                "-",
+                f"{tpot:.2f}" if tpot is not None else "-",
+                row.get("concurrency", ""),
+                row.get("parallel", ""),
+                row.get("batch_size", ""),
+                row.get("num_devices", ""),
+            ]
+        )
+    lines.append(table.get_string())
+    lines.append("*" * 108)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_hardware_profile_comparison(device_names: list[str]) -> str:
+    """Pretty-print core modeling parameters for multiple ``--device`` profiles.
+
+    Compact table: effective BF16 GEMM, effective memory bandwidth, device
+    memory, and logical comm-grid shape (no vendor / per-efficiency columns).
+    """
+    if not device_names:
+        return ""
+    try:
+        import torch
+
+        from tensor_cast import device_profiles  # noqa: F401 - register profiles
+        from tensor_cast.device import DeviceProfile
+    except ImportError as exc:
+        logger.warning("Hardware profile comparison skipped: %s", exc)
+        return ""
+
+    ordered = list(dict.fromkeys(device_names))
+    banner_w = 108
+    lines = [
+        "",
+        "*" * banner_w,
+        "  Cross-hardware — device profile summary (hardware abstraction vs. "
+        "performance merge tables)",
+        "  设备建模参数对比（等效稠密算力 / 等效内存带宽等）",
+        "  " + "-" * (banner_w - 4),
+    ]
+    table = PrettyTable()
+    table.field_names = [
+        "设备",
+        "等效算力@BF16 (TFLOPS)",
+        "等效内存带宽 (TB/s)",
+        "设备内存 (GB)",
+        "通信网格 shape",
+    ]
+
+    def _effective_gemm_tflops(profile: DeviceProfile) -> Optional[float]:
+        peak = profile.mma_ops.get(torch.bfloat16)
+        if peak is None:
+            peak = profile.mma_ops.get(torch.half)
+        if peak is None and profile.mma_ops:
+            peak = max(profile.mma_ops.values())
+        if peak is None:
+            return None
+        return (peak / 1e12) * profile.compute_efficiency
+
+    def _shape_str(profile: DeviceProfile) -> str:
+        g = profile.comm_grid.grid
+        return "×".join(str(int(x)) for x in g.shape)
+
+    for name in ordered:
+        prof = DeviceProfile.all_device_profiles.get(name)
+        if prof is None:
+            table.add_row([name, "-", "-", "-", "-"])
+            continue
+        gemm = _effective_gemm_tflops(prof)
+        nom_bw_TBs = prof.memory_bandwidth_bytes_ps / (1024**4)
+        eff_bw_TBs = nom_bw_TBs * prof.memory_efficiency
+        mem_gb = prof.memory_size_bytes / (1024**3)
+        table.add_row(
+            [
+                prof.name,
+                f"{gemm:.2f}" if gemm is not None else "-",
+                f"{eff_bw_TBs:.3f}",
+                f"{mem_gb:.1f}",
+                _shape_str(prof),
+            ]
+        )
+
+    lines.append(table.get_string())
+    lines.append(
+        "  等效稠密算力：标称 BF16 dense GEMM 峰值 × 计算效率（无 BF16 时用 FP16）；"
+        "等效内存带宽：标称 HBM 字节带宽 × 内存效率。"
+    )
+    lines.append("*" * banner_w)
+    lines.append("")
+    return "\n".join(lines)

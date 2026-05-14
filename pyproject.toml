@@ -2,9 +2,18 @@
 
 [project]
 name = "liuren_modeling"
+version = "0.1.0"
 description = "Light-weight full-system simulation framework"
 readme = "README.md"
 requires-python = ">=3.9"
+
+[build-system]
+requires = ["setuptools>=61.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tensor_cast*", "cli*", "serving_cast*", "web_ui*"]
 
 # Test tools ###################################################################
 
