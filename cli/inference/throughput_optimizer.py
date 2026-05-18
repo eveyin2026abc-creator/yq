@@ -332,6 +332,50 @@ class _MultiDeviceComparisonRows:
     disagg_decode: list[dict]
 
 
+def _plot_single_device_optimizer_curves(
+    results: list,
+    args: argparse.Namespace,
+    *,
+    basename_prefix: str,
+) -> None:
+    """Dispatch terminal curve plotting for the active optimizer mode."""
+    from serving_cast.service.optimizer_curve_plots import (
+        plot_concurrency_curves_from_optimizer_summaries,
+        plot_disagg_terminal_curves,
+        plot_pd_ratio_terminal_curves,
+    )
+
+    if args.enable_optimize_prefill_decode_ratio:
+        for res in results:
+            summary_df = res.get_summary_df()
+            if summary_df is None or summary_df.empty:
+                continue
+            plot_pd_ratio_terminal_curves(
+                summary_df,
+                basename_prefix=basename_prefix,
+                ttft_limit=args.ttft_limits,
+                tpot_limit=args.tpot_limits,
+            )
+            return
+        return
+
+    if args.disagg:
+        plot_disagg_terminal_curves(
+            results,
+            basename_prefix=basename_prefix,
+            ttft_limit=args.ttft_limits,
+            tpot_limit=args.tpot_limits,
+        )
+        return
+
+    plot_concurrency_curves_from_optimizer_summaries(
+        results,
+        basename_prefix=basename_prefix,
+        ttft_limit=args.ttft_limits,
+        tpot_limit=args.tpot_limits,
+    )
+
+
 def _run_multi_device_loop(
     args: argparse.Namespace,
     device_targets: list[str],
@@ -341,13 +385,10 @@ def _run_multi_device_loop(
 ) -> _MultiDeviceComparisonRows:
     """Run ParallelRunner per device; collect cross-hardware rows.
 
-    When ``plot_curves_allowed``, merges summary frames and prints terminal ASCII curves
-    (plotext) for that device — no separate CLI flag.
+    When ``plot_curves_allowed`` (single ``--device``), prints terminal ASCII curves:
+    aggregation, disaggregation (Prefill/Decode), or PD-ratio QPS curves as applicable.
     """
     from serving_cast.parallel_runner import ParallelRunner
-    from serving_cast.service.optimizer_curve_plots import (
-        plot_concurrency_curves_from_optimizer_summaries,
-    )
 
     comparison_rows: list[dict] = []
     comparison_rows_pd: list[dict] = []
@@ -384,11 +425,10 @@ def _run_multi_device_loop(
                     comparison_rows.append(row)
 
         if plot_curves_allowed:
-            plot_concurrency_curves_from_optimizer_summaries(
+            _plot_single_device_optimizer_curves(
                 results,
+                args,
                 basename_prefix=f"{profile_name}_{args.model_id}",
-                ttft_limit=args.ttft_limits,
-                tpot_limit=args.tpot_limits,
             )
 
     return _MultiDeviceComparisonRows(
@@ -510,11 +550,7 @@ def main():
             return 1
 
     # Terminal ASCII curves (plotext) run automatically when structurally allowed.
-    plot_curves_allowed = (
-        len(device_targets) == 1
-        and not args.disagg
-        and not args.enable_optimize_prefill_decode_ratio
-    )
+    plot_curves_allowed = len(device_targets) == 1
 
     logger.info("Starting experiments.")
     hw_rows = _run_multi_device_loop(

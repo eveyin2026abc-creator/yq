@@ -252,7 +252,7 @@ class OptimizerSummary:
     def _row_dict_from_filtered_best(self, device_label: str, r: pd.Series) -> dict:
         def _fnum(key: str):
             v = r.get(key)
-            if v is None or (isinstance(v, float) and pd.isna(v)):
+            if v is None or pd.isna(v):
                 return None
             return float(v)
 
@@ -595,7 +595,7 @@ def render_cross_hardware_pd_ratio(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * banner_w,
-        "  Cross-hardware — PD ratio (best balanced QPS per device under TTFT/TPOT limits)",
+        "  Cross-hardware - PD ratio (best balanced QPS per device under TTFT/TPOT limits)",
         "  " + "-" * (banner_w - 4),
     ]
     table = PrettyTable()
@@ -651,7 +651,7 @@ def render_cross_hardware_disagg_prefill(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * 108,
-        "  Cross-hardware — Disaggregated Prefill (best token/s per device under TTFT limits)",
+        "  Cross-hardware - Disaggregated Prefill (best token/s per device under TTFT limits)",
         "  " + "-" * 104,
     ]
     table = PrettyTable()
@@ -701,7 +701,7 @@ def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * 108,
-        "  Cross-hardware — Disaggregated Decode (best token/s per device under TPOT limits)",
+        "  Cross-hardware - Disaggregated Decode (best token/s per device under TPOT limits)",
         "  " + "-" * 104,
     ]
     table = PrettyTable()
@@ -812,8 +812,8 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
 
     lines.append(table.get_string())
     lines.append(
-        "  Effective dense GEMM: nominal BF16 dense GEMM peak × compute_efficiency "
-        "(FP16 peak if BF16 unset). Effective memory BW: nominal HBM bandwidth × "
+        "  Effective dense GEMM: nominal BF16 dense GEMM peak x compute_efficiency "
+        "(FP16 peak if BF16 unset). Effective memory BW: nominal HBM bandwidth x "
         "memory_efficiency."
     )
     lines.append("*" * banner_w)
