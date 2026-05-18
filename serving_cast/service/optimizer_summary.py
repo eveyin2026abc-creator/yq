@@ -476,6 +476,7 @@ def _get_agg_table_buf(df: pd.DataFrame):
 
 
 def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None):
+    local_column = SHOW_COLUMNS.copy()
     ttft0 = df.iloc[0]["ttft"] if len(df) and "ttft" in df.columns else None
     is_decode = ttft0 is None or pd.isna(ttft0)
     show_len = len(df)
@@ -483,12 +484,10 @@ def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None)
     table = PrettyTable()
     if is_decode:
         table_buf.append(f"Top {show_len} Disaggregation (Decode) Configurations: ")
-        local_column = SHOW_COLUMNS.copy()
         local_column.insert(2, "QPS (req/s)")
         local_column.remove(TTFT_COLUMN)
     else:
         table_buf.append(f"Top {show_len} Disaggregation (Prefill) Configurations: ")
-        local_column = SHOW_COLUMNS.copy()
         local_column.insert(2, "QPS (req/s)")
         local_column.remove(TPOT_COLUMN)
 
@@ -778,8 +777,8 @@ def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
 def render_hardware_profile_comparison(device_names: list[str]) -> str:
     """Pretty-print core modeling parameters for multiple ``--device`` profiles.
 
-    Compact table: effective BF16 GEMM, effective memory bandwidth, device
-    memory, and logical comm-grid shape (no vendor / per-efficiency columns).
+    Compact ASCII-oriented labels: effective BF16 GEMM, effective memory bandwidth,
+    capacity, and logical comm-grid shape.
     """
     if not device_names:
         return ""
@@ -797,18 +796,18 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
     lines = [
         "",
         "*" * banner_w,
-        "  Cross-hardware — device profile summary (hardware abstraction vs. "
+        "  Cross-hardware - device profile summary (modeling abstraction vs "
         "performance merge tables)",
-        "  设备建模参数对比（等效稠密算力 / 等效内存带宽等）",
+        "  Device profile parameter comparison (effective GEMM / memory BW)",
         "  " + "-" * (banner_w - 4),
     ]
     table = PrettyTable()
     table.field_names = [
-        "设备",
-        "等效算力@BF16 (TFLOPS)",
-        "等效内存带宽 (TB/s)",
-        "设备内存 (GB)",
-        "通信网格 shape",
+        "Device",
+        "Effective BF16 GEMM (TFLOPS)",
+        "Effective Mem BW (TB/s)",
+        "Device Memory (GB)",
+        "Comm Grid Shape",
     ]
 
     def _effective_gemm_tflops(profile: DeviceProfile) -> Optional[float]:
@@ -823,7 +822,7 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
 
     def _shape_str(profile: DeviceProfile) -> str:
         g = profile.comm_grid.grid
-        return "×".join(str(int(x)) for x in g.shape)
+        return " x ".join(str(int(x)) for x in g.shape)
 
     for name in ordered:
         prof = DeviceProfile.all_device_profiles.get(name)
@@ -846,8 +845,9 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
 
     lines.append(table.get_string())
     lines.append(
-        "  等效稠密算力：标称 BF16 dense GEMM 峰值 × 计算效率（无 BF16 时用 FP16）；"
-        "等效内存带宽：标称 HBM 字节带宽 × 内存效率。"
+        "  Effective dense GEMM: nominal BF16 dense GEMM peak × compute_efficiency "
+        "(FP16 peak if BF16 unset). Effective memory BW: nominal HBM bandwidth × "
+        "memory_efficiency."
     )
     lines.append("*" * banner_w)
     lines.append("")

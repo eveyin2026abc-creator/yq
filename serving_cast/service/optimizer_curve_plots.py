@@ -3,18 +3,17 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
-"""Optimizer curve plots: TPS vs concurrency, and TPS vs TPOT (per parallel case)."""
+"""Optimizer curve plots: terminal ASCII throughput vs concurrency / TPOT (plotext).
+
+The terminal path relies on the optional ``plotext`` package, which exposes plotting
+through module-level functions backed by shared canvas state. See
+``_emit_terminal_optimizer_curve_ascii`` for concurrency/thread-safety notes.
+"""
 
 from __future__ import annotations
 
 import logging
-import re
-from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -28,11 +27,8 @@ _PALETTE = [
     (221, 160, 221),
 ]
 
-# PNG readability (matplotlib).
-_FIGSIZE = (12, 7)
-_SAVE_DPI = 180
-
-# Terminal canvas (plotext).
+# Terminal canvas (plotext): shared internal canvas; not safe across overlapping calls /
+# threads unless serialized externally (see _emit_terminal_optimizer_curve_ascii).
 _TERMINAL_PLOT_COLS = 128
 _TERMINAL_PLOT_ROWS = 38
 # Single small marker keeps emphasis on line segments between sorted points.
@@ -66,7 +62,22 @@ def _sorted_sub_tpot(curve_df: pd.DataFrame, parallel: str) -> pd.DataFrame:
 
 
 def _emit_terminal_optimizer_curve_ascii(curve_df: pd.DataFrame, title_prefix: str) -> None:
-    """Print throughput curves as terminal ASCII (plotext), aiconfigurator-style."""
+    """Print throughput curves as terminal ASCII using plotext.
+
+    Plotext is invoked via ``import plotext as plx`` and module-level calls such as
+    ``plx.plot_size``, ``plx.theme``, ``plx.plot``, ``plx.build``, ``plx.clear_data``.
+    The library does not provide a documented, caller-owned figure object comparable to
+    matplotlib's ``Figure`` for isolating render state; subplot/matrix helpers still
+    coordinate through plotext's internal active canvas.
+
+    **Thread safety:** this function is **not** thread-safe. Do not call it concurrently
+    from multiple threads or while other code uses plotext on overlapping timelines.
+    The throughput optimizer CLI uses this only from a single-threaded path.
+
+    The nested ``_one_chart`` runs twice **sequentially** (two charts per invocation);
+    parallel ``_emit_terminal_optimizer_curve_ascii`` calls would still contend on
+    plotext globals.
+    """
     try:
         import plotext as plx
     except ImportError:
@@ -77,6 +88,7 @@ def _emit_terminal_optimizer_curve_ascii(curve_df: pd.DataFrame, title_prefix: s
     if not parallels:
         return
 
+    # Sequential emission only; each call mutates plotext's shared canvas (see docstring).
     def _one_chart(
         title: str,
         x_col: str,
@@ -132,11 +144,6 @@ def _emit_terminal_optimizer_curve_ascii(curve_df: pd.DataFrame, title_prefix: s
         logger.exception("Terminal ASCII optimizer curves failed.")
 
 
-def _safe_filename_fragment(text: str, max_len: int = 120) -> str:
-    s = re.sub(r"[^\w.\-]+", "_", text.strip()).strip("_")
-    return s[-max_len:] if len(s) > max_len else s
-
-
 def _prepare_curve_df(
     df: pd.DataFrame,
     ttft_limit: float | None,
@@ -190,122 +197,62 @@ def _prepare_curve_df(
     return work
 
 
-def plot_concurrency_optimizer_curves(
-    df: pd.DataFrame,
-    output_dir: str | Path,
+def plot_concurrency_curves_from_optimizer_summaries(
+    results: list,
     *,
     basename_prefix: str,
     ttft_limit: float | None = None,
     tpot_limit: float | None = None,
-) -> tuple[str | None, str | None]:
-    """Write two PNGs and print matching terminal ASCII charts (plotext).
+) -> bool:
+    """Merge per-job summary frames and print terminal curve plots."""
+    dfs = [
+        df
+        for r in results
+        if (df := r.get_summary_df()) is not None and not df.empty
+    ]
+    if not dfs:
+        return False
+    merged = pd.concat(dfs, ignore_index=True)
+    return plot_concurrency_optimizer_curves(
+        merged,
+        basename_prefix=basename_prefix,
+        ttft_limit=ttft_limit,
+        tpot_limit=tpot_limit,
+    )
 
-    Plotext charts use one filtered row per marker (SLO + non-OOM), same as the PNGs.
 
-    Returns:
-        Tuple of output paths (tps_vs_concurrency_path, tps_vs_tpot_path),
-        or (None, None) if nothing to plot.
+def plot_concurrency_optimizer_curves(
+    df: pd.DataFrame,
+    *,
+    basename_prefix: str,
+    ttft_limit: float | None = None,
+    tpot_limit: float | None = None,
+) -> bool:
+    """Print terminal ASCII charts (plotext): throughput vs concurrency and vs TPOT.
+
+    Returns True when filtered data was non-empty and terminal emission was attempted.
+    Does not write image files.
+
+    Terminal rendering uses plotext module-level state and is not thread-safe; see
+    ``_emit_terminal_optimizer_curve_ascii``.
     """
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    prefix = _safe_filename_fragment(basename_prefix)
-
     try:
         curve_df = _prepare_curve_df(df, ttft_limit, tpot_limit)
     except ValueError as exc:
         logger.warning("Skipping concurrency curve plots: %s", exc)
-        return None, None
+        return False
 
     if curve_df.empty:
         logger.warning(
             "Skipping concurrency curve plots: no rows after filtering "
             "(check TTFT/TPOT limits or optimizer output)."
         )
-        return None, None
+        return False
 
     parallels = sorted(curve_df["parallel"].astype(str).unique())
     if not parallels:
-        return None, None
+        return False
 
-    cmap = plt.get_cmap("tab10")
-    n_colors = getattr(cmap, "N", 10)
-
-    def _plot_series(ax, x_series, y_series, idx: int, label: str) -> None:
-        if hasattr(cmap, "colors"):
-            color = cmap.colors[idx % len(cmap.colors)]
-        else:
-            color = cmap((idx % max(n_colors, 1)) / max(n_colors - 1, 1))
-        ax.plot(
-            x_series,
-            y_series,
-            marker="o",
-            linestyle="-",
-            linewidth=2.1,
-            markersize=6.5,
-            markeredgewidth=1.0,
-            markeredgecolor="white",
-            markerfacecolor=color,
-            color=color,
-            label=label,
-        )
-
-    def _finalize_axes(ax, *, title: str, x_label: str, y_label: str) -> None:
-        ax.set_title(title, fontsize=13, fontweight="bold", pad=14)
-        ax.set_xlabel(x_label, fontsize=11)
-        ax.set_ylabel(y_label, fontsize=11)
-        ax.tick_params(axis="both", which="major", labelsize=10, length=5)
-        ax.grid(True, linestyle="--", alpha=0.45)
-        ax.set_axisbelow(True)
-        leg = ax.legend(
-            fontsize=9,
-            framealpha=0.93,
-            loc="best",
-            ncol=1 if len(parallels) <= 6 else 2,
-            fancybox=True,
-            shadow=False,
-            edgecolor="0.78",
-        )
-        leg.get_frame().set_linewidth(0.8)
-
-    fig1, ax1 = plt.subplots(figsize=_FIGSIZE, constrained_layout=True)
-    fig2, ax2 = plt.subplots(figsize=_FIGSIZE, constrained_layout=True)
-
-    for idx, parallel in enumerate(parallels):
-        sub = _sorted_sub_concurrency(curve_df, parallel)
-        if sub.empty:
-            continue
-        label = _parallel_label(parallel)
-        _plot_series(ax1, sub["concurrency"], sub["token/s"], idx, label)
-
-    for idx, parallel in enumerate(parallels):
-        sub = _sorted_sub_tpot(curve_df, parallel)
-        if sub.empty:
-            continue
-        label = _parallel_label(parallel)
-        _plot_series(ax2, sub["tpot"], sub["token/s"], idx, label)
-
-    _finalize_axes(
-        ax1,
-        title="Throughput vs concurrency (per parallel)",
-        x_label="Concurrency",
-        y_label="Throughput (token/s)",
-    )
-    _finalize_axes(
-        ax2,
-        title="Throughput vs TPOT (per parallel)",
-        x_label="TPOT (ms)",
-        y_label="Throughput (token/s)",
-    )
-
-    tps_path = out / f"{prefix}_tps_vs_concurrency.png"
-    tps_tpot_path = out / f"{prefix}_tps_vs_tpot.png"
-
-    fig1.savefig(tps_path, dpi=_SAVE_DPI)
-    fig2.savefig(tps_tpot_path, dpi=_SAVE_DPI)
-    plt.close(fig1)
-    plt.close(fig2)
-
-    logger.info("Wrote optimizer curve plots: %s , %s", tps_path, tps_tpot_path)
-    title = str(basename_prefix).strip()[:160] or prefix
+    title = str(basename_prefix).strip()[:160] or "optimizer"
     _emit_terminal_optimizer_curve_ascii(curve_df, title_prefix=title)
-    return str(tps_path), str(tps_tpot_path)
+    return True

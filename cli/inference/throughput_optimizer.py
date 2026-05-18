@@ -18,6 +18,7 @@ import argparse
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from serving_cast.service.optimizer_summary import (
@@ -50,6 +51,49 @@ from ..utils import (
 )
 
 
+def _default_device_profile_names() -> list[str]:
+    """Pick a CLI default device list when ``--device`` is omitted.
+
+    Prefer any registered profile other than ``TEST_DEVICE`` (sorted by name);
+    fall back to ``TEST_DEVICE`` if it is the only registration.
+    """
+    names = sorted(DeviceProfile.all_device_profiles.keys())
+    if not names:
+        raise RuntimeError("No device profiles are registered.")
+    for n in names:
+        if n != "TEST_DEVICE":
+            return [n]
+    return [names[0]]
+
+
+def _validate_and_resolve_devices(args: argparse.Namespace, logger: logging.Logger) -> bool:
+    """Ensure ``args.device`` is set and every name exists in ``DeviceProfile``."""
+    profiles = DeviceProfile.all_device_profiles
+    if not profiles:
+        logger.error(
+            "No device profiles are registered. Import tensor_cast.device_profiles "
+            "before defining CLI defaults."
+        )
+        return False
+    if args.device is None:
+        resolved = _default_device_profile_names()
+        logger.info(
+            "No --device specified; using default profile %r.",
+            resolved[0],
+        )
+        args.device = resolved
+        return True
+    unknown = [d for d in args.device if d not in profiles]
+    if unknown:
+        logger.error(
+            "Unknown --device name(s): %s. Valid profiles: %s",
+            ", ".join(repr(x) for x in unknown),
+            ", ".join(sorted(profiles.keys())),
+        )
+        return False
+    return True
+
+
 def arg_parse():
     parser = argparse.ArgumentParser(
         description="Get Best Throughput for given input/output sequence length and SLO limitations "
@@ -62,14 +106,15 @@ def arg_parse():
         "--device",
         type=str,
         nargs="+",
-        default=["TEST_DEVICE"],
-        choices=list(DeviceProfile.all_device_profiles.keys()),
+        default=None,
         metavar="DEVICE",
         help=(
             "One or more device profiles. Pass multiple names in one flag to search each "
             "hardware and print cross-hardware summaries (aggregation: one table; "
             "--disagg: separate Prefill and Decode tables; PD ratio mode: one table ranked "
-            "by balanced QPS)."
+            "by balanced QPS). "
+            "If omitted, defaults to one profile: first alphabetically among registered "
+            "profiles excluding TEST_DEVICE when available, otherwise TEST_DEVICE."
         ),
     )
     parser.add_argument(
@@ -209,27 +254,6 @@ def arg_parse():
         action="store_true",
         help="If set, dump the original results for analysis.",
     )
-    parser.add_argument(
-        "--show-each-device-report",
-        action="store_true",
-        help=(
-            "Deprecated no-op: with multiple --device entries, each profile's full summary "
-            "is always printed before the merged cross-hardware table."
-        ),
-    )
-    parser.add_argument(
-        "--plot-concurrency-curves-dir",
-        nargs="?",
-        const=".",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Write PNG plots: throughput (token/s) vs concurrency, and throughput vs TPOT "
-            "(one curve per parallel case) for single-device aggregation runs. "
-            "Use this flag alone to write files under the current working directory; "
-            "or pass DIR explicitly."
-        ),
-    )
     multimodal_group = parser.add_argument_group("MultiModal Options")
     multimodal_group.add_argument(
         "--image-height",
@@ -312,6 +336,124 @@ def arg_parse():
     return args
 
 
+@dataclass
+class _MultiDeviceComparisonRows:
+    aggregation: list[dict]
+    pd_ratio: list[dict]
+    disagg_prefill: list[dict]
+    disagg_decode: list[dict]
+
+
+def _run_multi_device_loop(
+    args: argparse.Namespace,
+    device_targets: list[str],
+    *,
+    plot_curves_allowed: bool,
+    logger: logging.Logger,
+) -> _MultiDeviceComparisonRows:
+    """Run ParallelRunner per device; collect cross-hardware rows.
+
+    When ``plot_curves_allowed``, merges summary frames and prints terminal ASCII curves
+    (plotext) for that device — no separate CLI flag.
+    """
+    from serving_cast.parallel_runner import ParallelRunner
+    from serving_cast.service.optimizer_curve_plots import (
+        plot_concurrency_curves_from_optimizer_summaries,
+    )
+
+    comparison_rows: list[dict] = []
+    comparison_rows_pd: list[dict] = []
+    comparison_rows_prefill: list[dict] = []
+    comparison_rows_decode: list[dict] = []
+    multi_hw = len(device_targets) > 1
+
+    for profile_name in device_targets:
+        args.device = profile_name
+        logger.info("Hardware profile: %s", profile_name)
+        tasks = ParallelRunner(args)
+
+        if not args.enable_optimize_prefill_decode_ratio and not args.disagg:
+            results = tasks.run_agg()
+        else:
+            results = tasks.run_disagg()
+
+        for res in results:
+            res.report_final_result(args, silent=False)
+            if multi_hw and args.disagg:
+                pf_row = res.collect_disagg_prefill_row(profile_name)
+                if pf_row:
+                    comparison_rows_prefill.append(pf_row)
+                dec_row = res.collect_disagg_decode_row(profile_name)
+                if dec_row:
+                    comparison_rows_decode.append(dec_row)
+            elif multi_hw and args.enable_optimize_prefill_decode_ratio:
+                pd_row = res.collect_pd_ratio_comparison_row(profile_name)
+                if pd_row:
+                    comparison_rows_pd.append(pd_row)
+            elif multi_hw:
+                row = res.collect_comparison_row(profile_name)
+                if row:
+                    comparison_rows.append(row)
+
+        if plot_curves_allowed:
+            plot_concurrency_curves_from_optimizer_summaries(
+                results,
+                basename_prefix=f"{profile_name}_{args.model_id}",
+                ttft_limit=args.ttft_limits,
+                tpot_limit=args.tpot_limits,
+            )
+
+    return _MultiDeviceComparisonRows(
+        aggregation=comparison_rows,
+        pd_ratio=comparison_rows_pd,
+        disagg_prefill=comparison_rows_prefill,
+        disagg_decode=comparison_rows_decode,
+    )
+
+
+def _render_cross_hardware_summary(
+    args: argparse.Namespace,
+    device_targets: list[str],
+    rows: _MultiDeviceComparisonRows,
+    *,
+    logger: logging.Logger,
+) -> None:
+    if len(device_targets) <= 1:
+        return
+    hw_profile_txt = render_hardware_profile_comparison(device_targets)
+    if hw_profile_txt:
+        print(hw_profile_txt)
+    if args.disagg:
+        rendered_p = render_cross_hardware_disagg_prefill(rows.disagg_prefill)
+        rendered_d = render_cross_hardware_disagg_decode(rows.disagg_decode)
+        if rendered_p:
+            print(rendered_p)
+        if rendered_d:
+            print(rendered_d)
+        if not rows.disagg_prefill and not rows.disagg_decode:
+            logger.warning(
+                "No rows available for cross-hardware disaggregation comparison "
+                "(all runs empty or limits omitted)."
+            )
+    elif args.enable_optimize_prefill_decode_ratio:
+        rendered_pd = render_cross_hardware_pd_ratio(rows.pd_ratio)
+        if rendered_pd:
+            print(rendered_pd)
+        elif not rows.pd_ratio:
+            logger.warning(
+                "No rows available for cross-hardware PD ratio comparison "
+                "(all runs empty or filtered out)."
+            )
+    else:
+        rendered = render_cross_device_comparison(rows.aggregation)
+        if rendered:
+            print(rendered)
+        elif not rows.aggregation:
+            logger.warning(
+                "No rows available for cross-hardware comparison (all runs empty)."
+            )
+
+
 def main():
     check_dependencies()
     start_time = time.time()
@@ -321,6 +463,9 @@ def main():
         format=LOG_FORMAT,
     )
     logger = logging.getLogger(__name__)
+
+    if not _validate_and_resolve_devices(args, logger):
+        return 1
 
     effective_input_length = OptimizerData(
         input_length=args.input_length,
@@ -368,8 +513,6 @@ def main():
             )
             return 1
 
-    from serving_cast.parallel_runner import ParallelRunner
-
     device_targets = list(dict.fromkeys(args.device))
 
     for profile_name in device_targets:
@@ -386,118 +529,23 @@ def main():
             )
             return 1
 
-    plot_curve_output_dir: str | None = None
-    if args.plot_concurrency_curves_dir is not None:
-        raw_dir = str(args.plot_concurrency_curves_dir).strip()
-        if not raw_dir:
-            logger.warning(
-                "Empty --plot-concurrency-curves-dir path; skipping concurrency curve plots."
-            )
-        else:
-            plot_curve_output_dir = str(Path(raw_dir).expanduser().resolve())
-
+    # Terminal ASCII curves (plotext) run automatically when structurally allowed.
     plot_curves_allowed = (
-        plot_curve_output_dir is not None
-        and len(device_targets) == 1
+        len(device_targets) == 1
         and not args.disagg
         and not args.enable_optimize_prefill_decode_ratio
     )
-    if args.plot_concurrency_curves_dir is not None and not plot_curves_allowed:
-        logger.warning(
-            "Concurrency curve plots are only generated for single-device aggregation "
-            "runs (omit --disagg, PD ratio mode, and multiple --device); skipping plots."
-        )
 
     logger.info("Starting experiments.")
-    comparison_rows: list[dict] = []
-    comparison_rows_pd: list[dict] = []
-    comparison_rows_prefill: list[dict] = []
-    comparison_rows_decode: list[dict] = []
-    multi_hw = len(device_targets) > 1
-
-    for profile_name in device_targets:
-        args.device = profile_name
-        logger.info("Hardware profile: %s", profile_name)
-        tasks = ParallelRunner(args)
-
-        if not args.enable_optimize_prefill_decode_ratio and not args.disagg:
-            results = tasks.run_agg()
-        else:
-            results = tasks.run_disagg()
-
-        for res in results:
-            res.report_final_result(args, silent=False)
-            if multi_hw and args.disagg:
-                pf_row = res.collect_disagg_prefill_row(profile_name)
-                if pf_row:
-                    comparison_rows_prefill.append(pf_row)
-                dec_row = res.collect_disagg_decode_row(profile_name)
-                if dec_row:
-                    comparison_rows_decode.append(dec_row)
-            elif multi_hw and args.enable_optimize_prefill_decode_ratio:
-                pd_row = res.collect_pd_ratio_comparison_row(profile_name)
-                if pd_row:
-                    comparison_rows_pd.append(pd_row)
-            elif multi_hw:
-                row = res.collect_comparison_row(profile_name)
-                if row:
-                    comparison_rows.append(row)
-
-        if plot_curves_allowed:
-            import pandas as pd
-
-            from serving_cast.service.optimizer_curve_plots import (
-                plot_concurrency_optimizer_curves,
-            )
-
-            dfs = [
-                r.get_summary_df()
-                for r in results
-                if r.get_summary_df() is not None and not r.get_summary_df().empty
-            ]
-            if dfs:
-                merged = pd.concat(dfs, ignore_index=True)
-                plot_concurrency_optimizer_curves(
-                    merged,
-                    plot_curve_output_dir,
-                    basename_prefix=f"{profile_name}_{args.model_id}",
-                    ttft_limit=args.ttft_limits,
-                    tpot_limit=args.tpot_limits,
-                )
-
-    if multi_hw:
-        hw_profile_txt = render_hardware_profile_comparison(device_targets)
-        if hw_profile_txt:
-            print(hw_profile_txt)
-        if args.disagg:
-            rendered_p = render_cross_hardware_disagg_prefill(comparison_rows_prefill)
-            rendered_d = render_cross_hardware_disagg_decode(comparison_rows_decode)
-            if rendered_p:
-                print(rendered_p)
-            if rendered_d:
-                print(rendered_d)
-            if not comparison_rows_prefill and not comparison_rows_decode:
-                logger.warning(
-                    "No rows available for cross-hardware disaggregation comparison "
-                    "(all runs empty or limits omitted)."
-                )
-        elif args.enable_optimize_prefill_decode_ratio:
-            rendered_pd = render_cross_hardware_pd_ratio(comparison_rows_pd)
-            if rendered_pd:
-                print(rendered_pd)
-            elif not comparison_rows_pd:
-                logger.warning(
-                    "No rows available for cross-hardware PD ratio comparison "
-                    "(all runs empty or filtered out)."
-                )
-        else:
-            rendered = render_cross_device_comparison(comparison_rows)
-            if rendered:
-                print(rendered)
-            elif not comparison_rows:
-                logger.warning(
-                    "No rows available for cross-hardware comparison (all runs empty)."
-                )
+    hw_rows = _run_multi_device_loop(
+        args,
+        device_targets,
+        plot_curves_allowed=plot_curves_allowed,
+        logger=logger,
+    )
+    _render_cross_hardware_summary(
+        args, device_targets, hw_rows, logger=logger
+    )
 
     end_time = time.time()
     logger.info("All experiments completed in %.2f seconds.", end_time - start_time)
