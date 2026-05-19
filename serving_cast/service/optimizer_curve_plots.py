@@ -13,6 +13,7 @@ through module-level functions backed by shared canvas state. See
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import pandas as pd
 
@@ -32,6 +33,19 @@ _PALETTE = [
 _TERMINAL_PLOT_COLS = 128
 _TERMINAL_PLOT_ROWS = 38
 _TERMINAL_MARKER = "dot"
+_BASE_CURVE_COLUMNS = ("concurrency", "token/s")
+_PD_PREFILL_RENAME = {
+    "parallel_p": "parallel",
+    "concurrency_p": "concurrency",
+    "p_qps": "token/s",
+    "ttft_p": "ttft",
+}
+_PD_DECODE_RENAME = {
+    "parallel_d": "parallel",
+    "concurrency_d": "concurrency",
+    "d_qps": "token/s",
+    "tpot_d": "tpot",
+}
 
 
 def _axis_metric_name(axis_label: str) -> str:
@@ -88,12 +102,11 @@ def _emit_terminal_optimizer_curve_ascii(
         return
     y_metric = _axis_metric_name(y_axis_label)
 
-    def _one_chart(
+    def _draw_chart(
         title: str,
         x_col: str,
         x_label: str,
-        y_label: str,
-        sort_fn,
+        sort_fn: Callable[[pd.DataFrame, str], pd.DataFrame],
     ) -> None:
         plx.plot_size(_TERMINAL_PLOT_COLS, _TERMINAL_PLOT_ROWS)
         plx.theme("clear")
@@ -112,7 +125,7 @@ def _emit_terminal_optimizer_curve_ascii(
             )
         plx.title(f"{title_prefix}: {title}")
         plx.xlabel(x_label)
-        plx.ylabel(y_label)
+        plx.ylabel(y_axis_label)
         plx.grid(False)
         try:
             buf = plx.build()
@@ -125,20 +138,22 @@ def _emit_terminal_optimizer_curve_ascii(
             print("\n" + buf + "\n")
 
     try:
-        _one_chart(
-            f"{y_metric} vs concurrency",
-            "concurrency",
-            "Concurrency",
-            y_axis_label,
-            lambda df, p: _sorted_sub_concurrency(df, p, chart2_x_col),
+        chart_specs = (
+            (
+                f"{y_metric} vs concurrency",
+                "concurrency",
+                "Concurrency",
+                lambda df, p: _sorted_sub_concurrency(df, p, chart2_x_col),
+            ),
+            (
+                f"{y_metric} vs {chart2_x_label.split()[0]}",
+                chart2_x_col,
+                chart2_x_label,
+                lambda df, p: _sorted_sub_latency_axis(df, p, chart2_x_col),
+            ),
         )
-        _one_chart(
-            f"{y_metric} vs {chart2_x_label.split()[0]}",
-            chart2_x_col,
-            chart2_x_label,
-            y_axis_label,
-            lambda df, p: _sorted_sub_latency_axis(df, p, chart2_x_col),
-        )
+        for title, x_col, x_label, sort_fn in chart_specs:
+            _draw_chart(title, x_col, x_label, sort_fn)
     except Exception:
         logger.exception("Terminal ASCII optimizer curves failed.")
 
@@ -152,36 +167,28 @@ def _memory_filter(work: pd.DataFrame) -> pd.DataFrame:
     return work
 
 
-def _prepare_curve_df(
-    df: pd.DataFrame,
-    ttft_limit: float | None,
-    tpot_limit: float | None,
-) -> pd.DataFrame:
-    """Aggregation rows: token/s vs concurrency / TPOT (latency column ``tpot``)."""
-    required = {"concurrency", "parallel", "token/s", "tpot"}
+def _require_columns(df: pd.DataFrame, required: set[str], message: str) -> None:
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"DataFrame missing columns for curve plots: {sorted(missing)}")
+        raise ValueError(f"{message}: {sorted(missing)}")
 
-    work = df.copy()
-    work["concurrency"] = pd.to_numeric(work["concurrency"], errors="coerce")
-    work["token/s"] = pd.to_numeric(work["token/s"], errors="coerce")
-    work["tpot"] = pd.to_numeric(work["tpot"], errors="coerce")
-    work = work.dropna(subset=["concurrency", "token/s", "tpot"])
 
-    if ttft_limit is not None and "ttft" in work.columns:
-        ttft_num = pd.to_numeric(work["ttft"], errors="coerce")
-        if ttft_num.notna().any():
-            work = work.loc[ttft_num.fillna(float("inf")) <= float(ttft_limit)]
+def _filter_numeric_limit(
+    work: pd.DataFrame,
+    column: str,
+    limit: float | None,
+    *,
+    skip_if_all_nan: bool = False,
+) -> pd.DataFrame:
+    if limit is None or column not in work.columns:
+        return work
+    values = pd.to_numeric(work[column], errors="coerce")
+    if skip_if_all_nan and not values.notna().any():
+        return work
+    return work.loc[values.fillna(float("inf")) <= float(limit)]
 
-    if tpot_limit is not None:
-        work = work.loc[
-            pd.to_numeric(work["tpot"], errors="coerce").fillna(float("inf"))
-            <= float(tpot_limit)
-        ]
 
-    work = _memory_filter(work)
-
+def _sort_curve_df(work: pd.DataFrame) -> pd.DataFrame:
     if work.empty:
         return work
 
@@ -192,10 +199,45 @@ def _prepare_curve_df(
         )
         sort_keys.append("_batch_sort")
     sort_keys.append("token/s")
-    work = work.sort_values(sort_keys).reset_index(drop=True)
-    if "_batch_sort" in work.columns:
-        work = work.drop(columns=["_batch_sort"])
-    return work
+    return (
+        work.sort_values(sort_keys)
+        .reset_index(drop=True)
+        .drop(columns=["_batch_sort"], errors="ignore")
+    )
+
+
+def _prepare_base_curve_df(
+    df: pd.DataFrame,
+    *,
+    latency_col: str,
+    missing_message: str,
+) -> pd.DataFrame:
+    required = {"parallel", latency_col, *_BASE_CURVE_COLUMNS}
+    _require_columns(df, required, missing_message)
+
+    work = df.copy()
+    for col in (*_BASE_CURVE_COLUMNS, latency_col):
+        work[col] = pd.to_numeric(work[col], errors="coerce")
+    return work.dropna(subset=["parallel", *_BASE_CURVE_COLUMNS, latency_col])
+
+
+def _prepare_curve_df(
+    df: pd.DataFrame,
+    ttft_limit: float | None,
+    tpot_limit: float | None,
+) -> pd.DataFrame:
+    """Aggregation rows: token/s vs concurrency / TPOT (latency column ``tpot``)."""
+    work = _prepare_base_curve_df(
+        df,
+        latency_col="tpot",
+        missing_message="DataFrame missing columns for curve plots",
+    )
+    work = _filter_numeric_limit(
+        work, "ttft", ttft_limit, skip_if_all_nan=True
+    )
+    work = _filter_numeric_limit(work, "tpot", tpot_limit)
+    work = _memory_filter(work)
+    return _sort_curve_df(work)
 
 
 def _prepare_disagg_prefill_curve_df(
@@ -203,38 +245,14 @@ def _prepare_disagg_prefill_curve_df(
     ttft_limit: float | None,
 ) -> pd.DataFrame:
     """Disagg Prefill sweep: token/s vs concurrency / TTFT."""
-    required = {"concurrency", "parallel", "token/s", "ttft"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Prefill curve plot missing columns: {sorted(missing)}")
-
-    work = df.copy()
-    work["concurrency"] = pd.to_numeric(work["concurrency"], errors="coerce")
-    work["token/s"] = pd.to_numeric(work["token/s"], errors="coerce")
-    work["ttft"] = pd.to_numeric(work["ttft"], errors="coerce")
-    work = work.dropna(subset=["concurrency", "token/s", "ttft"])
-
-    if ttft_limit is not None:
-        work = work.loc[
-            pd.to_numeric(work["ttft"], errors="coerce").fillna(float("inf"))
-            <= float(ttft_limit)
-        ]
-
+    work = _prepare_base_curve_df(
+        df,
+        latency_col="ttft",
+        missing_message="Prefill curve plot missing columns",
+    )
+    work = _filter_numeric_limit(work, "ttft", ttft_limit)
     work = _memory_filter(work)
-    if work.empty:
-        return work
-
-    sort_keys = ["parallel", "concurrency"]
-    if "batch_size" in work.columns:
-        work = work.assign(
-            _batch_sort=pd.to_numeric(work["batch_size"], errors="coerce")
-        )
-        sort_keys.append("_batch_sort")
-    sort_keys.append("token/s")
-    work = work.sort_values(sort_keys).reset_index(drop=True)
-    if "_batch_sort" in work.columns:
-        work = work.drop(columns=["_batch_sort"])
-    return work
+    return _sort_curve_df(work)
 
 
 def plot_concurrency_curves_from_optimizer_summaries(
@@ -275,20 +293,50 @@ def plot_concurrency_optimizer_curves(
         logger.warning("Skipping concurrency curve plots: %s", exc)
         return False
 
+    return _emit_curve_df(
+        curve_df,
+        title_prefix=str(basename_prefix).strip()[:160] or "optimizer",
+        skip_label="concurrency curve plots",
+    )
+
+
+def _emit_curve_df(
+    curve_df: pd.DataFrame,
+    *,
+    title_prefix: str,
+    skip_label: str,
+    emit_kwargs: dict[str, str] | None = None,
+) -> bool:
     if curve_df.empty:
-        logger.warning(
-            "Skipping concurrency curve plots: no rows after filtering "
-            "(check TTFT/TPOT limits or optimizer output)."
-        )
+        logger.warning("Skipping %s: no rows after filtering.", skip_label)
         return False
 
-    parallels = sorted(curve_df["parallel"].astype(str).unique())
-    if not parallels:
-        return False
-
-    title = str(basename_prefix).strip()[:160] or "optimizer"
-    _emit_terminal_optimizer_curve_ascii(curve_df, title_prefix=title)
+    _emit_terminal_optimizer_curve_ascii(
+        curve_df,
+        title_prefix=title_prefix,
+        **(emit_kwargs or {}),
+    )
     return True
+
+
+def _emit_prepared_curve(
+    prepare_curve: Callable[[], pd.DataFrame],
+    *,
+    title_prefix: str,
+    skip_label: str,
+    emit_kwargs: dict[str, str],
+) -> bool:
+    try:
+        curve_df = prepare_curve()
+    except ValueError as exc:
+        logger.warning("Skipping %s: %s", skip_label, exc)
+        return False
+    return _emit_curve_df(
+        curve_df,
+        title_prefix=title_prefix,
+        skip_label=skip_label,
+        emit_kwargs=emit_kwargs,
+    )
 
 
 def plot_disagg_terminal_curves(
@@ -314,48 +362,73 @@ def plot_disagg_terminal_curves(
         decode = dc.tpot_limits is not None and dc.ttft_limits is None
 
         if prefill:
-            try:
-                curve_df = _prepare_disagg_prefill_curve_df(df, ttft_limit)
-            except ValueError as exc:
-                logger.warning("Skipping prefill curve plots: %s", exc)
-                curve_df = pd.DataFrame()
-
-            if curve_df.empty:
-                logger.warning(
-                    "Skipping prefill concurrency curves: no rows after filtering."
-                )
-            else:
-                suffix = f"{base}_disagg_prefill_{idx}"
-                _emit_terminal_optimizer_curve_ascii(
-                    curve_df,
-                    title_prefix=suffix,
-                    chart2_x_col="ttft",
-                    chart2_x_label="TTFT (ms)",
-                )
-                any_ok = True
+            any_ok |= _emit_prepared_curve(
+                lambda df=df: _prepare_disagg_prefill_curve_df(df, ttft_limit),
+                title_prefix=f"{base}_disagg_prefill_{idx}",
+                skip_label="prefill concurrency",
+                emit_kwargs={"chart2_x_col": "ttft", "chart2_x_label": "TTFT (ms)"},
+            )
 
         elif decode:
-            try:
-                curve_df = _prepare_curve_df(df, ttft_limit, tpot_limit)
-            except ValueError as exc:
-                logger.warning("Skipping decode curve plots: %s", exc)
-                curve_df = pd.DataFrame()
-
-            if curve_df.empty:
-                logger.warning(
-                    "Skipping decode concurrency curves: no rows after filtering."
-                )
-            else:
-                suffix = f"{base}_disagg_decode_{idx}"
-                _emit_terminal_optimizer_curve_ascii(
-                    curve_df,
-                    title_prefix=suffix,
-                    chart2_x_col="tpot",
-                    chart2_x_label="TPOT (ms)",
-                )
-                any_ok = True
+            any_ok |= _emit_prepared_curve(
+                lambda df=df: _prepare_curve_df(df, ttft_limit, tpot_limit),
+                title_prefix=f"{base}_disagg_decode_{idx}",
+                skip_label="decode concurrency",
+                emit_kwargs={"chart2_x_col": "tpot", "chart2_x_label": "TPOT (ms)"},
+            )
 
     return any_ok
+
+
+def _pd_side_curve_df(
+    pd_df: pd.DataFrame,
+    *,
+    source_cols: tuple[str, ...],
+    rename_cols: dict[str, str],
+) -> pd.DataFrame | None:
+    if not set(source_cols) <= set(pd_df.columns):
+        return None
+    return pd_df[list(source_cols)].drop_duplicates().rename(columns=rename_cols)
+
+
+def _pd_curve_specs(
+    pd_df: pd.DataFrame,
+    ttft_limit: float | None,
+    tpot_limit: float | None,
+):
+    p_norm = _pd_side_curve_df(
+        pd_df,
+        source_cols=tuple(_PD_PREFILL_RENAME),
+        rename_cols=_PD_PREFILL_RENAME,
+    )
+    if p_norm is not None:
+        yield (
+            lambda df=p_norm: _prepare_disagg_prefill_curve_df(df, ttft_limit),
+            "pd_prefill_qps",
+            "PD Prefill-side",
+            {
+                "chart2_x_col": "ttft",
+                "chart2_x_label": "TTFT (ms)",
+                "y_axis_label": "P QPS (req/s)",
+            },
+        )
+
+    d_norm = _pd_side_curve_df(
+        pd_df,
+        source_cols=tuple(_PD_DECODE_RENAME),
+        rename_cols=_PD_DECODE_RENAME,
+    )
+    if d_norm is not None:
+        yield (
+            lambda df=d_norm: _prepare_curve_df(df, ttft_limit, tpot_limit),
+            "pd_decode_qps",
+            "PD Decode-side",
+            {
+                "chart2_x_col": "tpot",
+                "chart2_x_label": "TPOT (ms)",
+                "y_axis_label": "D QPS (req/s)",
+            },
+        )
 
 
 def plot_pd_ratio_terminal_curves(
@@ -372,66 +445,14 @@ def plot_pd_ratio_terminal_curves(
     base = str(basename_prefix).strip()[:120] or "optimizer"
     any_ok = False
 
-    prefill_cols = ["parallel_p", "concurrency_p", "p_qps", "ttft_p"]
-    if set(prefill_cols) <= set(pd_df.columns):
-        sub_p = pd_df[prefill_cols].drop_duplicates()
-        p_norm = sub_p.rename(
-            columns={
-                "parallel_p": "parallel",
-                "concurrency_p": "concurrency",
-                "p_qps": "token/s",
-                "ttft_p": "ttft",
-            }
+    for prepare_curve, title_suffix, skip_label, emit_kwargs in _pd_curve_specs(
+        pd_df, ttft_limit, tpot_limit
+    ):
+        any_ok |= _emit_prepared_curve(
+            prepare_curve,
+            title_prefix=f"{base}_{title_suffix}",
+            skip_label=skip_label,
+            emit_kwargs=emit_kwargs,
         )
-        try:
-            curve_p = _prepare_disagg_prefill_curve_df(p_norm, ttft_limit)
-        except ValueError as exc:
-            logger.warning("Skipping PD Prefill-side curves: %s", exc)
-            curve_p = pd.DataFrame()
-
-        if curve_p.empty:
-            logger.warning(
-                "Skipping PD Prefill-side curves: no rows after filtering."
-            )
-        else:
-            _emit_terminal_optimizer_curve_ascii(
-                curve_p,
-                title_prefix=f"{base}_pd_prefill_qps",
-                chart2_x_col="ttft",
-                chart2_x_label="TTFT (ms)",
-                y_axis_label="P QPS (req/s)",
-            )
-            any_ok = True
-
-    decode_cols = ["parallel_d", "concurrency_d", "d_qps", "tpot_d"]
-    if set(decode_cols) <= set(pd_df.columns):
-        sub_d = pd_df[decode_cols].drop_duplicates()
-        d_norm = sub_d.rename(
-            columns={
-                "parallel_d": "parallel",
-                "concurrency_d": "concurrency",
-                "d_qps": "token/s",
-                "tpot_d": "tpot",
-            }
-        )
-        try:
-            curve_d = _prepare_curve_df(d_norm, ttft_limit, tpot_limit)
-        except ValueError as exc:
-            logger.warning("Skipping PD Decode-side curves: %s", exc)
-            curve_d = pd.DataFrame()
-
-        if curve_d.empty:
-            logger.warning(
-                "Skipping PD Decode-side curves: no rows after filtering."
-            )
-        else:
-            _emit_terminal_optimizer_curve_ascii(
-                curve_d,
-                title_prefix=f"{base}_pd_decode_qps",
-                chart2_x_col="tpot",
-                chart2_x_label="TPOT (ms)",
-                y_axis_label="D QPS (req/s)",
-            )
-            any_ok = True
 
     return any_ok
