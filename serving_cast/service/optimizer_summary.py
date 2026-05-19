@@ -586,7 +586,7 @@ def render_cross_device_comparison(rows: list[dict]) -> str:
     ]
     table = PrettyTable()
     table.field_names = [
-        "Rank",
+        "Top",
         "Device",
         "Throughput (token/s)",
         "TTFT (ms)",
@@ -634,7 +634,7 @@ def render_cross_hardware_pd_ratio(rows: list[dict]) -> str:
     ]
     table = PrettyTable()
     table.field_names = [
-        "Rank",
+        "Top",
         "Device",
         "Balanced QPS (req/s)",
         "PD Ratio (P:D inst)",
@@ -690,7 +690,7 @@ def render_cross_hardware_disagg_prefill(rows: list[dict]) -> str:
     ]
     table = PrettyTable()
     table.field_names = [
-        "Rank",
+        "Top",
         "Device",
         "Prefill throughput (token/s)",
         "QPS (req/s)",
@@ -740,7 +740,7 @@ def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
     ]
     table = PrettyTable()
     table.field_names = [
-        "Rank",
+        "Top",
         "Device",
         "Decode throughput (token/s)",
         "QPS (req/s)",
