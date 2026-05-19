@@ -37,66 +37,18 @@ from serving_cast.service.utils import (
 )
 
 from tensor_cast import device_profiles  # noqa: F401
-from tensor_cast.device import DeviceProfile
 from tensor_cast.core.quantization.datatypes import (
     QuantizeAttentionAction,
     QuantizeLinearAction,
 )
 from tensor_cast.utils import check_dependencies
 from ..utils import (
+    check_device_targets,
     check_prefix_cache_hit_rate,
     get_common_argparser,
     LOG_FORMAT,
     LOG_LEVELS,
 )
-
-
-def _check_device_targets(
-    args: argparse.Namespace, logger: logging.Logger
-) -> list[str] | None:
-    """Validate ``--device``: default if omitted, de-dupe, reject invalid names, check comm grid."""
-    profiles = DeviceProfile.all_device_profiles
-    if not profiles:
-        logger.error(
-            "No device profiles are registered. Import tensor_cast.device_profiles "
-            "before defining CLI defaults."
-        )
-        return None
-
-    if not args.device:
-        names = sorted(profiles)
-        args.device = [next((name for name in names if name != "TEST_DEVICE"), names[0])]
-        logger.info("No --device specified; using default profile %r.", args.device[0])
-
-    targets = list(dict.fromkeys(args.device))
-
-    blank = [name for name in targets if not str(name).strip()]
-    if blank:
-        logger.error("Empty --device name is not allowed.")
-        return None
-
-    unknown = [name for name in targets if name not in profiles]
-    if unknown:
-        logger.error(
-            "Unknown --device name(s): %s. Valid profiles: %s",
-            ", ".join(repr(name) for name in unknown),
-            ", ".join(sorted(profiles.keys())),
-        )
-        return None
-
-    for name in targets:
-        grid_n = profiles[name].comm_grid.grid.nelement()
-        if grid_n < args.num_devices:
-            logger.error(
-                "Device profile %r cannot model num_devices=%s "
-                "(communication grid size is %s).",
-                name,
-                args.num_devices,
-                grid_n,
-            )
-            return None
-
-    return targets
 
 
 def arg_parse():
@@ -486,7 +438,7 @@ def main():
     )
     logger = logging.getLogger(__name__)
 
-    device_targets = _check_device_targets(args, logger)
+    device_targets = check_device_targets(args, logger)
     if device_targets is None:
         return 1
 
