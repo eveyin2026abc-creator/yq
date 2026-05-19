@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def _positive_float(value) -> Optional[float]:
-    """Convert a value to a positive float when possible."""
     num = pd.to_numeric(value, errors="coerce")
     if num is None or pd.isna(num) or float(num) <= 0:
         return None
@@ -70,34 +69,27 @@ SHOW_COLUMNS = [
 
 
 def _fmt_optional(value, fmt: str = "{:.2f}") -> str:
-    """Format optional numeric values for table cells."""
     return fmt.format(value) if value is not None else "-"
 
 
 def _sorted_rows(rows: list[dict], metric: str) -> list[dict]:
-    """Sort cross-hardware rows by a metric in descending order."""
     return sorted(rows, key=lambda row: row.get(metric, 0.0), reverse=True)
 
 
 class OptimizerSummary:
     def __init__(self, data_config):
-        """Initialize the summary holder for one optimizer run."""
         self._early_stop_flag = None
         self._summary_df = None
         self.data_config = data_config
 
     def set_summary_df(self, summary_df):
-        """Store the optimizer summary dataframe."""
         self._summary_df = summary_df
 
     def get_summary_df(self):
-        """Return the optimizer summary dataframe."""
         return self._summary_df
 
     def set_early_stop_flag(self, memory_left, tpot, ttft):
-        """Update early-stop state from memory and latency signals."""
         def check(value, limit):
-            """Check whether one metric exceeds its early-stop threshold."""
             return value is not None and limit is not None and value > limit
 
         self._early_stop_flag = (
@@ -107,7 +99,6 @@ class OptimizerSummary:
         )
 
     def check_early_stop_flag(self):
-        """Return whether the current run should stop early."""
         return self._early_stop_flag
 
     def _is_pd_ratio_mode(self):
@@ -120,7 +111,6 @@ class OptimizerSummary:
         )
 
     def report_final_result(self, args, silent: bool = False):
-        """Print or return the final optimizer result."""
         if silent:
             return
         if self._summary_df is None or self._summary_df.empty:
@@ -172,7 +162,6 @@ class OptimizerSummary:
         )
 
     def _get_agg_disagg_final_out(self, args):
-        """Build the final output lines for PD混部 or PD分离 mode."""
         sorted_summary_df = self._prepare_agg_disagg_results()
         best_result = sorted_summary_df.loc[0]
 
@@ -230,7 +219,6 @@ class OptimizerSummary:
         return self._best_agg_disagg_row(device_label)
 
     def _best_agg_disagg_row(self, device_label: str) -> Optional[dict]:
-        """Return the best PD混部 or PD分离 row for one device."""
         if (
             self._summary_df is None
             or self._summary_df.empty
@@ -281,9 +269,7 @@ class OptimizerSummary:
         }
 
     def _row_dict_from_filtered_best(self, device_label: str, r: pd.Series) -> dict:
-        """Convert one best summary row into a cross-hardware dictionary."""
         def _fnum(key: str):
-            """Convert missing numeric values to None for table rendering."""
             v = r.get(key)
             if v is None or pd.isna(v):
                 return None
@@ -473,7 +459,6 @@ class OptimizerSummary:
 
 
 def _get_agg_table_buf(df: pd.DataFrame):
-    """Build the PD混部 Top-N table buffer."""
     show_len = len(df)
     table_buf = []
     table_buf.append(f"Top {show_len} PD混部 Configurations: ")
@@ -498,7 +483,6 @@ def _get_agg_table_buf(df: pd.DataFrame):
 
 
 def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None):
-    """Build the PD分离 Top-N table buffer."""
     local_column = SHOW_COLUMNS.copy()
     ttft0 = df.iloc[0]["ttft"] if len(df) and "ttft" in df.columns else None
     is_decode = ttft0 is None or pd.isna(ttft0)
@@ -820,7 +804,6 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
     ]
 
     def _effective_tflops(ops: dict, profile: DeviceProfile) -> Optional[float]:
-        """Compute effective BF16 or FP16 TFLOPS for a device profile."""
         peak = ops.get(torch.bfloat16)
         if peak is None:
             peak = ops.get(torch.half)
@@ -831,11 +814,9 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
         return (peak / 1e12) * profile.compute_efficiency
 
     def _fmt_compact_num(value: float) -> str:
-        """Format numeric values without unnecessary trailing zeros."""
         return f"{value:g}"
 
     def _comm_bw_expr(profile: DeviceProfile) -> str:
-        """Format effective communication bandwidth expressions."""
         parts = []
         for idx in sorted(profile.comm_grid.topologies):
             topology = profile.comm_grid.topologies[idx]
@@ -844,7 +825,6 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
         return " | ".join(parts) if parts else "-"
 
     def _shape_str(profile: DeviceProfile) -> str:
-        """Return the communication grid shape as text."""
         g = profile.comm_grid.grid
         return " x ".join(str(int(x)) for x in g.shape)
 

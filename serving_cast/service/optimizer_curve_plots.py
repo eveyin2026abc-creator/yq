@@ -57,18 +57,15 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _axis_metric_name(axis_label: str) -> str:
-    """Return the display metric name without units."""
     return axis_label.split(" (", 1)[0].strip() or axis_label
 
 
 def _parallel_label(parallel: str) -> str:
-    """Shorten long parallel labels for terminal legends."""
     s = str(parallel)
     return s if len(s) < 48 else s[:45] + "..."
 
 
 def _padded_axis_limits(values: list[float]) -> tuple[float, float] | None:
-    """Return padded numeric axis limits for visible plot margins."""
     nums = [float(v) for v in values if math.isfinite(float(v))]
     if not nums:
         return None
@@ -82,13 +79,10 @@ def _padded_axis_limits(values: list[float]) -> tuple[float, float] | None:
 
 
 def _compact_scatter_legend(buf: str, labels: list[str]) -> str:
-    """Compact plotext scatter legends while preserving chart width."""
     def _visible_len(text: str) -> int:
-        """Return the visible length after stripping ANSI escape codes."""
         return len(_ANSI_RE.sub("", text))
 
     def _pad_right_border(line: str, width_delta: int) -> str:
-        """Pad the right border so the terminal chart stays aligned."""
         if width_delta <= 0:
             return line
         border_idx = line.rfind("│")
@@ -153,7 +147,6 @@ def _jitter_overlapping_points(
 def _sorted_curve_subset(
     curve_df: pd.DataFrame, parallel: str, sort_cols: list[str]
 ) -> pd.DataFrame:
-    """Return one sorted curve subset for a single parallel setting."""
     sub = curve_df.loc[curve_df["parallel"].astype(str) == parallel]
     if "batch_size" in sub.columns:
         sub = sub.assign(_batch_sort=pd.to_numeric(sub["batch_size"], errors="coerce"))
@@ -192,7 +185,6 @@ def _emit_terminal_optimizer_curve_ascii(
         x_label: str,
         sort_cols: list[str],
     ) -> None:
-        """Draw one scatter chart from the prepared curve dataframe."""
         plx.plot_size(_TERMINAL_PLOT_COLS, _TERMINAL_PLOT_ROWS)
         plx.theme("clear")
         x_all: list[float] = []
@@ -278,7 +270,6 @@ def _emit_terminal_optimizer_curve_ascii(
 
 
 def _memory_filter(work: pd.DataFrame) -> pd.DataFrame:
-    """Drop rows that are known to exceed available device memory."""
     for mem_col in ("memory_left_gb", "device_memory_available_gb"):
         if mem_col in work.columns:
             mem = pd.to_numeric(work[mem_col], errors="coerce")
@@ -288,14 +279,12 @@ def _memory_filter(work: pd.DataFrame) -> pd.DataFrame:
 
 
 def _require_columns(df: pd.DataFrame, required: set[str], message: str) -> None:
-    """Raise an error when required dataframe columns are missing."""
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"{message}: {sorted(missing)}")
 
 
 def _sort_curve_df(work: pd.DataFrame) -> pd.DataFrame:
-    """Sort curve points in a stable display order."""
     if work.empty:
         return work
 
@@ -319,7 +308,6 @@ def _prepare_base_curve_df(
     latency_col: str,
     missing_message: str,
 ) -> pd.DataFrame:
-    """Normalize common curve columns and remove unusable rows."""
     required = {"parallel", latency_col, *_BASE_CURVE_COLUMNS}
     _require_columns(df, required, missing_message)
 
@@ -360,7 +348,6 @@ def _prepare_latency_curve_df(
     latency_col: str,
     missing_message: str,
 ) -> pd.DataFrame:
-    """Prepare latency-based curve rows for plotting."""
     work = _prepare_base_curve_df(
         df,
         latency_col=latency_col,
@@ -422,7 +409,6 @@ def _emit_curve_df(
     skip_label: str,
     emit_kwargs: dict[str, str] | None = None,
 ) -> bool:
-    """Emit a prepared curve dataframe if it contains plottable rows."""
     if curve_df.empty:
         logger.warning("Skipping %s: no rows after filtering.", skip_label)
         return False
@@ -442,7 +428,6 @@ def _emit_prepared_curve(
     skip_label: str,
     emit_kwargs: dict[str, str],
 ) -> bool:
-    """Prepare curve data and emit it with warning-based fallback."""
     try:
         curve_df = prepare_curve()
     except ValueError as exc:
@@ -499,7 +484,6 @@ def plot_disagg_terminal_curves(
 def _pd_tps_curve_df(
     pd_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Project PD-ratio rows into Decode-side TPS curve rows."""
     source_cols = tuple(_PD_TPS_RENAME)
     _require_columns(pd_df, set(source_cols), "PD TPS curve plot missing columns")
     work = pd_df[list(source_cols)].drop_duplicates().rename(columns=_PD_TPS_RENAME)
@@ -540,7 +524,6 @@ class MultiDeviceComparisonRows:
 
 
 def _first_non_empty_summary_df(results: list):
-    """Return the first non-empty summary dataframe from optimizer results."""
     for res in results:
         summary_df = res.get_summary_df()
         if summary_df is not None and not summary_df.empty:
@@ -580,7 +563,6 @@ def _collect_cross_hardware_row(
     profile_name: str,
     args,
 ) -> None:
-    """Collect one cross-hardware comparison row for the active mode."""
     if args.disagg:
         collectors = (
             (res.collect_disagg_prefill_row, rows.disagg_prefill),
