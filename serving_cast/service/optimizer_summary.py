@@ -373,7 +373,7 @@ class OptimizerSummary:
 
         # Overall Best Configuration section
         final_out.append("  Overall Best Configuration:")
-        final_out.append(f"      PD配比: {best_result['pd_ratio']:.2f} (P Instance:D Instance)")
+        final_out.append(f"      PD Ratio: {best_result['pd_ratio']:.2f} (P Instance:D Instance)")
         final_out.append(
             f"      Prefill QPS: {best_result['p_qps']:.2f} req/s  "
             f"(TTFT: {best_result['ttft_p']:.2f} ms, Parallel: {best_result['parallel_p']}, "
@@ -461,7 +461,7 @@ class OptimizerSummary:
 def _get_agg_table_buf(df: pd.DataFrame):
     show_len = len(df)
     table_buf = []
-    table_buf.append(f"Top {show_len} PD混部 Configurations: ")
+    table_buf.append(f"Top {show_len} PD Aggregated Configurations: ")
     table = PrettyTable()
     table.field_names = SHOW_COLUMNS
     for i in range(show_len):
@@ -490,11 +490,11 @@ def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None)
     table_buf = []
     table = PrettyTable()
     if is_decode:
-        table_buf.append(f"Top {show_len} PD分离 Decode Configurations: ")
+        table_buf.append(f"Top {show_len} PD Disaggregated Decode Configurations: ")
         local_column.insert(2, "QPS (req/s)")
         local_column.remove(TTFT_COLUMN)
     else:
-        table_buf.append(f"Top {show_len} PD分离 Prefill Configurations: ")
+        table_buf.append(f"Top {show_len} PD Disaggregated Prefill Configurations: ")
         local_column.insert(2, "QPS (req/s)")
         local_column.remove(TPOT_COLUMN)
 
@@ -530,13 +530,13 @@ def _get_pd_ratio_table_buf(df: pd.DataFrame):
     """
     show_len = len(df)
     table_buf = []
-    table_buf.append(f"  Top {show_len} PD配比 Configurations:")
+    table_buf.append(f"  Top {show_len} PD Ratio Configurations:")
 
     table = PrettyTable()
 
     table.field_names = [
         "Top",
-        "PD配比",
+        "PD Ratio",
         "Balanced QPS (req/s)",
         "P QPS (req/s)",
         "D QPS (req/s)",
@@ -585,7 +585,7 @@ def render_cross_device_comparison(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * 100,
-        "  Cross-hardware - PD混部 (best throughput config per device under TTFT/TPOT limits)",
+        "  Cross-hardware - PD Aggregated (best throughput config per device under TTFT/TPOT limits)",
         "  " + "-" * 96,
     ]
     table = PrettyTable()
@@ -629,7 +629,7 @@ def render_cross_hardware_pd_ratio(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * banner_w,
-        "  Cross-hardware - PD配比 (best balanced QPS per device under TTFT/TPOT limits)",
+        "  Cross-hardware - PD Ratio (best balanced QPS per device under TTFT/TPOT limits)",
         "  " + "-" * (banner_w - 4),
     ]
     table = PrettyTable()
@@ -637,7 +637,7 @@ def render_cross_hardware_pd_ratio(rows: list[dict]) -> str:
         "Top",
         "Device",
         "Balanced QPS (req/s)",
-        "PD配比 (P:D inst)",
+        "PD Ratio (P:D inst)",
         "P QPS (req/s)",
         "D QPS (req/s)",
         "TTFT (ms)",
@@ -683,7 +683,7 @@ def render_cross_hardware_disagg_prefill(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * 108,
-        "  Cross-hardware - PD分离 Prefill (best token/s per device under TTFT limits)",
+        "  Cross-hardware - PD Disaggregated Prefill (best token/s per device under TTFT limits)",
         "  " + "-" * 104,
     ]
     table = PrettyTable()
@@ -728,7 +728,7 @@ def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
     lines = [
         "",
         "*" * 108,
-        "  Cross-hardware - PD分离 Decode (best token/s per device under TPOT limits)",
+        "  Cross-hardware - PD Disaggregated Decode (best token/s per device under TPOT limits)",
         "  " + "-" * 104,
     ]
     table = PrettyTable()
