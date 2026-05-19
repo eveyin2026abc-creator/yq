@@ -12,275 +12,398 @@
 
 ### 背景与问题
 
-`throughput_optimizer` CLI 在单机建模视角下对给定序列长度与 SLO（TTFT/TPOT 等）搜索最优并行与并发配置。实际选型时常需在 **多种 DeviceProfile** 间对比「同等约束下谁更优」，且单硬件深入分析时需要 **可视化吞吐–并发–时延** 关系。此前若仅支持逐设备打印明细、缺少结构化跨硬件汇总或终端曲线，使用者难以在一次命令中完成对比与曲线复盘。
+`throughput_optimizer` 用于在给定输入长度、输出长度和 SLO 约束下，搜索最优并行和并发配置。实际选型时通常同时存在两类诉求：
 
-### 核心价值与目标
+1. 横向比较多种 `DeviceProfile`，判断在相同约束下哪种硬件更优。
+2. 纵向分析单一硬件，观察吞吐、QPS、并发和时延之间的关系。
 
-（1）**多 `--device`**：单次调用传入多个已注册硬件画像名，按画像顺序依次完整寻优；在 **多于一块画像** 时，于全部运行结束后输出 **设备抽象参数对照表** 与 **模式相关的跨硬件排行表**。  
-（2）**终端 ASCII Plot**：在 **仅单一 `--device`** 时，寻优结束后自动（在满足依赖时）用 **plotext** 在终端绘制两组 ASCII 曲线：**纵轴为吞吐（聚合/拆解 token/s）或 P/D QPS（PD 比例模式）**，横轴分别为 **并发** 与 **TPOT 或 TTFT（按模式）**。  
-（3）**模式一致**：聚合（默认）、拆解（`--disagg`）、PD 比例寻优（`--enable-optimize-prefill-decode-ratio`）在多硬件路径下的 **表格展示分支** 与单硬件路径下的 **曲线绘制分支** 语义对齐，避免使用者混淆。
+当前建模寻优结果仅输出不同场景下的性能列表，整体结果不直观，不能同时对比多个硬件的性能。
 
-对用户而言：多硬件一次跑完即可得到可排序的对比表；单硬件一次跑完可在终端直接看到曲线趋势（无需额外子命令）。对维护者而言：展示逻辑集中在 `optimizer_summary`（表格）与 `optimizer_curve_plots`（曲线），CLI 层只做编排。
+### 目标
+
+1. 支持 `--device DEVICE [DEVICE ...]` 一次传入多个硬件，在一次命令内完成逐设备寻优与跨硬件汇总，汇总输出硬件最优性能的配置对比。
+2. 在仅单设备时自动输出终端 ASCII 曲线，覆盖聚合、拆解和 PD 比例三类模式。曲线展示为Concurrency & TPS曲线，TPOT & TPS曲线。
+3. 将展示职责集中到两个 service 模块：
+   - `optimizer_summary.py`：负责结果过滤、最佳配置提取、PrettyTable 输出。
+   - `optimizer_curve_plots.py`：负责终端曲线绘制，以及多设备执行编排和跨硬件汇总调度。
 
 ---
 
-## 实现思路
+## 当前实现概览
 
-### 总体架构
+### 模块职责
 
-- **入口**：`cli/inference/throughput_optimizer.py` 的 `main()` 解析参数 → 校验 `--device` → 计算 `plot_curves_allowed` → 调用 `_run_multi_device_loop()` → 调用 `_render_cross_hardware_summary()`。
-- **逐设备执行**：`_run_multi_device_loop` 对每个 `profile_name` 临时改写 `args.device` 为该画像，构造 `ParallelRunner`；根据是否拆解或 PD 比例调用 `run_agg()` 或 `run_disagg()`；对每个 `OptimizerSummary` 调用 `report_final_result`；若 **多硬件** 则从结果中 **采集一行对比摘要** 写入对应列表（聚合 / PD / Prefill / Decode）。
-- **曲线**：仅当 `plot_curves_allowed` 为真（见下文谓词）时，在该设备循环迭代内调用 `serving_cast.service.optimizer_curve_plots` 中对应入口，向 stdout 打印 plotext 画布。
-- **跨硬件表格**：仅当 `len(device_targets) > 1` 时，`_render_cross_hardware_summary` 打印 `render_hardware_profile_comparison`，再按 CLI 模式打印 `render_cross_device_comparison`、`render_cross_hardware_pd_ratio` 或 Prefill/Decode 两张拆解表。
-
-### 关键谓词与分支
-
-| 谓词 | 含义 |
+| 模块 | 当前职责 |
 |------|------|
-| `multi_hw = len(device_targets) > 1` | 采集跨硬件行并在收尾打印对比表 |
-| `plot_curves_allowed = len(device_targets) == 1` | 允许打印终端 ASCII 曲线（与拆解、PD 比例兼容；多硬件时不画曲线，避免刷屏与语义混杂） |
+| `cli/inference/throughput_optimizer.py` | 参数解析、模式校验、设备校验、调用执行入口 |
+| `cli/utils.py` | `check_device_targets()` device参数校验 |
+| `serving_cast/service/optimizer_curve_plots.py` | 终端 ASCII 曲线、单/多设备执行编排、跨硬件汇总调度 |
+| `serving_cast/service/optimizer_summary.py` | 单设备结果过滤与打印、跨硬件表格渲染、PD/拆解结果整理 |
 
-曲线侧分流（单设备时）：
 
-- **PD 比例**：对首个非空 `get_summary_df()` 调用 `plot_pd_ratio_terminal_curves`（含 Prefill 侧 QPS–并发–TTFT 与 Decode 侧 QPS–并发–TPOT 两组图，纵轴标签分别为 P/D QPS）。
-- **拆解**：`plot_disagg_terminal_curves`，按各 `OptimizerSummary.data_config` 区分 Prefill（`ttft_limits` 有、`tpot_limits` 无）与 Decode（反之），分别准备数据并各 emit 一组双图。
-- **聚合**：`plot_concurrency_curves_from_optimizer_summaries`，合并多 runner 的 summary DataFrame 后画 **token/s vs 并发** 与 **token/s vs TPOT**。
+### 当前调用链
 
-数据准备要点（`optimizer_curve_plots.py`）：
-
-- 聚合与 Decode：`_prepare_curve_df`，按 TTFT/TPOT 限制与内存可用列过滤；若存在 `ttft` 列且 **至少有一个非空**，才应用 TTFT SLA，避免 Decode 全 NaN 误杀。
-- Prefill：保留 `ttft` 作为第二张图的横轴；源表即使同时带有无用 `tpot` 列，也不会参与 Prefill 曲线排序，避免重复列标签或语义混淆。
-
-### 逻辑流程图
-
-```plantuml
-@startuml
-start
-:解析 argv，校验 device / PD / disagg 互斥与必填项;
-:device_targets = unique(args.device);
-if (len(device_targets) > 1?) then (yes)
-  :multi_hw = true;\n不画终端曲线;
-else (no)
-  :plot_curves_allowed = true;
-endif
-
-repeat :遍历 profile_name in device_targets;
-  :args.device = profile_name;\nParallelRunner(args);
-  if (disagg or PD ratio?) then (yes)
-    :results = run_disagg();
-  else (no)
-    :results = run_agg();
-  endif
-  :report_final_result 每条结果;
-  if (multi_hw?) then (yes)
-    if (disagg?) then (yes)
-      :collect Prefill / Decode 行;
-    elseif (PD ratio?) then (yes)
-      :collect PD 对比行;
-    else (no)
-      :collect 聚合对比行;
-    endif
-  endif
-  if (plot_curves_allowed?) then (yes)
-    if (PD ratio?) then (yes)
-      :plot_pd_ratio_terminal_curves;
-    elseif (disagg?) then (yes)
-      :plot_disagg_terminal_curves;
-    else (no)
-      :plot_concurrency_curves_from_optimizer_summaries;
-    endif
-  endif
-repeat while (还有下一画像?) is (yes)
-
-if (multi_hw?) then (yes)
-  :render_hardware_profile_comparison;
-  :按模式 render 跨硬件表;
-endif
-stop
-@enduml
+```text
+throughput_optimizer.main
+  -> check_device_targets(args, logger)
+  -> plot_curves_allowed = len(device_targets) == 1
+  -> run_multi_device_loop(args, device_targets, plot_curves_allowed, logger)
+  -> render_cross_hardware_summary(args, device_targets, hw_rows, logger)
 ```
 
-### 时序图
+说明：
 
-```plantuml
-@startuml
-actor User
-participant CLI as "throughput_optimizer.main"
-participant Loop as "_run_multi_device_loop"
-participant Runner as "ParallelRunner"
-participant Summary as "OptimizerSummary"
-participant Plots as "optimizer_curve_plots"
-participant Tables as "optimizer_summary.render_*"
+- `run_multi_device_loop()` 与 `render_cross_hardware_summary()` 位于 `optimizer_curve_plots.py`。
 
-User -> CLI: python -m ... --device A B ...
-CLI -> Loop: device_targets, plot_curves_allowed
+---
 
-loop 每个硬件画像
-  Loop -> Runner: run_agg / run_disagg
-  Runner --> Summary: 多条结果
-  Loop -> Summary: report_final_result
-  alt 多硬件
-    Loop -> Loop: collect_*_row
-  end
-  alt 单硬件且允许曲线
-    Loop -> Plots: plot_*_terminal_curves
-    Plots --> User: stdout ASCII 图
-  end
-end
+## 详细设计
 
-CLI -> Tables: _render_cross_hardware_summary (若 |devices|>1)
-Tables --> User: 设备参数表 + 排行表
-@enduml
+### 1. CLI 入口层
+
+`cli/inference/throughput_optimizer.py` 当前负责：
+
+1. 解析参数。
+2. 调用 `check_device_targets(args, logger)` 统一校验 `--device`。
+3. 根据设备数量计算 `plot_curves_allowed = len(device_targets) == 1`。
+4. 调用 `run_multi_device_loop()` 执行寻优和结果采集。
+5. 调用 `render_cross_hardware_summary()` 输出跨硬件摘要。
+
+### 2. 设备校验
+
+`--device` 由 `cli/utils.py` 中的 `check_device_targets()` 统一校验，职责包括：
+
+1. 处理未传 `--device` 时的默认画像选择。
+2. 去重并保持输入顺序。
+3. 拒绝空白、未知设备名。
+4. 校验设备画像通信网格与 `--num-devices` 的适配关系。
+
+这样 CLI 主流程聚焦于参数解析和执行编排，设备校验细节由通用工具函数负责。
+
+### 3. 多设备执行编排
+
+`optimizer_curve_plots.py` 中的 `run_multi_device_loop()` 负责多设备执行编排。
+
+执行流程如下：
+
+1. 遍历 `device_targets`。
+2. 对每个 `profile_name` 暂时写回 `args.device`。
+3. 创建 `ParallelRunner(args)`。
+4. 根据模式选择：
+   - 聚合模式：`run_agg()`
+   - 拆解模式或 PD 比例模式：`run_disagg()`
+5. 遍历本次结果列表 `results`：
+   - 调用 `res.report_final_result(args, silent=False)` 输出单设备结果。
+   - 若为多硬件模式，则从结果中抽取一行跨硬件对比摘要。
+6. 若 `plot_curves_allowed` 为真，则在当前设备执行完成后绘制终端曲线。
+
+### 4. 跨硬件摘要采集
+
+跨硬件摘要依赖 `OptimizerSummary` 中的行提取方法：
+
+| 模式 | 行提取方法 | 排序指标 |
+|------|------|------|
+| 聚合 | `collect_comparison_row()` | `throughput_tps` |
+| 拆解 Prefill | `collect_disagg_prefill_row()` | `throughput_tps` |
+| 拆解 Decode | `collect_disagg_decode_row()` | `throughput_tps` |
+| PD 比例 | `collect_pd_ratio_comparison_row()` | `balanced_qps` |
+
+采集结果统一存入 `MultiDeviceComparisonRows`：
+
+```text
+aggregation
+pd_ratio
+disagg_prefill
+disagg_decode
 ```
 
-### 代码结构设计（逻辑分组）
+### 5. 跨硬件摘要输出
 
-```plantuml
-@startuml
-package "cli/inference" {
-  [throughput_optimizer] as TO
-}
-package "serving_cast.service" {
-  [optimizer_summary] as OS
-  [optimizer_curve_plots] as OCP
-}
-package "serving_cast" {
-  [parallel_runner] as PR
-}
+`render_cross_hardware_summary()` 的当前行为：
 
-TO --> PR : ParallelRunner / run_agg / run_disagg
-TO --> OS : render_cross_* , render_hardware_profile_comparison
-TO --> OCP : plot_* (单 device)
-OCP ..> OS : 无直接依赖（仅用 DataFrame / summary）
-@enduml
+1. 当 `len(device_targets) <= 1` 时直接返回，不打印跨硬件表。
+2. 先调用 `render_hardware_profile_comparison(device_targets)` 输出设备画像参数表。
+3. 再按模式输出对应汇总表：
+   - 聚合：`render_cross_device_comparison()`
+   - 拆解：`render_cross_hardware_disagg_prefill()` 和 `render_cross_hardware_disagg_decode()`
+   - PD 比例：`render_cross_hardware_pd_ratio()`
+
+当对应模式下没有有效汇总行时，仅记录 warning，不中断主流程。
+
+---
+
+## 终端 ASCII 曲线设计
+
+### 1. 启用条件
+
+终端曲线只在以下条件下启用：
+
+```text
+plot_curves_allowed = len(device_targets) == 1
 ```
+
+即：
+
+- 单设备：可绘图
+- 多设备：不绘图，只输出汇总表
+
+这样可以避免一次命令输出过多大块 ASCII 图，保证多设备模式的输出以汇总对比为主。
+
+### 2. 当前绘图入口
+
+`optimizer_curve_plots.py` 中统一由 `_plot_single_device_optimizer_curves()` 进行模式分发：
+
+| 模式 | 入口 |
+|------|------|
+| 聚合 | `plot_concurrency_curves_from_optimizer_summaries()` |
+| 拆解 | `plot_disagg_terminal_curves()` |
+| PD 比例 | `plot_pd_ratio_terminal_curves()` |
+
+### 3. 曲线内容
+
+#### 聚合模式
+
+从多个 `OptimizerSummary.get_summary_df()` 合并结果后，绘制两张图：
+
+1. `Throughput (token/s) vs Concurrency`
+2. `Throughput (token/s) vs TPOT (ms)`
+
+#### 拆解模式
+
+按 `OptimizerSummary.data_config` 区分两类结果：
+
+- Prefill：`ttft_limits is not None and tpot_limits is None`
+- Decode：`tpot_limits is not None and ttft_limits is None`
+
+分别绘制：
+
+- Prefill：
+  1. `Throughput (token/s) vs Concurrency`
+  2. `Throughput (token/s) vs TTFT (ms)`
+- Decode：
+  1. `Throughput (token/s) vs Concurrency`
+  2. `Throughput (token/s) vs TPOT (ms)`
+
+#### PD 比例模式
+
+PD 模式从同一张 summary DataFrame 中抽取两套视图：
+
+- Prefill-side：使用 `parallel_p / concurrency_p / p_qps / ttft_p`
+- Decode-side：使用 `parallel_d / concurrency_d / d_qps / tpot_d`
+
+绘制四张图：
+
+1. `P QPS (req/s) vs Concurrency`
+2. `P QPS (req/s) vs TTFT (ms)`
+3. `D QPS (req/s) vs Concurrency`
+4. `D QPS (req/s) vs TPOT (ms)`
+
+### 4. 当前过滤规则
+
+这里需要明确区分“表格过滤”和“曲线过滤”。
+
+#### 表格/最佳配置过滤
+
+`optimizer_summary.py` 中：
+
+- 聚合/拆解使用 TTFT/TPOT SLA 过滤后选最优。
+- PD 比例使用 `ttft_p` / `tpot_d` SLA 过滤后，再按 `balanced_qps` 去重和排序。
+
+#### 曲线过滤
+
+`optimizer_curve_plots.py` 中当前只保留两类处理：
+
+1. 校验必需列是否存在。
+2. 过滤 OOM 或显存不足点，即：
+   - `memory_left_gb <= 0`
+   - 或 `device_memory_available_gb <= 0`
+
+当前实现**不再用 TTFT/TPOT SLA 过滤曲线点**。保留 `ttft_limit` / `tpot_limit` 参数主要是为了兼容外部调用接口，而不是实际参与曲线筛选。
+
+这样做的目的，是在终端图里尽量保留完整 sweep 结果，只剔除明显无效的 OOM 点。
+
+### 5. 绘图细节
+
+当前绘图实现的几个关键点：
+
+1. 使用 `plotext` 的模块级共享画布。
+2. 每个 `parallel` 配置绘制一条线。
+3. 每个模式默认输出两张图；PD 模式输出两组双图。
+4. 图尺寸由内部常量控制：
+   - `_TERMINAL_PLOT_COLS = 128`
+   - `_TERMINAL_PLOT_ROWS = 38`
+5. 线条标记为 `dot`，不同 `parallel` 使用轮转色板。
+
+由于 `plotext` 是模块级状态式 API，当前假设调用过程为串行单线程；这与 CLI 当前的顺序执行方式一致。
+
+---
+
+## `optimizer_summary.py` 的当前角色
+
+### 1. 单设备结果输出
+
+`OptimizerSummary.report_final_result()` 按模式输出最终结果：
+
+| 模式 | 输出逻辑 |
+|------|------|
+| 聚合/拆解 | `_get_agg_disagg_final_out()` |
+| PD 比例 | `_get_pd_ratio_final_out()` |
+| `--dump-original-results` | 打印原始或过滤后的 DataFrame |
+
+### 2. 聚合/拆解最佳点选择
+
+`_prepare_agg_disagg_results()` 当前逻辑：
+
+1. 使用 TTFT/TPOT 限制做过滤。
+2. 以 `token/s` 降序排序。
+3. 对每个 `parallel` 仅保留一条最佳记录。
+4. 再按 `token/s` 总排序。
+
+### 3. 拆解 QPS 计算
+
+`_compute_disagg_request_qps()` 用于拆解汇总表中的 `QPS (req/s)` 字段：
+
+- Prefill：`concurrency / ttft * 1000`
+- Decode：`concurrency / (tpot * output_length) * 1000`
+
+### 4. PD 比例结果整理
+
+`_prepare_pd_ratio_results()` 当前逻辑：
+
+1. 按 `ttft_p` / `tpot_d` 做 SLA 过滤。
+2. 对每个 `(parallel_p, parallel_d)` 组合仅保留 `balanced_qps` 最优项。
+3. 按四舍五入到 2 位小数后的 `balanced_qps` 再去重。
+4. 最终按 `balanced_qps` 降序返回。
+
+### 5. 跨硬件表格渲染
+
+当前由 `optimizer_summary.py` 统一输出：
+
+- `render_hardware_profile_comparison()`
+- `render_cross_device_comparison()`
+- `render_cross_hardware_disagg_prefill()`
+- `render_cross_hardware_disagg_decode()`
+- `render_cross_hardware_pd_ratio()`
+
+因此，`optimizer_curve_plots.py` 与 `optimizer_summary.py` 之间现在是**直接依赖关系**，而不是纯粹通过 DataFrame 间接配合。
 
 ---
 
 ## 接口设计
 
-### CLI（使用者）
+### CLI 参数
 
-| 参数 / 模式 | 说明 |
-|-------------|------|
-| `--device DEVICE [DEVICE ...]` | 一个或多个已注册 `DeviceProfile` 名；多画像时顺序执行并在末尾输出跨硬件表；**仅单画像时** 才可能输出终端 ASCII 曲线。 |
-| `--disagg` | 拆解寻优；与 `--enable-optimize-prefill-decode-ratio` **互斥**。多硬件时采集 Prefill/Decode 两行并分别打印跨硬件表。 |
-| `--enable-optimize-prefill-decode-ratio` | PD 比例网格寻优；需同时配置 `--prefill-devices-per-instance` 与 `--decode-devices-per-instance`。多硬件时按 **balanced QPS** 排序打印 PD 对比表。 |
-| `--ttft-limits` / `--tpot-limits`（及既有 SLO 相关项） | 既影响寻优过滤，也影响曲线 DataFrame 过滤（见 `_prepare_*`）。 |
+本特性对外接口为：
 
-### 内部关键接口（维护者）
-
-| 符号 | 说明 |
-|------|------|
-| `_run_multi_device_loop(..., plot_curves_allowed)` | 多硬件循环、采集对比行、触发曲线。 |
-| `_render_cross_hardware_summary(args, device_targets, rows)` | `len(device_targets)<=1` 时直接返回；否则打印画像摘要 + 模式对应跨硬件表。 |
-| `render_hardware_profile_comparison(device_names)` | 有效 GEMM、内存带宽、容量、通信网格形状对照。 |
-| `render_cross_device_comparison(rows)` | 聚合：按 `throughput_tps` 排序。 |
-| `render_cross_hardware_pd_ratio(rows)` | PD：按 `balanced_qps` 排序。 |
-| `render_cross_hardware_disagg_prefill / _decode(rows)` | 拆解两阶段分别排序展示。 |
-| `plot_concurrency_curves_from_optimizer_summaries` | 聚合终端曲线。 |
-| `plot_disagg_terminal_curves` | 拆解 Prefill（第二轴 TTFT）与 Decode（第二轴 TPOT）。 |
-| `plot_pd_ratio_terminal_curves` | PD：Prefill 侧 **P QPS**；Decode 侧 **D QPS**。 |
-
-### 依赖与降级
-
-| 依赖 | 行为 |
-|------|------|
-| **plotext**（可选） | 未安装时记录 warning，跳过终端曲线，不影响寻优与表格。 |
-| **torch**（画像表） | `render_hardware_profile_comparison` 在 ImportError 时跳过并 warning。 |
-
----
-
-## 模块与周边关系
-
-```plantuml
-@startuml
-package "msmodeling" {
-  [tensor_cast.device_profiles] as DP
-  [throughput_optimizer CLI] as CLI
-  [serving_cast.parallel_runner] as SC_PR
-  [optimizer_summary] as OSUM
-  [optimizer_curve_plots] as OCP
-}
-DP ..> CLI : DeviceProfile 注册名
-CLI --> SC_PR : 建模任务编排
-SC_PR --> OSUM : OptimizerSummary / DataFrame
-CLI --> OSUM : 表格渲染
-CLI --> OCP : 单设备 plotext
-@enduml
+```bash
+--device DEVICE [DEVICE ...]
 ```
 
-约束：终端 plotext 使用模块级画布，**不适合并发交错调用**；当前 CLI 为顺序单线程调用，满足约定。
+### 取值规则
+
+`--device` 的入参形式为一个或多个设备名：
+
+```bash
+--device AtlasA2
+--device AtlasA2 Atlas800I
+```
+
+处理规则如下：
+
+1. **不传值**
+   - 即命令中不出现 `--device`
+   - `args.device` 为 `None`
+   - 由 `check_device_targets()` 补全默认设备画像
+
+2. **传入空值**
+   - 由于参数定义为 `nargs="+"`，显式写出 `--device` 时必须至少跟一个值
+   - 若没有值，CLI 在参数解析阶段直接报错退出
+   - 若值为空白字符串，也会在校验阶段判定为非法并退出
+
+3. **传入有效值**
+   - 每个值都必须是已注册的 `DeviceProfile` 名称
+   - 支持单值或多值输入
+   - 重复值会去重并保留首次出现顺序
+   - 规范化后得到 `device_targets: list[str]`
 
 ---
 
-## DFX 能力设计
+## DFX 说明
 
 ### 安全性
 
-无新增网络监听或任意代码执行；输出仅为 stdout 表格与 ASCII 图。多硬件对比数据来自本地建模结果。
+当前实现没有新增网络接口，也没有新增文件落盘行为。特性输出仅包括：
+
+- stdout 表格
+- stdout ASCII 曲线
+- warning / exception 日志
 
 ### 可靠性
 
-曲线绘制异常单独捕获并记录 `Terminal ASCII optimizer curves failed`，不中断主流程（具体以当前实现为准：emit 层 try/except 记录日志）。Prefill 路径直接使用 `ttft` 作为横轴，避免把 `ttft` 临时改名为 `tpot` 后产生重复列名。
+1. 曲线绘制路径对 `ImportError` 和绘图异常都有降级处理。
+2. 缺列或过滤后为空时，曲线入口返回 `False` 并记录 warning，不中断寻优主流程。
+3. Prefill 曲线直接使用 `ttft` 列，不再通过将 `ttft` 临时改名为 `tpot` 的方式复用逻辑，避免重复列名问题。
 
-### 可用性 / 性能
+### 性能与可用性
 
-多硬件为 **顺序** 执行画像，总耗时随画像数近似线性增长；终端曲线只在单硬件启用，避免一次性输出过多大图。
-
-### 可测试性
-
-| 方向 | 说明 |
-|------|------|
-| 单元测试 | `serving_cast/tests/ut/test_service/test_optimizer_curve_plots.py`：聚合曲线入口、列缺失、SLA 过滤、OOM 过滤、Prefill 双列防护等。 |
-| CLI / 集成 | 可对 `_run_multi_device_loop` / `main` 做 mock runner 测分支；或使用极小网格手工跑一次多 `--device` 验收表格与单 `--device` 验收曲线（需安装 plotext）。 |
-
-### 安全设计及安全 checklist（摘要）
-
-| Checklist 内容 | 检查结果 |
-|----------------|----------|
-| 新增对外网络接口 | N |
-| 新增任意文件写（曲线） | N（仅 stdout） |
-| 可选第三方绘图库 plotext | Y（pip 常规依赖，使用者可控安装） |
+1. 多设备模式按顺序执行，总耗时与设备数近似线性相关。
+2. 多设备模式不出图，避免终端刷屏。
+3. 单设备出图以 ASCII 终端可读性为目标，不追求高保真制图能力。
 
 ---
 
-## 使用说明
+## 测试现状与建议
 
-1. **多硬件对比**：`--device ProfA ProfB ProfC`，无需额外开关；收尾可见「设备 profile 摘要」与对应模式下的跨硬件排行表。  
-2. **终端曲线**：仅保留 **一个** `--device`；确保环境已安装 **plotext**。拆解与 PD 比例模式下同样会在单设备时出图。  
-3. **模式互斥**：`--enable-optimize-prefill-decode-ratio` 与 `--disagg` 不可同时使用（CLI 会报错退出）。  
-4. **空表或无曲线**：跨硬件行依赖各次寻优是否产出有效「最佳配置」；若全部被过滤可能打印 warning。曲线在过滤后无行、缺少必需列、或未安装 plotext 时可能跳过。
+### 当前已有测试
+
+当前仓库中可以确认的相关单测主要在：
+
+- `serving_cast/tests/ut/test_service/test_optimizer_summary.py`
+
+覆盖内容包括：
+
+1. `OptimizerSummary` 初始化与 `summary_df` 读写。
+2. early stop flag 逻辑。
+3. 聚合结果输出基础路径。
+4. PD 比例模式判定、去重、实例分配和最终输出结构。
+
+### 当前缺口
+
+目前未看到独立的 `test_optimizer_curve_plots.py`。因此以下部分仍主要依赖代码阅读和手工验证：
+
+1. 终端曲线入口分发。
+2. OOM 过滤与缺列降级路径。
+3. 单设备/多设备分支切换。
+4. `run_multi_device_loop()` 与 `render_cross_hardware_summary()` 的协同行为。
+
+### 建议测试方向
+
+1. 新增 `optimizer_curve_plots` 相关 UT，覆盖：
+   - `_prepare_curve_df()`
+   - `_prepare_disagg_prefill_curve_df()`
+   - `_pd_side_curve_df()`
+   - `plot_*_terminal_curves()` 的空数据与缺列分支
+2. 对 `run_multi_device_loop()` 做 mock runner 测试，验证多设备行采集逻辑。
+3. 手工验收以下场景：
+   - 单 `--device` 聚合模式：有 ASCII 图
+   - 单 `--device --disagg`：Prefill/Decode 曲线都正常
+   - 单 `--device` PD 比例模式：P/D QPS 曲线正常
+   - 多 `--device`：仅打印跨硬件表，不打印 ASCII 图
 
 ---
 
-## 测试设计
+## 限制与后续演进
 
-| 类型 | 覆盖点 |
-|------|--------|
-| UT | `optimizer_curve_plots`：有效 DataFrame 触发 emit（mock）、缺列跳过、TTFT 过滤致空、内存过滤、同表含 `ttft`+`tpot` 的 Prefill 预处理。 |
-| IT / 手工 | 单 `--device` + 安装 plotext：聚合 / `--disagg` / PD 比例各跑一次，确认两组 ASCII 图与日志无异常。 |
-| IT / 手工 | 双 `--device`：确认出现跨硬件表且无终端曲线（或曲线块不出现）。 |
+### 当前限制
 
----
+1. 曲线仅输出到终端，不生成文件。
+2. 多设备模式不绘图。
+3. 曲线 API 仍保留 `ttft_limit` / `tpot_limit` 参数，但当前实现不使用它们参与曲线筛选。
+4. 终端图依赖 `plotext` 的共享画布模型，不适合并发交错调用。
 
-## 特性规格与限制
+### 后续可选方向
 
-- **曲线粒度**：每个终端图固定宽度/高度（模块内常量 `_TERMINAL_PLOT_COLS` / `_TERMINAL_PLOT_ROWS`），适合快速肉眼对比，非出版级图表。  
-- **多硬件不画曲线**：设计取舍；若未来需要可为每画像落地独立 PNG/HTML，需另设特性。  
-- **数据列契约**：PD 比例曲线依赖 summary DataFrame 中存在 `parallel_p/concurrency_p/p_qps/ttft_p` 与 `parallel_d/concurrency_d/d_qps/tpot_d` 等列（与寻优输出 schema 一致）。
-
----
-
-## 兼容性声明
-
-- CLI 对外参数保持既有语义；多 `--device` 与单设备曲线的组合规则为 **行为约定**（单设备才 plot），建议在 README 或用户文档中与 `--help` 同步说明。  
-- 未安装 plotext 时行为与旧版「跳过绘图」一致。
-
----
-
-## 拓展性
-
-- 可增加 `--no-terminal-plots` 显式关闭曲线而不改单/多设备判定。  
-- 可将曲线后端抽象为 plotext / matplotlib 文件输出双实现。  
-- 跨硬件表可增加 CSV/JSON artifact 导出便于流水线归档。
+1. 增加 `--no-terminal-plots` 开关，允许单设备下显式关闭曲线。
+2. 增加文件型后端，如 PNG / SVG / HTML 输出。
+3. 为跨硬件汇总增加 CSV / JSON artifact 输出。
+4. 为曲线与多设备编排补齐系统化单元测试。
