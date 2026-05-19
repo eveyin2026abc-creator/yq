@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from serving_cast.service.throughput_optimizer_workflow import (
+from serving_cast.service.optimizer_curve_plots import (
     render_cross_hardware_summary,
     run_multi_device_loop,
 )
