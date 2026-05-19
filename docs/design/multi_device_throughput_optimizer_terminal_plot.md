@@ -42,7 +42,6 @@
 | `serving_cast/service/optimizer_curve_plots.py` | 终端 ASCII 曲线、单/多设备执行编排、跨硬件汇总调度 |
 | `serving_cast/service/optimizer_summary.py` | 单设备结果过滤与打印、跨硬件表格渲染、PD/拆解结果整理 |
 
-
 ### 当前调用链
 
 ```text
