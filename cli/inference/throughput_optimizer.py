@@ -51,47 +51,52 @@ from ..utils import (
 )
 
 
-def _default_device_profile_names() -> list[str]:
-    """Pick a CLI default device list when ``--device`` is omitted.
-
-    Prefer any registered profile other than ``TEST_DEVICE`` (sorted by name);
-    fall back to ``TEST_DEVICE`` if it is the only registration.
-    """
-    names = sorted(DeviceProfile.all_device_profiles.keys())
-    if not names:
-        raise RuntimeError("No device profiles are registered.")
-    for n in names:
-        if n != "TEST_DEVICE":
-            return [n]
-    return [names[0]]
-
-
-def _validate_and_resolve_devices(args: argparse.Namespace, logger: logging.Logger) -> bool:
-    """Ensure ``args.device`` is set and every name exists in ``DeviceProfile``."""
+def _check_device_targets(
+    args: argparse.Namespace, logger: logging.Logger
+) -> list[str] | None:
+    """Validate ``--device``: default if omitted, de-dupe, reject invalid names, check comm grid."""
     profiles = DeviceProfile.all_device_profiles
     if not profiles:
         logger.error(
             "No device profiles are registered. Import tensor_cast.device_profiles "
             "before defining CLI defaults."
         )
-        return False
-    if args.device is None:
-        resolved = _default_device_profile_names()
-        logger.info(
-            "No --device specified; using default profile %r.",
-            resolved[0],
-        )
-        args.device = resolved
-        return True
-    unknown = [d for d in args.device if d not in profiles]
+        return None
+
+    if not args.device:
+        names = sorted(profiles)
+        args.device = [next((name for name in names if name != "TEST_DEVICE"), names[0])]
+        logger.info("No --device specified; using default profile %r.", args.device[0])
+
+    targets = list(dict.fromkeys(args.device))
+
+    blank = [name for name in targets if not str(name).strip()]
+    if blank:
+        logger.error("Empty --device name is not allowed.")
+        return None
+
+    unknown = [name for name in targets if name not in profiles]
     if unknown:
         logger.error(
             "Unknown --device name(s): %s. Valid profiles: %s",
-            ", ".join(repr(x) for x in unknown),
+            ", ".join(repr(name) for name in unknown),
             ", ".join(sorted(profiles.keys())),
         )
-        return False
-    return True
+        return None
+
+    for name in targets:
+        grid_n = profiles[name].comm_grid.grid.nelement()
+        if grid_n < args.num_devices:
+            logger.error(
+                "Device profile %r cannot model num_devices=%s "
+                "(communication grid size is %s).",
+                name,
+                args.num_devices,
+                grid_n,
+            )
+            return None
+
+    return targets
 
 
 def arg_parse():
@@ -108,14 +113,7 @@ def arg_parse():
         nargs="+",
         default=None,
         metavar="DEVICE",
-        help=(
-            "One or more device profiles. Pass multiple names in one flag to search each "
-            "hardware and print cross-hardware summaries (aggregation: one table; "
-            "--disagg: separate Prefill and Decode tables; PD ratio mode: one table ranked "
-            "by balanced QPS). "
-            "If omitted, defaults to one profile: first alphabetically among registered "
-            "profiles excluding TEST_DEVICE when available, otherwise TEST_DEVICE."
-        ),
+        help="Device profile(s) to evaluate. Multiple values enable cross-hardware summaries.",
     )
     parser.add_argument(
         "--input-length",
@@ -332,6 +330,14 @@ class _MultiDeviceComparisonRows:
     disagg_decode: list[dict]
 
 
+def _first_non_empty_summary_df(results: list):
+    for res in results:
+        summary_df = res.get_summary_df()
+        if summary_df is not None and not summary_df.empty:
+            return summary_df
+    return None
+
+
 def _plot_single_device_optimizer_curves(
     results: list,
     args: argparse.Namespace,
@@ -345,35 +351,23 @@ def _plot_single_device_optimizer_curves(
         plot_pd_ratio_terminal_curves,
     )
 
+    plot_kwargs = {
+        "basename_prefix": basename_prefix,
+        "ttft_limit": args.ttft_limits,
+        "tpot_limit": args.tpot_limits,
+    }
+
     if args.enable_optimize_prefill_decode_ratio:
-        for res in results:
-            summary_df = res.get_summary_df()
-            if summary_df is None or summary_df.empty:
-                continue
-            plot_pd_ratio_terminal_curves(
-                summary_df,
-                basename_prefix=basename_prefix,
-                ttft_limit=args.ttft_limits,
-                tpot_limit=args.tpot_limits,
-            )
-            return
+        summary_df = _first_non_empty_summary_df(results)
+        if summary_df is not None:
+            plot_pd_ratio_terminal_curves(summary_df, **plot_kwargs)
         return
 
     if args.disagg:
-        plot_disagg_terminal_curves(
-            results,
-            basename_prefix=basename_prefix,
-            ttft_limit=args.ttft_limits,
-            tpot_limit=args.tpot_limits,
-        )
+        plot_disagg_terminal_curves(results, **plot_kwargs)
         return
 
-    plot_concurrency_curves_from_optimizer_summaries(
-        results,
-        basename_prefix=basename_prefix,
-        ttft_limit=args.ttft_limits,
-        tpot_limit=args.tpot_limits,
-    )
+    plot_concurrency_curves_from_optimizer_summaries(results, **plot_kwargs)
 
 
 def _run_multi_device_loop(
@@ -492,7 +486,8 @@ def main():
     )
     logger = logging.getLogger(__name__)
 
-    if not _validate_and_resolve_devices(args, logger):
+    device_targets = _check_device_targets(args, logger)
+    if device_targets is None:
         return 1
 
     effective_input_length = OptimizerData(
@@ -530,22 +525,6 @@ def main():
             logger.error(
                 "Both --prefill-devices-per-instance and --decode-devices-per-instance "
                 "are required when PD ratio optimization is enabled."
-            )
-            return 1
-
-    device_targets = list(dict.fromkeys(args.device))
-
-    for profile_name in device_targets:
-        grid_n = DeviceProfile.all_device_profiles[
-            profile_name
-        ].comm_grid.grid.nelement()
-        if grid_n < args.num_devices:
-            logger.error(
-                "Device profile %r cannot model num_devices=%s "
-                "(communication grid size is %s).",
-                profile_name,
-                args.num_devices,
-                grid_n,
             )
             return 1
 
