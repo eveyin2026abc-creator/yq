@@ -5,7 +5,8 @@
 | 日期 | 修订版本 | 修改描述 | 作者 | RFC 文档 |
 | -- | -- | -- | -- | -- |
 | 2026-05-09 | 1.0 | 初稿：多 `--device` 对比、`plotext` 曲线、拆解/PD 比例路径说明 | — | 本文档 |
-| 2026-05-19 | 1.1 | 同步当前实现：PD 比例仅输出 TPS 双图；多 device 仅输出跨硬件汇总表 | — | 本文档 |
+| 2026-05-19 | 1.1 | 同步当前实现：PD配比仅输出 TPS 双图；多 device 仅输出跨硬件汇总表 | — | 本文档 |
+| 2026-05-19 | 1.2 | 术语统一：聚合→PD混部，拆解→PD分离，PD 比例→PD配比 | — | 本文档 |
 
 ---
 
@@ -23,7 +24,7 @@
 ### 目标
 
 1. 支持 `--device DEVICE [DEVICE ...]` 一次传入多个硬件，在一次命令内完成逐设备寻优与跨硬件汇总，汇总输出硬件最优性能的配置对比。
-2. 单设备时自动输出终端 ASCII 曲线，覆盖聚合、拆解和 PD 比例三类模式；每种模式输出 `Concurrency & TPS`、`TPOT & TPS` 两张图。
+2. 单设备时自动输出终端 ASCII 曲线，覆盖 PD混部、PD分离和 PD配比三类模式；每种模式输出 `Concurrency & TPS`、`TPOT & TPS` 两张图。
 3. 将展示职责集中到两个 service 模块：
    - `optimizer_summary.py`：负责结果过滤、最佳配置提取、PrettyTable 输出。
    - `optimizer_curve_plots.py`：负责终端曲线绘制，以及多设备执行编排和跨硬件汇总调度。
@@ -39,7 +40,7 @@
 | `cli/inference/throughput_optimizer.py` | 参数解析、模式校验、设备校验、调用执行入口 |
 | `cli/utils.py` | `check_device_targets()` device参数校验 |
 | `serving_cast/service/optimizer_curve_plots.py` | 终端 ASCII 曲线、单/多设备执行编排、跨硬件汇总调度 |
-| `serving_cast/service/optimizer_summary.py` | 单设备结果过滤与打印、跨硬件表格渲染、PD/拆解结果整理 |
+| `serving_cast/service/optimizer_summary.py` | 单设备结果过滤与打印、跨硬件表格渲染、PD分离/PD配比结果整理 |
 
 ### 当前调用链
 
@@ -92,8 +93,8 @@ throughput_optimizer.main
 2. 对每个 `profile_name` 暂时写回 `args.device`。
 3. 创建 `ParallelRunner(args)`。
 4. 根据模式选择：
-   - 聚合模式：`run_agg()`
-   - 拆解模式或 PD 比例模式：`run_disagg()`
+   - PD混部模式：`run_agg()`
+   - PD分离模式或 PD配比模式：`run_disagg()`
 5. 遍历本次结果列表 `results`：
    - 调用 `res.report_final_result(args, silent=False)` 输出单设备结果。
    - 若为多硬件模式，则从结果中抽取一行跨硬件对比摘要。
@@ -105,10 +106,10 @@ throughput_optimizer.main
 
 | 模式 | 行提取方法 | 排序指标 |
 |------|------|------|
-| 聚合 | `collect_comparison_row()` | `throughput_tps` |
-| 拆解 Prefill | `collect_disagg_prefill_row()` | `throughput_tps` |
-| 拆解 Decode | `collect_disagg_decode_row()` | `throughput_tps` |
-| PD 比例 | `collect_pd_ratio_comparison_row()` | `balanced_qps` |
+| PD混部 | `collect_comparison_row()` | `throughput_tps` |
+| PD分离 Prefill | `collect_disagg_prefill_row()` | `throughput_tps` |
+| PD分离 Decode | `collect_disagg_decode_row()` | `throughput_tps` |
+| PD配比 | `collect_pd_ratio_comparison_row()` | `balanced_qps` |
 
 采集结果统一存入 `MultiDeviceComparisonRows`：
 
@@ -126,9 +127,9 @@ disagg_decode
 1. 当 `len(device_targets) <= 1` 时直接返回，不打印跨硬件表。
 2. 先调用 `render_hardware_profile_comparison(device_targets)` 输出设备画像参数表。
 3. 再按模式输出对应汇总表：
-   - 聚合：`render_cross_device_comparison()`
-   - 拆解：`render_cross_hardware_disagg_prefill()`、`render_cross_hardware_disagg_decode()`
-   - PD 比例：`render_cross_hardware_pd_ratio()`
+   - PD混部：`render_cross_device_comparison()`
+   - PD分离：`render_cross_hardware_disagg_prefill()`、`render_cross_hardware_disagg_decode()`
+   - PD配比：`render_cross_hardware_pd_ratio()`
 
 当对应模式下没有有效汇总行时，仅记录 warning，不中断主流程。
 
@@ -159,20 +160,20 @@ plot_curves_allowed = len(device_targets) == 1
 
 | 模式 | 入口 |
 |------|------|
-| 聚合 | `plot_concurrency_curves_from_optimizer_summaries()` |
-| 拆解 | `plot_disagg_terminal_curves()` |
-| PD 比例 | `plot_pd_ratio_terminal_curves()` |
+| PD混部 | `plot_concurrency_curves_from_optimizer_summaries()` |
+| PD分离 | `plot_disagg_terminal_curves()` |
+| PD配比 | `plot_pd_ratio_terminal_curves()` |
 
 ### 3. 曲线内容
 
-#### 聚合模式
+#### PD混部模式
 
 从多个 `OptimizerSummary.get_summary_df()` 合并结果后，绘制两张图：
 
 1. `Throughput (token/s) vs Concurrency`
 2. `Throughput (token/s) vs TPOT (ms)`
 
-#### 拆解模式
+#### PD分离模式
 
 按 `OptimizerSummary.data_config` 区分两类结果：
 
@@ -188,7 +189,7 @@ plot_curves_allowed = len(device_targets) == 1
   1. `Throughput (token/s) vs Concurrency`
   2. `Throughput (token/s) vs TPOT (ms)`
 
-#### PD 比例模式
+#### PD配比模式
 
 PD 单设备曲线不再分别绘制 Prefill-side / Decode-side 的 QPS 四张图，而是统一输出 Decode 侧 TPS 双图：
 
@@ -220,8 +221,8 @@ token/s = concurrency_d / tpot_d * 1000
 
 `optimizer_summary.py` 中：
 
-- 聚合/拆解使用 TTFT/TPOT SLA 过滤后选最优。
-- PD 比例使用 `ttft_p` / `tpot_d` SLA 过滤后，再按 `balanced_qps` 去重和排序。
+- PD混部/PD分离使用 TTFT/TPOT SLA 过滤后选最优。
+- PD配比使用 `ttft_p` / `tpot_d` SLA 过滤后，再按 `balanced_qps` 去重和排序。
 
 #### 曲线过滤
 
@@ -261,11 +262,11 @@ token/s = concurrency_d / tpot_d * 1000
 
 | 模式 | 输出逻辑 |
 |------|------|
-| 聚合/拆解 | `_get_agg_disagg_final_out()` |
-| PD 比例 | `_get_pd_ratio_final_out()` |
+| PD混部/PD分离 | `_get_agg_disagg_final_out()` |
+| PD配比 | `_get_pd_ratio_final_out()` |
 | `--dump-original-results` | 打印原始或过滤后的 DataFrame |
 
-### 2. 聚合/拆解最佳点选择
+### 2. PD混部/PD分离最佳点选择
 
 `_prepare_agg_disagg_results()` 当前逻辑：
 
@@ -274,14 +275,14 @@ token/s = concurrency_d / tpot_d * 1000
 3. 对每个 `parallel` 仅保留一条最佳记录。
 4. 再按 `token/s` 总排序。
 
-### 3. 拆解 QPS 计算
+### 3. PD分离 QPS 计算
 
-`_compute_disagg_request_qps()` 用于拆解汇总表中的 `QPS (req/s)` 字段：
+`_compute_disagg_request_qps()` 用于 PD分离汇总表中的 `QPS (req/s)` 字段：
 
 - Prefill：`concurrency / ttft * 1000`
 - Decode：`concurrency / (tpot * output_length) * 1000`
 
-### 4. PD 比例结果整理
+### 4. PD配比结果整理
 
 `_prepare_pd_ratio_results()` 当前逻辑：
 
@@ -328,7 +329,7 @@ token/s = concurrency_d / tpot_d * 1000
 1. **不传值**
    - 即命令中不出现 `--device`
    - `args.device` 为 `None`
-   - 由 `check_device_targets()` 补全默认设备画像
+   - 由 `check_device_targets()` 补全为 `["TEST_DEVICE"]`，与原有单设备默认行为保持一致
 
 2. **传入空值**
    - 由于参数定义为 `nargs="+"`，显式写出 `--device` 时必须至少跟一个值
@@ -379,8 +380,8 @@ token/s = concurrency_d / tpot_d * 1000
 
 1. `OptimizerSummary` 初始化与 `summary_df` 读写。
 2. early stop flag 逻辑。
-3. 聚合结果输出基础路径。
-4. PD 比例模式判定、去重、实例分配和最终输出结构。
+3. PD混部结果输出基础路径。
+4. PD配比模式判定、去重、实例分配和最终输出结构。
 
 ### 当前缺口
 
@@ -400,9 +401,9 @@ token/s = concurrency_d / tpot_d * 1000
    - `plot_*_terminal_curves()` 的空数据与缺列分支
 2. 对 `run_multi_device_loop()` 做 mock runner 测试，验证多设备行采集逻辑。
 3. 手工验收以下场景：
-   - 单 `--device` 聚合模式：有 sweep ASCII 图
+   - 单 `--device` PD混部模式：有 sweep ASCII 图
    - 单 `--device --disagg`：Prefill/Decode sweep 曲线正常
-   - 单 `--device` PD 比例模式：仅输出 TPS vs Concurrency / TPOT 双图
+   - 单 `--device` PD配比模式：仅输出 TPS vs Concurrency / TPOT 双图
    - 多 `--device`：输出硬件画像表与跨硬件汇总表，不输出 scatter 图
 
 ---

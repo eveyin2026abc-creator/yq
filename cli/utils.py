@@ -26,8 +26,7 @@ def check_device_targets(args: argparse.Namespace, logger: logging.Logger) -> li
         return None
 
     if not args.device:
-        names = sorted(profiles)
-        args.device = [next((name for name in names if name != "TEST_DEVICE"), names[0])]
+        args.device = ["TEST_DEVICE"]
         logger.info("No --device specified; using default profile %r.", args.device[0])
 
     targets = list(dict.fromkeys(args.device))
