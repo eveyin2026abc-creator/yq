@@ -5,7 +5,7 @@
 | 日期 | 修订版本 | 修改描述 | 作者 | RFC 文档 |
 | -- | -- | -- | -- | -- |
 | 2026-05-09 | 1.0 | 初稿：多 `--device` 对比、`plotext` 曲线、拆解/PD 比例路径说明 | — | 本文档 |
-| 2026-05-19 | 1.1 | 同步当前实现：PD 比例仅输出 TPS 双图；多 device 最优 case scatter 标注；坐标自适应 | — | 本文档 |
+| 2026-05-19 | 1.1 | 同步当前实现：PD 比例仅输出 TPS 双图；多 device 仅输出跨硬件汇总表 | — | 本文档 |
 
 ---
 
@@ -24,8 +24,7 @@
 
 1. 支持 `--device DEVICE [DEVICE ...]` 一次传入多个硬件，在一次命令内完成逐设备寻优与跨硬件汇总，汇总输出硬件最优性能的配置对比。
 2. 单设备时自动输出终端 ASCII 曲线，覆盖聚合、拆解和 PD 比例三类模式；每种模式输出 `Concurrency & TPS`、`TPOT & TPS` 两张图。
-3. 多设备时在跨硬件汇总表之后，额外输出每个 device 最优 case 的 scatter 对比图。
-4. 将展示职责集中到两个 service 模块：
+3. 将展示职责集中到两个 service 模块：
    - `optimizer_summary.py`：负责结果过滤、最佳配置提取、PrettyTable 输出。
    - `optimizer_curve_plots.py`：负责终端曲线绘制，以及多设备执行编排和跨硬件汇总调度。
 
@@ -51,7 +50,7 @@ throughput_optimizer.main
   -> run_multi_device_loop(args, device_targets, plot_curves_allowed, logger)
        -> 单 device：每个 profile 完成后绘制 sweep 曲线
   -> render_cross_hardware_summary(args, device_targets, hw_rows, logger)
-       -> 多 device：汇总表后绘制最优 case scatter 图
+       -> 多 device：输出硬件画像表与跨硬件汇总表
 ```
 
 说明：
@@ -111,8 +110,6 @@ throughput_optimizer.main
 | 拆解 Decode | `collect_disagg_decode_row()` | `throughput_tps` |
 | PD 比例 | `collect_pd_ratio_comparison_row()` | `balanced_qps` |
 
-其中 PD 比例行还会额外写入 `decode_tps`、`concurrency_d`、`tpot_d`，供多 device scatter 图直接使用。
-
 采集结果统一存入 `MultiDeviceComparisonRows`：
 
 ```text
@@ -128,10 +125,10 @@ disagg_decode
 
 1. 当 `len(device_targets) <= 1` 时直接返回，不打印跨硬件表。
 2. 先调用 `render_hardware_profile_comparison(device_targets)` 输出设备画像参数表。
-3. 再按模式输出对应汇总表，并在多 device 场景下绘制最优 case 对比图：
-   - 聚合：`render_cross_device_comparison()` + `plot_multi_device_best_terminal_curves()`
-   - 拆解：`render_cross_hardware_disagg_prefill()`、`render_cross_hardware_disagg_decode()` + Decode 最优 scatter
-   - PD 比例：`render_cross_hardware_pd_ratio()` + Decode TPS 最优 scatter
+3. 再按模式输出对应汇总表：
+   - 聚合：`render_cross_device_comparison()`
+   - 拆解：`render_cross_hardware_disagg_prefill()`、`render_cross_hardware_disagg_decode()`
+   - PD 比例：`render_cross_hardware_pd_ratio()`
 
 当对应模式下没有有效汇总行时，仅记录 warning，不中断主流程。
 
@@ -141,7 +138,7 @@ disagg_decode
 
 ### 1. 启用条件
 
-终端曲线分为两类：
+终端曲线仅在单设备 sweep 场景启用：
 
 #### 单设备 sweep 曲线
 
@@ -150,17 +147,9 @@ plot_curves_allowed = len(device_targets) == 1
 ```
 
 - 单设备：输出完整 sweep 曲线
-- 每个 `parallel` 一条折线，展示该并行配置下不同 concurrency / 时延点
+- 每个 `parallel` 一组散点，展示该并行配置下不同 concurrency / 时延点
 
-#### 多设备最优 case 对比图
-
-```text
-len(device_targets) > 1
-```
-
-- 多设备：不输出单设备 sweep 曲线
-- 在跨硬件汇总表之后，输出每个 device 的 1 个最优 case
-- 使用 scatter 图，而不是 sweep 折线图
+- 多设备：不输出终端曲线，只输出硬件画像表与跨硬件汇总表
 
 ### 2. 绘图入口
 
@@ -173,10 +162,6 @@ len(device_targets) > 1
 | 聚合 | `plot_concurrency_curves_from_optimizer_summaries()` |
 | 拆解 | `plot_disagg_terminal_curves()` |
 | PD 比例 | `plot_pd_ratio_terminal_curves()` |
-
-#### 多设备
-
-跨硬件汇总完成后，由 `plot_multi_device_best_terminal_curves()` 绘制最优 case 对比图。
 
 ### 3. 曲线内容
 
@@ -227,30 +212,6 @@ token/s = concurrency_d / tpot_d * 1000
 - 表格输出仍保留 `p_qps`、`d_qps`、`balanced_qps` 等 PD 指标
 - 终端 plot 仅展示 TPS 与 Concurrency / TPOT 的关系，不再输出 P/D QPS 曲线
 
-#### 多设备最优 case 对比图
-
-多 device 场景下，每个 device 只取 1 个最优 case，输出两张 scatter 图：
-
-1. `Throughput (token/s) vs Concurrency`
-2. `Throughput (token/s) vs TPOT (ms)`
-
-数据来源：
-
-| 模式 | 使用的最优行 |
-|------|------|
-| 聚合 | `rows.aggregation` |
-| 拆解 | `rows.disagg_decode` |
-| PD 比例 | `rows.pd_ratio`，使用 Decode 侧 `concurrency_d / tpot_d` 计算 TPS |
-
-展示规则：
-
-- 每个 device 对应 1 个点
-- 使用 `+`、`*`、`x` 三种 marker 循环区分
-- 每个 device 使用不同颜色
-- 标签格式为 `[+] A2_376T_64G`、 `[*] A3_752T_128G_DIE`；`ATLAS_800_` 前缀会自动省略
-- 坐标重合时，marker 和标签会轻微错开，保证 6 个 device 都能标注出来
-- 拆解模式仅绘制 Decode 最优 scatter，不绘制 Prefill scatter
-
 ### 4. 当前过滤规则
 
 这里需要明确区分“表格过滤”和“曲线过滤”。
@@ -280,13 +241,13 @@ token/s = concurrency_d / tpot_d * 1000
 当前绘图实现的几个关键点：
 
 1. 使用 `plotext` 的模块级共享画布。
-2. 单设备 sweep 图：每个 `parallel` 配置绘制一条折线，marker 为 `dot`。
-3. 多设备最优 case 图：每个 device 一个 scatter 点，marker 循环使用 `+`、`*`、`x`。
-4. 坐标轴会根据当前图内所有点和标签位置自动留白，避免点贴边或被裁切。
+2. 单设备 sweep 图：每个 `parallel` 配置绘制一组散点，marker 为实心圆点 `●`。
+3. 坐标完全重合的点会轻微错开，保证一个数据点对应一个可见点。
+4. 坐标轴会根据当前图内所有点自动留白，避免点贴边。
 5. 图尺寸由内部常量控制：
    - `_TERMINAL_PLOT_COLS = 128`
    - `_TERMINAL_PLOT_ROWS = 38`
-6. 不同 `parallel` / device 使用轮转色板区分。
+6. 不同 `parallel` 使用轮转色板区分。
 
 由于 `plotext` 是模块级状态式 API，当前假设调用过程为串行单线程；这与 CLI 当前的顺序执行方式一致。
 
@@ -401,7 +362,7 @@ token/s = concurrency_d / tpot_d * 1000
 ### 性能与可用性
 
 1. 多设备模式按顺序执行，总耗时与设备数近似线性相关。
-2. 多设备模式输出跨硬件汇总表，以及每个 device 最优 case 的 scatter 对比图。
+2. 多设备模式输出跨硬件汇总表，不输出终端曲线。
 3. 单设备 sweep 图以 ASCII 终端可读性为目标，不追求高保真制图能力。
 
 ---
@@ -437,13 +398,12 @@ token/s = concurrency_d / tpot_d * 1000
    - `_prepare_disagg_prefill_curve_df()`
    - `_pd_tps_curve_df()`
    - `plot_*_terminal_curves()` 的空数据与缺列分支
-   - `plot_multi_device_best_terminal_curves()` 的多 device scatter 标注
 2. 对 `run_multi_device_loop()` 做 mock runner 测试，验证多设备行采集逻辑。
 3. 手工验收以下场景：
    - 单 `--device` 聚合模式：有 sweep ASCII 图
    - 单 `--device --disagg`：Prefill/Decode sweep 曲线正常
    - 单 `--device` PD 比例模式：仅输出 TPS vs Concurrency / TPOT 双图
-   - 多 `--device`：输出跨硬件表 + 每个 device 最优 case scatter 图
+   - 多 `--device`：输出硬件画像表与跨硬件汇总表，不输出 scatter 图
 
 ---
 
@@ -452,10 +412,9 @@ token/s = concurrency_d / tpot_d * 1000
 ### 当前限制
 
 1. 曲线仅输出到终端，不生成文件。
-2. 多设备模式只展示每个 device 的 1 个最优 case，不展示完整 sweep 曲线。
+2. 多设备模式不输出终端曲线，只输出跨硬件表格。
 3. 曲线 API 仍保留 `ttft_limit` / `tpot_limit` 参数，但当前实现不使用它们参与曲线筛选。
 4. 终端图依赖 `plotext` 的共享画布模型，不适合并发交错调用。
-5. 多 device scatter 在坐标完全重合时，仍依赖 marker、颜色和标签错开进行区分。
 
 ### 后续可选方向
 

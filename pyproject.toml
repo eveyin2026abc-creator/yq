@@ -2,7 +2,6 @@
 
 [project]
 name = "liuren_modeling"
-version = "0.1.0"
 description = "Light-weight full-system simulation framework"
 readme = "README.md"
 version = "0.1.0"

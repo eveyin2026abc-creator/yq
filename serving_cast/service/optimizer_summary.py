@@ -251,12 +251,10 @@ class OptimizerSummary:
             "pd_ratio": float(r["pd_ratio"]),
             "p_qps": float(r["p_qps"]),
             "d_qps": float(r["d_qps"]),
-            "decode_tps": float(r["concurrency_d"]) / float(r["tpot_d"]) * 1000,
             "ttft_p": float(r["ttft_p"]),
             "tpot_d": float(r["tpot_d"]),
             "parallel_p": r["parallel_p"],
             "parallel_d": r["parallel_d"],
-            "concurrency_d": r["concurrency_d"],
             "p_instances": p_inst,
             "d_instances": d_inst,
             "total_devices": int(nd) if nd is not None else None,
@@ -778,8 +776,8 @@ def render_cross_hardware_disagg_decode(rows: list[dict]) -> str:
 def render_hardware_profile_comparison(device_names: list[str]) -> str:
     """Pretty-print core modeling parameters for multiple ``--device`` profiles.
 
-    Compact ASCII-oriented labels: effective BF16 GEMM, effective memory bandwidth,
-    capacity, and logical comm-grid shape.
+    Compact ASCII-oriented labels: effective cube/vector compute, memory bandwidth,
+    communication bandwidth, capacity, and logical comm-grid shape.
     """
     if not device_names:
         return ""
@@ -799,27 +797,40 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
         "*" * banner_w,
         "  Cross-hardware - device profile summary (modeling abstraction vs "
         "performance merge tables)",
-        "  Device profile parameter comparison (effective GEMM / memory BW)",
+        "  Device profile parameter comparison (effective compute / memory BW / comm BW)",
         "  " + "-" * (banner_w - 4),
     ]
     table = PrettyTable()
     table.field_names = [
         "Device",
-        "Effective BF16 GEMM (TFLOPS)",
-        "Effective Mem BW (TB/s)",
-        "Device Memory (GB)",
-        "Comm Grid Shape",
+        "Cube Compute (TFLOPS)",
+        "Vector Compute (TFLOPS)",
+        "HBM BW (TB/s)",
+        "Memory (GB)",
+        "Comm Grid",
+        "Comm BW (bytes/s)",
     ]
 
-    def _effective_gemm_tflops(profile: DeviceProfile) -> Optional[float]:
-        peak = profile.mma_ops.get(torch.bfloat16)
+    def _effective_tflops(ops: dict, profile: DeviceProfile) -> Optional[float]:
+        peak = ops.get(torch.bfloat16)
         if peak is None:
-            peak = profile.mma_ops.get(torch.half)
-        if peak is None and profile.mma_ops:
-            peak = max(profile.mma_ops.values())
+            peak = ops.get(torch.half)
+        if peak is None and ops:
+            peak = max(ops.values())
         if peak is None:
             return None
         return (peak / 1e12) * profile.compute_efficiency
+
+    def _fmt_compact_num(value: float) -> str:
+        return f"{value:g}"
+
+    def _comm_bw_expr(profile: DeviceProfile) -> str:
+        parts = []
+        for idx in sorted(profile.comm_grid.topologies):
+            topology = profile.comm_grid.topologies[idx]
+            eff_bw_gbs = topology.bandwidth_bytes_ps * topology.comm_efficiency / 1e9
+            parts.append(f"{_fmt_compact_num(eff_bw_gbs)}*1e9")
+        return " | ".join(parts) if parts else "-"
 
     def _shape_str(profile: DeviceProfile) -> str:
         g = profile.comm_grid.grid
@@ -828,27 +839,36 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
     for name in ordered:
         prof = DeviceProfile.all_device_profiles.get(name)
         if prof is None:
-            table.add_row([name, "-", "-", "-", "-"])
+            table.add_row([name, "-", "-", "-", "-", "-", "-"])
             continue
-        gemm = _effective_gemm_tflops(prof)
+        cube = _effective_tflops(prof.mma_ops, prof)
+        vector = _effective_tflops(prof.gp_ops, prof)
         nom_bw_TBs = prof.memory_bandwidth_bytes_ps / (1024**4)
         eff_bw_TBs = nom_bw_TBs * prof.memory_efficiency
         mem_gb = prof.memory_size_bytes / (1024**3)
         table.add_row(
             [
                 prof.name,
-                f"{gemm:.2f}" if gemm is not None else "-",
+                f"{cube:.2f}" if cube is not None else "-",
+                f"{vector:.2f}" if vector is not None else "-",
                 f"{eff_bw_TBs:.3f}",
                 f"{mem_gb:.1f}",
                 _shape_str(prof),
+                _comm_bw_expr(prof),
             ]
         )
 
     lines.append(table.get_string())
-    lines.append(
-        "  Effective dense GEMM: nominal BF16 dense GEMM peak x compute_efficiency "
-        "(FP16 peak if BF16 unset). Effective memory BW: nominal HBM bandwidth x "
-        "memory_efficiency."
+    lines.extend(
+        [
+            "  Notes:",
+            "  - Cube/Vector Compute: nominal BF16 peak x compute_efficiency "
+            "(FP16 peak if BF16 unset).",
+            "  - HBM BW: nominal HBM bandwidth x memory_efficiency.",
+            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, shown "
+            "as effective bytes/s in topology order.",
+            "    Example: 50*1e9*0.7 = 35*1e9.",
+        ]
     )
     lines.append("*" * banner_w)
     lines.append("")
