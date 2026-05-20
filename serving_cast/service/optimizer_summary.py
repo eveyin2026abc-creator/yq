@@ -778,7 +778,7 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
         for idx in sorted(profile.comm_grid.topologies):
             topology = profile.comm_grid.topologies[idx]
             eff_bw_gbs = topology.bandwidth_bytes_ps * topology.comm_efficiency / 1e9
-            parts.append(f"{_fmt_compact_num(eff_bw_gbs)}*1e9")
+            parts.append(_fmt_compact_num(eff_bw_gbs))
         return " | ".join(parts) if parts else "-"
 
     def _shape_str(profile: DeviceProfile) -> str:
@@ -813,8 +813,8 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
             "  Notes:",
             "  - Cube/Vector Compute: nominal BF16 peak x compute_efficiency (FP16 peak if BF16 unset).",
             "  - HBM BW: nominal HBM bandwidth x memory_efficiency.",
-            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, per topology order; values use N*1e9 shorthand (consistent with GB/s column).",
-            "    Example: 50*1e9*0.7 = 35*1e9.",
+            "  - Comm BW: effective GB/s per topology (bandwidth_bytes_ps x comm_efficiency / 1e9), in topology order.",
+            "    Example: 50 x 0.7 = 35 GB/s.",
         ]
     )
     lines.append("*" * banner_w)
