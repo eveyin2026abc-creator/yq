@@ -97,7 +97,7 @@ class OptimizerSummary:
         return self._early_stop_flag
 
     def _is_pd_ratio_mode(self):
-        """Check if this is PD ratio optimization mode."""
+        """Return whether this is PD ratio optimization mode."""
         return (
             hasattr(self.data_config, "prefill_devices_per_instance")
             and self.data_config.prefill_devices_per_instance is not None
@@ -109,7 +109,7 @@ class OptimizerSummary:
         if silent:
             return
         if self._summary_df is None or self._summary_df.empty:
-            logger.warning("Summary DataFrame is None. Please set it first.")
+            logger.warning("Summary DataFrame is empty or unset. Please set it first.")
             return
 
         if self._is_pd_ratio_mode():
