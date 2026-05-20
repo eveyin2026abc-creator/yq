@@ -799,7 +799,6 @@ class TestOptimizerCurvePlotsHighCoverage(TestCase):
     @patch.object(ocp, "plot_disagg_terminal_curves")
     @patch.object(ocp, "plot_concurrency_curves_from_optimizer_summaries")
     def test_plot_single_device_dispatcher(self, mock_agg, mock_dis, mock_pd):
-
         args = MagicMock(ttft_limits=1.0, tpot_limits=1.0)
 
         mock_res_empty = MagicMock()
