@@ -1,5 +1,5 @@
 # Copyright Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
-"""Unit tests for ``serving_cast/service/optimizer_curve_plots.py`` helpers and plot entry points."""
+"""Unit tests for ``serving_cast/service/optimizer_curve_plots.py`` (serving_cast UT suite)."""
 
 import unittest
 from unittest import TestCase

@@ -1,5 +1,5 @@
 # Copyright Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
-"""Coverage for ``render_hardware_profile_comparison`` ImportError path and optional torch path."""
+"""Coverage for ``render_hardware_profile_comparison`` (serving_cast UT suite)."""
 
 import builtins
 import importlib.util

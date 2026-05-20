@@ -1,5 +1,8 @@
 # Copyright Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
-"""Extra unit tests for ``serving_cast/service/optimizer_summary.py`` (helpers + render_* + uncovered paths)."""
+"""Extended unit tests for ``serving_cast/service/optimizer_summary.py`` (serving_cast UT suite).
+
+Complements ``test_optimizer_summary.py`` in this directory with helper/render/branch coverage.
+"""
 
 import sys
 from types import ModuleType, SimpleNamespace
