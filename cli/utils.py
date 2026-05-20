@@ -4,7 +4,6 @@ import re
 
 from tensor_cast.device import DeviceProfile
 
-
 LOG_LEVELS = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
@@ -20,8 +19,7 @@ def check_device_targets(args: argparse.Namespace, logger: logging.Logger) -> li
     profiles = DeviceProfile.all_device_profiles
     if not profiles:
         logger.error(
-            "No device profiles are registered. Import tensor_cast.device_profiles "
-            "before defining CLI defaults."
+            "No device profiles are registered. Import tensor_cast.device_profiles before defining CLI defaults."
         )
         return None
 
@@ -49,8 +47,7 @@ def check_device_targets(args: argparse.Namespace, logger: logging.Logger) -> li
         grid_n = profiles[name].comm_grid.grid.nelement()
         if grid_n < args.num_devices:
             logger.error(
-                "Device profile %r cannot model num_devices=%s "
-                "(communication grid size is %s).",
+                "Device profile %r cannot model num_devices=%s (communication grid size is %s).",
                 name,
                 args.num_devices,
                 grid_n,

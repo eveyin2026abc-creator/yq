@@ -102,15 +102,11 @@ def _compact_scatter_legend(buf: str, labels: list[str]) -> str:
                 f"{_TERMINAL_MARKER}{_TERMINAL_MARKER}\x1b[0m {label}",
                 f"{_TERMINAL_MARKER}\x1b[0m{label}",
             )
-        lines.append(
-            _pad_right_border(line, _visible_len(original) - _visible_len(line))
-        )
+        lines.append(_pad_right_border(line, _visible_len(original) - _visible_len(line)))
     return "\n".join(lines)
 
 
-def _jitter_overlapping_points(
-    xs: list[float], ys: list[float]
-) -> list[tuple[float, float]]:
+def _jitter_overlapping_points(xs: list[float], ys: list[float]) -> list[tuple[float, float]]:
     """Slightly offset identical coordinates so every sweep result stays visible."""
     group_counts: dict[tuple[float, float], int] = {}
     group_sizes: dict[tuple[float, float], int] = {}
@@ -123,12 +119,8 @@ def _jitter_overlapping_points(
 
     xspan = max(xs) - min(xs) if xs else 0.0
     yspan = max(ys) - min(ys) if ys else 0.0
-    x_step = max(
-        xspan * 0.003, max((abs(x) for x in xs), default=1.0) * 0.001, 1e-3
-    )
-    y_step = max(
-        yspan * 0.003, max((abs(y) for y in ys), default=1.0) * 0.001, 1e-3
-    )
+    x_step = max(xspan * 0.003, max((abs(x) for x in xs), default=1.0) * 0.001, 1e-3)
+    y_step = max(yspan * 0.003, max((abs(y) for y in ys), default=1.0) * 0.001, 1e-3)
 
     jittered: list[tuple[float, float]] = []
     for x, y in zip(xs, ys):
@@ -144,15 +136,11 @@ def _jitter_overlapping_points(
     return jittered
 
 
-def _sorted_curve_subset(
-    curve_df: pd.DataFrame, parallel: str, sort_cols: list[str]
-) -> pd.DataFrame:
+def _sorted_curve_subset(curve_df: pd.DataFrame, parallel: str, sort_cols: list[str]) -> pd.DataFrame:
     sub = curve_df.loc[curve_df["parallel"].astype(str) == parallel]
     if "batch_size" in sub.columns:
         sub = sub.assign(_batch_sort=pd.to_numeric(sub["batch_size"], errors="coerce"))
-        sort_cols = [
-            "_batch_sort" if col == "batch_size" else col for col in sort_cols
-        ]
+        sort_cols = ["_batch_sort" if col == "batch_size" else col for col in sort_cols]
     else:
         sort_cols = [col for col in sort_cols if col != "batch_size"]
     sub = sub.sort_values(sort_cols) if sort_cols else sub
@@ -290,16 +278,10 @@ def _sort_curve_df(work: pd.DataFrame) -> pd.DataFrame:
 
     sort_keys = ["parallel", "concurrency"]
     if "batch_size" in work.columns:
-        work = work.assign(
-            _batch_sort=pd.to_numeric(work["batch_size"], errors="coerce")
-        )
+        work = work.assign(_batch_sort=pd.to_numeric(work["batch_size"], errors="coerce"))
         sort_keys.append("_batch_sort")
     sort_keys.append("token/s")
-    return (
-        work.sort_values(sort_keys)
-        .reset_index(drop=True)
-        .drop(columns=["_batch_sort"], errors="ignore")
-    )
+    return work.sort_values(sort_keys).reset_index(drop=True).drop(columns=["_batch_sort"], errors="ignore")
 
 
 def _prepare_base_curve_df(
@@ -365,11 +347,7 @@ def plot_concurrency_curves_from_optimizer_summaries(
     tpot_limit: float | None = None,
 ) -> bool:
     """Merge aggregation summary frames and print terminal curves."""
-    dfs = [
-        df
-        for r in results
-        if (df := r.get_summary_df()) is not None and not df.empty
-    ]
+    dfs = [df for r in results if (df := r.get_summary_df()) is not None and not df.empty]
     if not dfs:
         return False
     merged = pd.concat(dfs, ignore_index=True)
@@ -490,9 +468,7 @@ def _pd_tps_curve_df(
     work["tpot"] = pd.to_numeric(work["tpot"], errors="coerce")
     work["concurrency"] = pd.to_numeric(work["concurrency"], errors="coerce")
     work = work.loc[work["tpot"] > 0]
-    work["token/s"] = (
-        pd.to_numeric(work["concurrency"], errors="coerce") / work["tpot"] * 1000
-    )
+    work["token/s"] = pd.to_numeric(work["concurrency"], errors="coerce") / work["tpot"] * 1000
     return work
 
 
@@ -598,9 +574,7 @@ def run_multi_device_loop(
         tasks = ParallelRunner(args)
 
         results = (
-            tasks.run_agg()
-            if not args.enable_optimize_prefill_decode_ratio and not args.disagg
-            else tasks.run_disagg()
+            tasks.run_agg() if not args.enable_optimize_prefill_decode_ratio and not args.disagg else tasks.run_disagg()
         )
 
         for res in results:
@@ -642,8 +616,7 @@ def render_cross_hardware_summary(
                 print(rendered)
         if not rows.disagg_prefill and not rows.disagg_decode:
             logger.warning(
-                "No rows available for cross-hardware disaggregation comparison "
-                "(all runs empty or limits omitted)."
+                "No rows available for cross-hardware disaggregation comparison (all runs empty or limits omitted)."
             )
         return
 
@@ -651,8 +624,7 @@ def render_cross_hardware_summary(
         (
             render_cross_hardware_pd_ratio,
             rows.pd_ratio,
-            "No rows available for cross-hardware PD ratio comparison "
-            "(all runs empty or filtered out).",
+            "No rows available for cross-hardware PD ratio comparison (all runs empty or filtered out).",
         )
         if args.enable_optimize_prefill_decode_ratio
         else (

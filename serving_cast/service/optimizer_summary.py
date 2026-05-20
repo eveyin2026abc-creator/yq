@@ -18,7 +18,6 @@ from typing import Optional
 import pandas as pd
 from prettytable import PrettyTable
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -29,9 +28,7 @@ def _positive_float(value) -> Optional[float]:
     return float(num)
 
 
-def _compute_disagg_request_qps(
-    row: pd.Series, output_length: Optional[int]
-) -> Optional[float]:
+def _compute_disagg_request_qps(row: pd.Series, output_length: Optional[int]) -> Optional[float]:
     """Per-phase request QPS for disaggregation summary rows.
 
     Same formulas as ``pd_ratio_throughput_optimizer``: prefill uses
@@ -93,9 +90,7 @@ class OptimizerSummary:
             return value is not None and limit is not None and value > limit
 
         self._early_stop_flag = (
-            (memory_left < 0)
-            or check(tpot, self.data_config.tpot_limits)
-            or check(ttft, self.data_config.ttft_limits)
+            (memory_left < 0) or check(tpot, self.data_config.tpot_limits) or check(ttft, self.data_config.ttft_limits)
         )
 
     def check_early_stop_flag(self):
@@ -139,16 +134,8 @@ class OptimizerSummary:
         tpot_limit = self.data_config.tpot_limits or float("inf")
         ttft_limit = self.data_config.ttft_limits or float("inf")
 
-        mask = (
-            pd.to_numeric(self._summary_df["tpot"], errors="coerce").fillna(
-                float("inf")
-            )
-            <= tpot_limit
-        ) & (
-            pd.to_numeric(self._summary_df["ttft"], errors="coerce").fillna(
-                float("inf")
-            )
-            <= ttft_limit
+        mask = (pd.to_numeric(self._summary_df["tpot"], errors="coerce").fillna(float("inf")) <= tpot_limit) & (
+            pd.to_numeric(self._summary_df["ttft"], errors="coerce").fillna(float("inf")) <= ttft_limit
         )
 
         return (
@@ -202,28 +189,18 @@ class OptimizerSummary:
 
     def collect_disagg_prefill_row(self, device_label: str) -> Optional[dict]:
         """Best Prefill row from a disaggregation Prefill-phase summary (cross-hardware)."""
-        if (
-            self.data_config.ttft_limits is None
-            or self.data_config.tpot_limits is not None
-        ):
+        if self.data_config.ttft_limits is None or self.data_config.tpot_limits is not None:
             return None
         return self._best_agg_disagg_row(device_label)
 
     def collect_disagg_decode_row(self, device_label: str) -> Optional[dict]:
         """Best Decode row from a disaggregation Decode-phase summary (cross-hardware)."""
-        if (
-            self.data_config.tpot_limits is None
-            or self.data_config.ttft_limits is not None
-        ):
+        if self.data_config.tpot_limits is None or self.data_config.ttft_limits is not None:
             return None
         return self._best_agg_disagg_row(device_label)
 
     def _best_agg_disagg_row(self, device_label: str) -> Optional[dict]:
-        if (
-            self._summary_df is None
-            or self._summary_df.empty
-            or self._is_pd_ratio_mode()
-        ):
+        if self._summary_df is None or self._summary_df.empty or self._is_pd_ratio_mode():
             return None
         filtered = self._prepare_agg_disagg_results()
         if filtered.empty:
@@ -284,9 +261,7 @@ class OptimizerSummary:
             "num_devices": r["num_devices"],
             "parallel": r["parallel"],
             "batch_size": r["batch_size"],
-            "qps_req_s": _compute_disagg_request_qps(
-                r, getattr(self.data_config, "output_length", None)
-            ),
+            "qps_req_s": _compute_disagg_request_qps(r, getattr(self.data_config, "output_length", None)),
         }
 
     def _prepare_pd_ratio_results(self):
@@ -302,16 +277,8 @@ class OptimizerSummary:
         ttft_limit = self.data_config.ttft_limits or float("inf")
 
         # Apply limits filter
-        mask = (
-            pd.to_numeric(self._summary_df["ttft_p"], errors="coerce").fillna(
-                float("inf")
-            )
-            <= ttft_limit
-        ) & (
-            pd.to_numeric(self._summary_df["tpot_d"], errors="coerce").fillna(
-                float("inf")
-            )
-            <= tpot_limit
+        mask = (pd.to_numeric(self._summary_df["ttft_p"], errors="coerce").fillna(float("inf")) <= ttft_limit) & (
+            pd.to_numeric(self._summary_df["tpot_d"], errors="coerce").fillna(float("inf")) <= tpot_limit
         )
 
         filtered_df = self._summary_df[mask]
@@ -355,18 +322,11 @@ class OptimizerSummary:
         # Only show Devices when user specifies --num-devices
         if (
             self.data_config.num_devices
-            >= self.data_config.prefill_devices_per_instance
-            + self.data_config.decode_devices_per_instance
+            >= self.data_config.prefill_devices_per_instance + self.data_config.decode_devices_per_instance
         ):
-            final_out.append(
-                f"    Devices: {self.data_config.num_devices} {args.device}"
-            )
-        final_out.append(
-            f"    Prefill Devices Per Instance: {self.data_config.prefill_devices_per_instance}"
-        )
-        final_out.append(
-            f"    Decode Devices Per Instance: {self.data_config.decode_devices_per_instance}"
-        )
+            final_out.append(f"    Devices: {self.data_config.num_devices} {args.device}")
+        final_out.append(f"    Prefill Devices Per Instance: {self.data_config.prefill_devices_per_instance}")
+        final_out.append(f"    Decode Devices Per Instance: {self.data_config.decode_devices_per_instance}")
         final_out.append(f"    TTFT Limits: {self.data_config.ttft_limits} ms")
         final_out.append(f"    TPOT Limits: {self.data_config.tpot_limits} ms")
         final_out.append("  " + "-" * 116)
@@ -394,14 +354,8 @@ class OptimizerSummary:
                 best_result["num_devices_d"],
             )
             if p_inst > 0 and d_inst > 0:
-                final_out.append(
-                    f"      P Instances: {p_inst} "
-                    f"({p_inst * best_result['num_devices_p']} devices)"
-                )
-                final_out.append(
-                    f"      D Instances: {d_inst} "
-                    f"({d_inst * best_result['num_devices_d']} devices)"
-                )
+                final_out.append(f"      P Instances: {p_inst} ({p_inst * best_result['num_devices_p']} devices)")
+                final_out.append(f"      D Instances: {d_inst} ({d_inst * best_result['num_devices_d']} devices)")
 
         final_out.append("  " + "-" * 116)
 
@@ -787,8 +741,7 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
     lines = [
         "",
         "*" * banner_w,
-        "  Cross-hardware - device profile summary (modeling abstraction vs "
-        "performance merge tables)",
+        "  Cross-hardware - device profile summary (modeling abstraction vs performance merge tables)",
         "  Device profile parameter comparison (effective compute / memory BW / comm BW)",
         "  " + "-" * (banner_w - 4),
     ]
@@ -854,11 +807,9 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
     lines.extend(
         [
             "  Notes:",
-            "  - Cube/Vector Compute: nominal BF16 peak x compute_efficiency "
-            "(FP16 peak if BF16 unset).",
+            "  - Cube/Vector Compute: nominal BF16 peak x compute_efficiency (FP16 peak if BF16 unset).",
             "  - HBM BW: nominal HBM bandwidth x memory_efficiency.",
-            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, shown "
-            "as effective bytes/s in topology order.",
+            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, shown as effective bytes/s in topology order.",
             "    Example: 50*1e9*0.7 = 35*1e9.",
         ]
     )
