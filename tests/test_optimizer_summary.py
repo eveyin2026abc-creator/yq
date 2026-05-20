@@ -138,7 +138,16 @@ class TestRenderComparisonTables(TestCase):
 
     def test_render_cross_device_comparison_non_empty(self):
         txt = render_cross_device_comparison(
-            [{"device": "D1", "throughput_tps": 99.9, "concurrency": 1, "parallel": "p", "batch_size": 1, "num_devices": 1}]
+            [
+                {
+                    "device": "D1",
+                    "throughput_tps": 99.9,
+                    "concurrency": 1,
+                    "parallel": "p",
+                    "batch_size": 1,
+                    "num_devices": 1,
+                }
+            ]
         )
         self.assertIn("Cross-hardware", txt)
         self.assertIn("D1", txt)
@@ -164,11 +173,27 @@ class TestRenderComparisonTables(TestCase):
 
     def test_render_cross_hardware_disagg_prefill_decode(self):
         pref = render_cross_hardware_disagg_prefill(
-            [{"device": "P1", "throughput_tps": 80.0, "qps_req_s": None, "ttft_ms": 100.0, "concurrency": 2}]
+            [
+                {
+                    "device": "P1",
+                    "throughput_tps": 80.0,
+                    "qps_req_s": None,
+                    "ttft_ms": 100.0,
+                    "concurrency": 2,
+                }
+            ]
         )
         self.assertIn("PD Disaggregated Prefill", pref)
         dec = render_cross_hardware_disagg_decode(
-            [{"device": "D2", "throughput_tps": 90.0, "qps_req_s": 1.23, "tpot_ms": 20.0, "concurrency": 3}]
+            [
+                {
+                    "device": "D2",
+                    "throughput_tps": 90.0,
+                    "qps_req_s": 1.23,
+                    "tpot_ms": 20.0,
+                    "concurrency": 3,
+                }
+            ]
         )
         self.assertIn("PD Disaggregated Decode", dec)
 
@@ -419,7 +444,6 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
         self.assertIsNone(rc["tpot_ms"])
         self.assertEqual(rc["parallel"], "na_row")
 
-
     def test_prepare_pd_ratio_dedupe_and_comparison_row_instances(self):
         cfg = SimpleNamespace(
             ttft_limits=9999.0,
@@ -463,7 +487,14 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
         s.set_summary_df(
             pd.DataFrame(
                 [
-                    _baseline_agg_row({"token/s": 555.5, "ttft": 35.0, "tpot": 8.0, "parallel": "pref"}),
+                    _baseline_agg_row(
+                        {
+                            "token/s": 555.5,
+                            "ttft": 35.0,
+                            "tpot": 8.0,
+                            "parallel": "pref",
+                        }
+                    ),
                 ]
             )
         )
@@ -685,15 +716,15 @@ class TestRenderHardwareProfileComparisonStubbedImports(TestCase):
 
         tc_pkg = ModuleType("tensor_cast")
         tc_pkg.__path__ = []
-        tc_pkg.device_profiles = ModuleType("tensor_cast.device_profiles")
+        device_profiles_stub = ModuleType("tensor_cast.device_profiles")
+        setattr(tc_pkg, "device_profiles", device_profiles_stub)
 
         sys.modules["torch"] = tor_stub
         sys.modules["tensor_cast"] = tc_pkg
-        sys.modules["tensor_cast.device_profiles"] = tc_pkg.device_profiles
+        sys.modules["tensor_cast.device_profiles"] = device_profiles_stub
         sys.modules["tensor_cast.device"] = dev_pkg
 
     def test_render_profiles_hits_torch_branch_and_notes(self):
-
         bf = object()
         hf = object()
         tor = ModuleType("torch")
@@ -755,7 +786,13 @@ class TestRenderHardwareProfileComparisonStubbedImports(TestCase):
         self._stub_modules_for_hardware_render(profiles, tor)
 
         txt = render_hardware_profile_comparison(
-            ["missing_device", prof_full.name, prof_half_only.name, prof_empty_peak.name, prof_full.name]
+            [
+                "missing_device",
+                prof_full.name,
+                prof_half_only.name,
+                prof_empty_peak.name,
+                prof_full.name,
+            ]
         )
         self.assertIn("missing_device", txt)
         self.assertIn("Notes:", txt)

@@ -193,9 +193,7 @@ class TestPlotEntryPoints(TestCase):
 class TestRenderCrossHardwareSummary(TestCase):
     @patch.object(ocp, "render_hardware_profile_comparison", return_value="")
     @patch.object(ocp, "render_cross_device_comparison", return_value="")
-    def test_render_cross_hardware_summary_skips_single_device(
-        self, _mock_render_table, _mock_render_hw
-    ):
+    def test_render_cross_hardware_summary_skips_single_device(self, _mock_render_table, _mock_render_hw):
         args = MagicMock()
         args.disagg = False
         args.enable_optimize_prefill_decode_ratio = False
@@ -271,7 +269,9 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
             }
         )
         with patch("builtins.print"):
-            ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="ut", chart2_x_col="tpot", chart2_x_label="TPOT (ms)")
+            ocp._emit_terminal_optimizer_curve_ascii(
+                df, title_prefix="ut", chart2_x_col="tpot", chart2_x_label="TPOT (ms)"
+            )
 
     def test_emit_terminal_plotext_build_failure_is_handled(self):
         import sys
@@ -420,7 +420,10 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
         self.assertEqual(len(rows.aggregation), 1)
 
         res2 = MagicMock()
-        res2.collect_pd_ratio_comparison_row.return_value = {"device": "Y", "balanced_qps": 2.0}
+        res2.collect_pd_ratio_comparison_row.return_value = {
+            "device": "Y",
+            "balanced_qps": 2.0,
+        }
         args_pd = SimpleNamespace(disagg=False, enable_optimize_prefill_decode_ratio=True)
         ocp._collect_cross_hardware_row(rows, res2, "dev2", args_pd)
         self.assertEqual(len(rows.pd_ratio), 1)
@@ -523,11 +526,7 @@ class TestOptimizerCurvePlotsBranchCoverage(TestCase):
 
     def test_compact_scatter_border_pad_and_secondary_pattern(self):
         marker = ocp._TERMINAL_MARKER
-        legend_line = (
-            "\x1b[1mfake\x1b[0m"
-            + f"{marker}{marker}\x1b[0m L2"
-            + " │"
-        )
+        legend_line = "\x1b[1mfake\x1b[0m" + f"{marker}{marker}\x1b[0m L2" + " │"
         out = ocp._compact_scatter_legend(legend_line, ["L2"])
         self.assertNotIn(marker + marker, out)
 
@@ -660,7 +659,13 @@ class TestOptimizerCurvePlotsHighCoverage(TestCase):
         rows = []
         for i, p in enumerate(parallels):
             rows.append(
-                {"parallel": p, "concurrency": float(i + 1), "batch_size": 1, "token/s": float(10 + i), "tpot": 15.0 + i}
+                {
+                    "parallel": p,
+                    "concurrency": float(i + 1),
+                    "batch_size": 1,
+                    "token/s": float(10 + i),
+                    "tpot": 15.0 + i,
+                }
             )
         df = pd.DataFrame(rows)
         with patch("builtins.print"):
@@ -794,7 +799,6 @@ class TestOptimizerCurvePlotsHighCoverage(TestCase):
     @patch.object(ocp, "plot_disagg_terminal_curves")
     @patch.object(ocp, "plot_concurrency_curves_from_optimizer_summaries")
     def test_plot_single_device_dispatcher(self, mock_agg, mock_dis, mock_pd):
-        from types import SimpleNamespace
 
         args = MagicMock(ttft_limits=1.0, tpot_limits=1.0)
 
