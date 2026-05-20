@@ -757,7 +757,7 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
         "HBM BW (TB/s)",
         "Memory (GB)",
         "Comm Grid",
-        "Comm BW (bytes/s)",
+        "Comm BW (GB/s)",
     ]
 
     def _effective_tflops(ops: dict, profile: DeviceProfile) -> Optional[float]:
@@ -813,7 +813,7 @@ def render_hardware_profile_comparison(device_names: list[str]) -> str:
             "  Notes:",
             "  - Cube/Vector Compute: nominal BF16 peak x compute_efficiency (FP16 peak if BF16 unset).",
             "  - HBM BW: nominal HBM bandwidth x memory_efficiency.",
-            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, shown as effective bytes/s in topology order.",
+            "  - Comm BW: topology bandwidth_bytes_ps x comm_efficiency, per topology order; values use N*1e9 shorthand (consistent with GB/s column).",
             "    Example: 50*1e9*0.7 = 35*1e9.",
         ]
     )
