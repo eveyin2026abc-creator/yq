@@ -440,6 +440,7 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
         mock_pr_class.return_value = mock_inst
 
         args = SimpleNamespace(
+            device=["PROFILE_A"],
             enable_optimize_prefill_decode_ratio=False,
             disagg=False,
             model_id="m",
@@ -451,7 +452,11 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
             plot_curves_allowed=False,
             logger=logger,
         )
-        fake_res.report_final_result.assert_called_once()
+        run_args = mock_pr_class.call_args.args[0]
+        self.assertIsNot(run_args, args)
+        self.assertEqual(run_args.device, "PROFILE_A")
+        self.assertEqual(args.device, ["PROFILE_A"])
+        fake_res.report_final_result.assert_called_once_with(run_args, silent=False)
 
     @patch("builtins.print")
     def test_render_cross_hardware_summary_disagg_branch(self, _mock_print):

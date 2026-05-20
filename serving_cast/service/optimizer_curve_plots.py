@@ -16,6 +16,7 @@ import logging
 import math
 import re
 from collections.abc import Callable
+from copy import copy
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -569,24 +570,27 @@ def run_multi_device_loop(
     multi_hw = len(device_targets) > 1
 
     for profile_name in device_targets:
-        args.device = profile_name
+        run_args = copy(args)
+        run_args.device = profile_name
         logger.info("Hardware profile: %s", profile_name)
-        tasks = ParallelRunner(args)
+        tasks = ParallelRunner(run_args)
 
         results = (
-            tasks.run_agg() if not args.enable_optimize_prefill_decode_ratio and not args.disagg else tasks.run_disagg()
+            tasks.run_agg()
+            if not run_args.enable_optimize_prefill_decode_ratio and not run_args.disagg
+            else tasks.run_disagg()
         )
 
         for res in results:
-            res.report_final_result(args, silent=False)
+            res.report_final_result(run_args, silent=False)
             if multi_hw:
-                _collect_cross_hardware_row(rows, res, profile_name, args)
+                _collect_cross_hardware_row(rows, res, profile_name, run_args)
 
         if plot_curves_allowed:
             _plot_single_device_optimizer_curves(
                 results,
-                args,
-                basename_prefix=f"{profile_name}_{args.model_id}",
+                run_args,
+                basename_prefix=f"{profile_name}_{run_args.model_id}",
             )
 
     return rows
