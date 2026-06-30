@@ -299,7 +299,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 
 ### 5.3 运行 Decode
 
-运行 decode 类似，只需调整输入长度和 context 长度。通常输入长度为 1。
+运行 decode 类似，只需调整输入长度query-length和 context 长度。通常输入长度为 1。
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
