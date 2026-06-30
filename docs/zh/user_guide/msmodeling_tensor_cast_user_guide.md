@@ -196,10 +196,6 @@ Run a simulated LLM inference pass and dump the perf result.
 
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
-| `--remote-source` | Options | 可选 | 指定远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
-| `--performance-model` | Options | 可选 | 指定性能模型，可重复指定一个或多个模型。<br>1. 类型：List[Str]。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：未指定时使用 `analytic`。<br>4. `analytic` 为 Roofline 模型，无需 profiling 数据；`profiling` 为基于 profiling CSV 数据库的经验性能模型，需配合 `--profiling-database` 使用。 |
-| `--profiling-database` | Options | 可选 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。<br>1. 类型：Str。<br>2. 取值范围：包含 `op_mapping.yaml` 和各 kernel 类型 CSV 文件的目录路径。<br>3. 默认值：`None`。 |
-| `--export-empirical-metrics` | Options | 可选 | 导出 M1-M5 metrics JSON，用于离线 M6 计算。<br>1. 类型：Str。<br>2. 取值范围：JSON 文件路径。<br>3. 默认值：`None`。<br>4. 仅开发调试使用，需配合 `--performance-model profiling` 使用。 |
 | `model_id` | General Options | 必选 | 模型 ID 或本地模型路径。<br>1. 类型：Str。<br>2. 参考值：Hugging Face ID、ModelScope ID 或本地绝对路径，例如 `Qwen/Qwen3-32B` 或 `/data/models/Qwen3-32B`。<br>3. 默认值：无。<br>4. 使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
 | `--device` | General Options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
@@ -247,6 +243,10 @@ Run a simulated LLM inference pass and dump the perf result.
 | `--image-batch-size` | MultiModal Options | 可选 | 指定图像处理 batch size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--image-height` | MultiModal Options | 可选 | 指定输入图像高度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--image-width` | MultiModal Options | 可选 | 指定输入图像宽度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--remote-source` | Options | 可选 | 指定远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
+| `--performance-model` | Options | 可选 | 指定性能模型，可重复指定一个或多个模型。<br>1. 类型：List[Str]。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：未指定时使用 `analytic`。<br>4. `analytic` 为 Roofline 模型，无需 profiling 数据；`profiling` 为基于 profiling CSV 数据库的经验性能模型，需配合 `--profiling-database` 使用。 |
+| `--profiling-database` | Options | 可选 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。<br>1. 类型：Str。<br>2. 取值范围：包含 `op_mapping.yaml` 和各 kernel 类型 CSV 文件的目录路径。<br>3. 默认值：`None`。 |
+| `--export-empirical-metrics` | Options | 可选 | 导出 M1-M5 metrics JSON，用于离线 M6 计算。<br>1. 类型：Str。<br>2. 取值范围：JSON 文件路径。<br>3. 默认值：`None`。<br>4. 仅开发调试使用，需配合 `--performance-model profiling` 使用。 |
 
 `--enable-multistream` 用于在 `--compile` 路径启用编译期多流仿真。该能力默认开启，因此已有 compile 命令会保持当前行为。
 
@@ -341,7 +341,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 
 ### 5.3 运行 Decode
 
-运行 decode 类似，只需调整输入长度query-length和 context 长度。通常输入长度为 1。
+运行 decode 类似，只需调整输入长度 query-length和 context 长度。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 后，`--query-length` 应设置为 `1 + mtp_tokens`。
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
