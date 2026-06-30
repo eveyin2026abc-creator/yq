@@ -37,16 +37,6 @@ TensorCast 是一个面向 PyTorch 程序的性能仿真与分析框架。它使
 
 **功能说明：** 仿真一批 query 的 LLM 推理性能。
 
-**命令：**
-
-```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --device TEST_DEVICE
-```
-
-**关键参数：** `--context-length`、`--decode`、`--quantize-linear-action`、`--chrome-trace`、`--device`
-
-**输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
-
 #### Prefill 场景
 
 要在 A2 上对 Qwen3-32B 运行 prefill，两个请求各 3500 token 输入长度，可运行以下命令：
@@ -70,6 +60,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
 ```
+
+**输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
 
 ### 2.2 结果（文本生成）
 

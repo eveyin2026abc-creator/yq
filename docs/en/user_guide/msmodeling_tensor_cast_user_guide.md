@@ -37,16 +37,6 @@ Before first use, see [Quick Start: Environment Setup and First Simulation](../i
 
 **What it does:** Simulate LLM inference performance for a batch of queries.
 
-**Command:**
-
-```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --device TEST_DEVICE
-```
-
-**Key flags:** `--context-length`, `--decode`, `--quantize-linear-action`, `--chrome-trace`, `--device`
-
-**Output:** A performance summary table; optionally a Chrome trace file if `--chrome-trace` is set.
-
 #### Prefill Scenario
 
 To run prefill for Qwen3-32B on A2 with two requests, each with 3500 input tokens, run:
@@ -70,6 +60,8 @@ Running decode is similar; adjust `--query-length` and the context length. When 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
 ```
+
+**Output:** A performance summary table; optionally a Chrome trace file if `--chrome-trace` is set.
 
 ### 2.2 Result (Text Generation)
 
