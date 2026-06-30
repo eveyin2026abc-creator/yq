@@ -1,14 +1,14 @@
 # 吞吐优化指南
 
-## 简介
+## 1 简介
 
 吞吐优化器（throughput optimizer）是一款在 SLO（Service Level Objective，服务级别目标）约束下优化吞吐量的工具。它会在指定的 SLO 约束（例如对 TTFT、TPOT 的上限）下自动搜索最优模型配置（并行策略、批大小），以最大化 token 吞吐量。
 
-## 适用对象与前置条件
+### 适用对象与前置条件
 
 本文适用于需要评估模型服务吞吐、并行策略和 SLO 约束配置的开发者或性能工程师。开始前请先完成《[msModeling 安装指南](../install_guide/msmodeling_install_guide.md)》中的环境搭建，并确认目标模型配置可被加载。
 
-## 快速开始
+### 快速开始
 
 根据部署形态选择运行模式：
 
@@ -18,11 +18,13 @@
 | PD 分离 | Prefill 与 Decode 分开部署，需要分别评估阶段能力 | `--disagg`、`--ttft-limits` 或 `--tpot-limits` |
 | PD 配比 | 需要规划 Prefill 与 Decode 实例数量比例 | `--enable-optimize-prefill-decode-ratio`、`--prefill-devices-per-instance`、`--decode-devices-per-instance` |
 
-## PD 混部运行
+## 4 主要场景
+
+### 4.1 PD 混部场景
 
 PD 混部针对 Prefill-Decode 合一的服务架构优化吞吐量，两个阶段运行在同一实例上。优化器会在所有可行的 TP（Tensor Parallelism，张量并行）与 DP（Data Parallelism，数据并行）配置中搜索，在 SLO 约束下找到最佳吞吐量。
 
-### 示例
+#### 4.1.1 示例
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -36,7 +38,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-### 使用 Prefix Cache
+#### 4.1.2 使用 Prefix Cache
 
 若要在启用 prefix cache 的情况下估算 PD 混部吞吐量，请添加 `--prefix-cache-hit-rate`：
 
@@ -53,21 +55,21 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --prefix-cache-hit-rate 0.5
 ```
 
-### 约束
+#### 4.1.3 约束
 
 - `--max-batched-tokens` 设置单个 Prefill 或混合 Prefill/Decode 步骤的 token 预算。如果 `effective_input_length` 大于 `max_batched_tokens`，优化器会自动将 Prefill 拆分为多个分块（chunk）。请将 `--max-batched-tokens` 设置为与服务引擎调度预算一致。
 
-## PD 分离运行
+### 4.2 PD 分离场景
 
 PD 分离将 Prefill 与 Decode 阶段拆分为独立的优化运行，适用于需要分别刻画各阶段性能，或规划 PD 分离服务部署的场景。
 
-### 前置条件
+#### 4.2.1 前置条件
 
 启用 PD 分离需提供：
 
 - `--disagg`：启用 PD 分离
 
-### Prefill 模式
+#### 4.2.2 Prefill 模式
 
 在 TTFT（Time-to-First-Token，首 token 时间）约束下优化 Prefill 阶段吞吐量。此模式下应设置 `--disagg` 与 `--ttft-limits`。
 
@@ -84,7 +86,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --ttft-limits 2000
 ```
 
-### Decode 模式
+#### 4.2.3 Decode 模式
 
 在 TPOT（Time-per-Output-Token，每输出 token 时间）约束下优化 Decode 阶段吞吐量。此模式下应设置 `--disagg` 与 `--tpot-limits`。
 
@@ -101,11 +103,11 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-## PD 配比运行
+### 4.3 PD 配比场景
 
 PD 配比模式可独立优化 Prefill 与 Decode 阶段，再合并结果以找到使系统吞吐量最大的最优 Prefill / Decode 实例配比。该模式尤其适用于 Prefill 与 Decode 实例可独立扩缩的 PD 分离服务架构。
 
-### 前置条件
+#### 4.3.1 前置条件
 
 启用 PD 配比需提供：
 
@@ -113,7 +115,7 @@ PD 配比模式可独立优化 Prefill 与 Decode 阶段，再合并结果以找
 - `--prefill-devices-per-instance`：每个 Prefill 实例的设备数
 - `--decode-devices-per-instance`：每个 Decode 实例的设备数
 
-### 示例
+#### 4.3.2 示例
 
 ```bash
 python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
@@ -129,12 +131,12 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
     --log-level info
 ```
 
-### 约束
+#### 4.3.3 约束
 
 - `--enable-optimize-prefill-decode-ratio` 不能与 `--disagg` 同时使用
 - 启用 PD 配比时，必须同时指定 `--prefill-devices-per-instance` 与 `--decode-devices-per-instance`
 
-## 搜索维度与范围
+## 5 搜索维度与范围
 
 `throughput_optimizer` 根据提供的搜索参数决定搜索维度：
 
@@ -169,7 +171,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DE
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --ep-sizes 1 2 4 8
 ```
 
-## 结果说明
+## 6 结果说明
 
 脚本会输出性能指标（吞吐量、TTFT、TPOT、并发度，以及模式相关字段如 QPS 或 PD 配比）。示例：
 
@@ -201,7 +203,7 @@ Top 4 Aggregation Configurations:
 ********************************************************************************
 ```
 
-## 参数
+## 7 参数
 
 ```bash
 Options:
@@ -297,7 +299,47 @@ PD Ratio Optimization Options:
                         is set. Determines the parallelism configuration search space for Decode phase.
 ```
 
-## PD 混部下性能指标的计算方法
+主要参数说明如下：
+
+| 参数 | 分类 | 是否必选 | 说明 |
+| --- | --- | --- | --- |
+| `model_id` | 通用 | 是 | 模型 ID 或已审核的本地模型绝对路径。使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
+| `--device` | 通用 | 否 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。 |
+| `--num-devices` | 通用 | 否 | 指定参与仿真的设备总数，默认为 1。 |
+| `--reserved-memory-gb` | 通用 | 否 | 指定每张设备预留给系统使用的显存，单位为 GB。 |
+| `--log-level` | 通用 | 否 | 指定日志级别，可选 `debug`、`info`、`warning`、`error` 或 `critical`。 |
+| `--input-length` | 请求配置 | 是 | 输入 prompt 的 token 长度。 |
+| `--output-length` | 请求配置 | 是 | 期望生成的输出 token 长度。 |
+| `--mtp-acceptance-rate` | 请求配置 | 否 | MTP token 的接受率列表。 |
+| `--dump-original-results` | 结果输出 | 否 | 输出原始搜索结果，便于进一步分析。 |
+| `--compile` | 模型与量化 | 否 | 在推理前对模型调用 `torch.compile()`。 |
+| `--compile-allow-graph-break` | 模型与量化 | 否 | 允许 `torch.compile()` 过程中出现 graph break。 |
+| `--enable-multistream` | 模型与量化 | 否 | 在 compile 路径启用编译期多流仿真，默认开启。 |
+| `--num-mtp-tokens` | 模型与量化 | 否 | 指定 MTP token 数量，`0` 表示不启用。 |
+| `--quantize-linear-action` | 模型与量化 | 否 | 指定线性层量化方式，例如 `W8A8_DYNAMIC`、`FP8` 或 `MXFP4`。 |
+| `--quantize-non-expert-linear-action` | 模型与量化 | 否 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。 |
+| `--mxfp4-group-size` | 模型与量化 | 否 | 指定 MXFP4 量化的 group size。 |
+| `--quantize-attention-action` | 模型与量化 | 否 | 指定 KV cache 量化方式，可选 `DISABLED`、`INT8` 或 `FP8`。 |
+| `--tp-sizes` | 搜索空间 | 否 | 启用 TP 搜索，并可显式指定 TP 取值范围。 |
+| `--ep-sizes` | 搜索空间 | 否 | 启用 EP 搜索，并可显式指定 EP 取值范围。 |
+| `--moe-dp-sizes` | 搜索空间 | 否 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。 |
+| `--ttft-limits` | 服务约束 | 否 | 指定 TTFT 约束，用于在约束内搜索最优吞吐。 |
+| `--tpot-limits` | 服务约束 | 否 | 指定 TPOT 约束，用于在约束内搜索最优吞吐。 |
+| `--max-batched-tokens` | 服务约束 | 否 | 指定单个 prefill 或混合 prefill/decode step 的最大 batched tokens。 |
+| `--prefix-cache-hit-rate` | 服务约束 | 否 | 指定 prefix cache 命中率，取值范围为 `[0, 1)`。 |
+| `--batch-range` | 服务约束 | 否 | 指定 batch size 搜索范围，可传 `[min max]` 或 `[max]`。 |
+| `--serving-cost` | 服务约束 | 否 | 指定服务成本，用于成本相关指标计算。 |
+| `--disagg` | 服务约束 | 否 | 启用 PD 分离模式。 |
+| `--jobs` | 服务约束 | 否 | 指定并行搜索任务数。 |
+| `--concurrency-search-strategy` | 服务约束 | 否 | 指定并发度搜索策略，可选 `exponential` 或 `linear_exponential`。 |
+| `--image-batch-size` | 多模态 | 否 | 指定每个请求的图像数量；未设置时复用 batch size。 |
+| `--image-height` | 多模态 | 否 | 指定输入图像高度。 |
+| `--image-width` | 多模态 | 否 | 指定输入图像宽度。 |
+| `--enable-optimize-prefill-decode-ratio` | PD 配比 | 否 | 启用 Prefill/Decode 实例配比优化模式，不能与 `--disagg` 同时使用。 |
+| `--prefill-devices-per-instance` | PD 配比 | 条件必选 | 启用 PD 配比优化时必填，指定每个 Prefill 实例的设备数。 |
+| `--decode-devices-per-instance` | PD 配比 | 条件必选 | 启用 PD 配比优化时必填，指定每个 Decode 实例的设备数。 |
+
+## 8 PD 混部下性能指标的计算方法
 
 - TTFT：
 
@@ -330,7 +372,7 @@ PD Ratio Optimization Options:
 - 输出吞吐量
   `output_throughput = 1000 * (output_length * concurrency) / (ttft + tpot * output_length)`
 
-## PD 配比模式下性能指标的计算方法
+## 9 PD 配比模式下性能指标的计算方法
 
 PD 配比模式使用 QPS（Queries Per Second，每秒查询数）作为匹配 Prefill 与 Decode 能力的主要指标：
 
@@ -379,7 +421,7 @@ PD 配比模式使用 QPS（Queries Per Second，每秒查询数）作为匹配 
      - 落在总设备预算内
      - 使系统整体吞吐量最大
 
-## 多硬件配置对比
+## 10 多硬件配置对比
 
 单次运行可传入一个或多个 `--device` 值，在相同模型、工作负载与 SLO 设置下对多个 `DeviceProfile` 目标进行基准测试并对比其最优配置。
 
@@ -406,7 +448,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   - PD 分离：在设置相应限制时，分别输出 Prefill 与 Decode 的跨硬件表。
   - PD 配比模式：在 TTFT/TPOT 限制下各设备的最佳均衡 QPS，包含 PD 配比；若设置 `--num-devices`，还可包含 P/D 实例数量。
 
-### 使用多个 `--device` 时的示例输出
+### 10.1 使用多个 `--device` 时的示例输出
 
 指定两个及以上设备配置时，优化器会先为每个配置打印单设备结果，再输出两张跨硬件表：
 
@@ -445,7 +487,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 对于 PD 分离与 PD 配比模式，跨硬件汇总表包含对应阶段或 QPS 相关列。
 
-## 终端扫描曲线（单设备）
+## 11 终端扫描曲线（单设备）
 
 仅评估一个设备配置时，扫描结束后优化器可渲染**终端 ASCII 散点图**，用于查看吞吐量与并发度、延迟在各并行配置下的关系。
 
