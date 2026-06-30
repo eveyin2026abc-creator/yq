@@ -5,7 +5,7 @@
 吞吐优化器（throughput optimizer）是一款在 SLO（Service Level Objective，服务级别目标）约束下优化吞吐量的工具。它会在指定的 SLO 约束（例如对 TTFT、TPOT 的上限）下自动搜索最优模型配置（并行策略、批大小），以最大化 token 吞吐量。
 本文适用于需要评估模型服务吞吐、并行策略和 SLO 约束配置的开发者或性能工程师。开始前请先完成《[msModeling 安装指南](../install_guide/msmodeling_install_guide.md)》中的环境搭建，并确认目标模型配置可被加载。
 
-## 4 主要场景
+## 2 主要场景
 
 | 模式 | 适用场景 | 关键参数 |
 | --- | --- | --- |
@@ -13,7 +13,7 @@
 | PD 分离 | Prefill 与 Decode 分开部署，需要分别评估阶段能力 | `--disagg`、`--ttft-limits` 或 `--tpot-limits` |
 | PD 配比 | 需要规划 Prefill 与 Decode 实例数量比例 | `--enable-optimize-prefill-decode-ratio`、`--prefill-devices-per-instance`、`--decode-devices-per-instance` |
 
-### 4.1 PD 混部场景
+### 2.1 PD 混部场景
 
 PD 混部针对 Prefill-Decode 合一的服务架构优化吞吐量，两个阶段运行在同一实例上。优化器会在所有可行的 TP（Tensor Parallelism，张量并行）与 DP（Data Parallelism，数据并行）配置中搜索，在 SLO 约束下找到最佳吞吐量。
 
@@ -52,7 +52,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 - `--max-batched-tokens` 设置单个 Prefill 或混合 Prefill/Decode 步骤的 token 预算。如果 `effective_input_length` 大于 `max_batched_tokens`，优化器会自动将 Prefill 拆分为多个分块（chunk）。请将 `--max-batched-tokens` 设置为与服务引擎调度预算一致。
 
-### 4.2 PD 分离场景
+### 2.2 PD 分离场景
 
 PD 分离将 Prefill 与 Decode 阶段拆分为独立的优化运行，适用于需要分别刻画各阶段性能，或规划 PD 分离服务部署的场景。
 
@@ -96,7 +96,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-### 4.3 PD 配比场景
+### 2.3 PD 配比场景
 
 PD 配比模式可独立优化 Prefill 与 Decode 阶段，再合并结果以找到使系统吞吐量最大的最优 Prefill / Decode 实例配比。该模式尤其适用于 Prefill 与 Decode 实例可独立扩缩的 PD 分离服务架构。
 
@@ -129,7 +129,7 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
 - `--enable-optimize-prefill-decode-ratio` 不能与 `--disagg` 同时使用
 - 启用 PD 配比时，必须同时指定 `--prefill-devices-per-instance` 与 `--decode-devices-per-instance`
 
-## 5 结果说明
+## 3 结果说明
 
 脚本会输出性能指标（吞吐量、TTFT、TPOT、并发度，以及模式相关字段如 QPS 或 PD 配比）。示例：
 
@@ -161,9 +161,7 @@ Top 4 Aggregation Configurations:
 ********************************************************************************
 ```
 
-### 5.1 补充说明
-
-#### 5.1.1 多硬件配置对比
+#### 3.1 多硬件配置对比
 
 单次运行可传入一个或多个 `--device` 值，在相同模型、工作负载与 SLO 设置下对多个 `DeviceProfile` 目标进行基准测试并对比其最优配置。
 
@@ -190,11 +188,11 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   - PD 分离：在设置相应限制时，分别输出 Prefill 与 Decode 的跨硬件表。
   - PD 配比模式：在 TTFT/TPOT 限制下各设备的最佳均衡 QPS，包含 PD 配比；若设置 `--num-devices`，还可包含 P/D 实例数量。
 
-##### 5.1.1.1 使用多个 `--device` 时的示例输出
+##### 使用多个 `--device` 时的示例输出
 
 指定两个及以上设备配置时，优化器会先为每个配置打印单设备结果，再输出两张跨硬件表：
 
-**1. 硬件配置对比表**
+**硬件配置对比表**
 
 该表展示所有请求设备的核心建模参数（算力、内存带宽、通信带宽等）：
 
@@ -211,7 +209,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 +-----------------------+-----------------------+-------------------------+---------------+-------------+-----------+----------------+
 ```
 
-**2. 跨硬件汇总表（因模式而异）**
+**跨硬件汇总表（因模式而异）**
 
 在当前 SLO 约束下，按设备列出最优配置的排序表。PD 混部示例如下：
 
@@ -229,7 +227,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 对于 PD 分离与 PD 配比模式，跨硬件汇总表包含对应阶段或 QPS 相关列。
 
-#### 5.1.2 终端扫描曲线（单设备）
+#### 终端扫描曲线（单设备）
 
 仅评估一个设备配置时，扫描结束后优化器可渲染**终端 ASCII 散点图**，用于查看吞吐量与并发度、延迟在各并行配置下的关系。
 
@@ -260,7 +258,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --batch-range 1 256
 ```
 
-## 6 参数
+## 4 参数
 
 ```bash
 Options:
@@ -431,9 +429,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DE
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --ep-sizes 1 2 4 8
 ```
 
-## 7 补充说明
+## 5 补充说明
 
-### 7.1 PD 混部下性能指标的计算方法
+### 5.1 PD 混部下性能指标的计算方法
 
 - TTFT：
 
@@ -466,7 +464,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DE
 - 输出吞吐量
   `output_throughput = 1000 * (output_length * concurrency) / (ttft + tpot * output_length)`
 
-### 7.2 PD 配比模式下性能指标的计算方法
+### 5.2 PD 配比模式下性能指标的计算方法
 
 PD 配比模式使用 QPS（Queries Per Second，每秒查询数）作为匹配 Prefill 与 Decode 能力的主要指标：
 
