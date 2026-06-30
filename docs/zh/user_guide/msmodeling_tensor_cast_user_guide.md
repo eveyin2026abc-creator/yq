@@ -29,7 +29,7 @@ TensorCast 是一个面向 PyTorch 程序的性能仿真与分析框架。它使
 
 最终输出包括全面的汇总表和详细的 Chrome Trace 文件，便于深入可视化并识别性能瓶颈。
 
-首次使用前，请先参阅《[msModeling 安装指南](../install_guide/msmodeling_install_guide.md)》完成环境搭建与第一次仿真。
+首次使用前，请先参阅《[快速上手：环境搭建与第一次仿真](../install_guide/msmodeling_install_guide.md)》完成环境搭建并运行一次 LLM 推理仿真。
 
 ## 2 概览
 
