@@ -156,7 +156,7 @@ Total time for analytic: 29.350s
 `--remote-source` 选择来源。该 model id 模式可能在 `trust_remote_code=True` fallback 时执行远端
 Python 代码，msmodeling 不对远端代码安全性做保证；运行时会打印 `trust_remote_code` 风险提示。
 
-### 4.1 文本生成仿真详细用法
+### 4.1 文本生成
 
 我们提供 `text_generate.py` 命令行接口来仿真文本生成。该脚本支持对一批具有相同输入长度、可选相同 context 长度的 query 进行文本生成仿真。默认提供算子性能分解的表格汇总。也可选择导出 Chrome trace。
 
@@ -217,7 +217,7 @@ Run a simulated LLM inference pass and dump the perf result.
 
 运行 `python -m cli.inference.text_generate --help` 查看详情。
 
-### 4.2 视频生成仿真详细用法
+### 4.2 视频生成
 
 我们提供 `video_generate.py` 命令行接口来仿真 diffusion transformer 模型的前向传播与性能。该脚本支持仿真视频生成模型（例如类 Stable Video Diffusion 架构）的推理过程，可配置输入维度、采样步数及并行设置。默认提供详细的算子性能分解表格汇总。也可选择将性能时间线导出为 Chrome Trace 文件。
 
