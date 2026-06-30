@@ -338,4 +338,3 @@ Run a simulated diffusion transformer forward and dump perf stats.
 
 3. 同时启用 External Shared Experts 与 Redundant Experts：
 分配逻辑与"仅 External Shared Experts"模式相同，另有一项补充：若无需 redundant experts 来填充 routing experts（即 routing experts 在各设备间均匀分布），则每个托管 routing experts 的设备会额外托管一个 redundant expert。
-

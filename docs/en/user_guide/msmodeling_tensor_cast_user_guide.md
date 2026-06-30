@@ -344,4 +344,3 @@ The remaining 56 devices are used to distribute 256 routing experts. 32 devices 
 
 3. Both External Shared Experts & Redundant Experts Enabled:
 The allocation logic is identical to the "External Shared Experts Only" mode, with one addition: If no redundant experts are needed to pad routing experts (i.e., routing experts are evenly distributed across devices), each device hosting routing experts will host an additional redundant expert.
-
