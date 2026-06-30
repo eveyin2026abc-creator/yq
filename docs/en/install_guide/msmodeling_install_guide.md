@@ -101,7 +101,11 @@ $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 The tool reads model configuration files from Hugging Face at runtime. If direct access is unavailable, set a mirror endpoint:
 
 ```bash
+# Linux / macOS
 export HF_ENDPOINT="https://hf-mirror.com"
+
+# Windows PowerShell
+$env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
 In restricted networks, downloads can still fail even with `HF_ENDPOINT` set because of proxy policies, DNS, TLS certificates, mirror availability, model repository authentication, or dependency libraries not using this environment variable. In this case, use the following approach:

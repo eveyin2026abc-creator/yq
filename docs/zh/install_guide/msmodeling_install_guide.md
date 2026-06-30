@@ -101,7 +101,11 @@ $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 工具运行时需要从 Hugging Face 读取模型配置文件。如果无法直接访问，可以设置镜像：
 
 ```bash
+# Linux / macOS
 export HF_ENDPOINT="https://hf-mirror.com"
+
+# Windows PowerShell
+$env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
 在受限网络中，即使设置 `HF_ENDPOINT`，仍可能因代理策略、DNS、TLS 证书、镜像站不可达、模型仓库需要鉴权，或依赖库未使用该环境变量而下载失败。此时建议使用以下方案：
