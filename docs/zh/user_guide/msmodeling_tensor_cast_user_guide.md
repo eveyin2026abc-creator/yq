@@ -183,30 +183,33 @@ Run a simulated LLM inference pass and dump the perf result.
 
 主要参数说明如下：
 
-| 参数 | 是否必选 | 说明 |
+| 参数 | 可选/必选 | 说明 |
 | --- | --- | --- |
-| `model_id` | 是 | 模型 ID 或本地模型路径，例如 `Qwen/Qwen3-32B` 或 `/data/models/Qwen3-32B`。 |
-| `--num-queries` | 是 | 本次仿真的 query 数量。 |
-| `--query-length` | 是 | 每个 query 的新输入 token 长度。 |
-| `--context-length` | 否 | 每个 query 的上下文 token 长度；prefill 场景通常与 `--query-length` 一起设置，decode 场景通常大于 `--query-length`。 |
-| `--decode` | 否 | 启用 decode 模式；不设置时按 prefill 模式运行。 |
-| `--device` | 否 | 指定用于仿真的设备配置，默认为内置设备配置之一。 |
-| `--num-devices` | 否 | 指定参与仿真的设备数量。 |
-| `--reserved-memory-gb` | 否 | 指定每张设备预留的显存大小，单位为 GB。 |
-| `--quantize-linear-action` | 否 | 指定线性层量化方式，例如 `W8A8_DYNAMIC`、`W8A8_STATIC`、`FP8` 或 `MXFP4`。 |
-| `--quantize-non-expert-linear-action` | 否 | 指定非 expert 线性层的量化方式。 |
-| `--quantize-lmhead` | 否 | 对 lm head 启用量化。 |
-| `--quantize-attention-action` | 否 | 指定 attention 的量化方式，例如 `INT8` 或 `FP8`。 |
-| `--tp-size`、`--dp-size`、`--ep-size` | 否 | 分别指定 tensor parallel、data parallel 和 expert parallel 的并行规模。 |
-| `--compile` | 否 | 启用编译路径执行仿真。 |
-| `--compile-allow-graph-break` | 否 | 在编译路径中允许 graph break。 |
-| `--enable-multistream` | 否 | 在 `--compile` 路径启用编译期多流仿真。 |
-| `--chrome-trace` | 否 | 指定 Chrome trace 输出路径，用于导出性能时间线。 |
-| `--dump-input-shapes` | 否 | 输出输入 shape 信息，便于排查模型输入配置。 |
-| `--image-batch-size`、`--image-height`、`--image-width` | 否 | 用于 VL 模型，分别描述输入图像数量、高度和宽度。 |
-| `--remote-source` | 否 | 指定远端模型来源，可选 `huggingface` 或 `modelscope`。 |
-| `--performance-model` | 否 | 指定性能模型，可选 `analytic` 或 `profiling`。 |
-| `--profiling-database` | 否 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。 |
+| `model_id` | 必选 | 模型 ID 或本地模型路径，例如 `Qwen/Qwen3-32B` 或 `/data/models/Qwen3-32B`。取值范围：Hugging Face ID、ModelScope ID 或本地绝对路径。默认值：无。 |
+| `--num-queries` | 必选 | 本次仿真的 query 数量。取值范围：正整数。默认值：无。 |
+| `--query-length` | 必选 | 每个 query 的新输入 token 长度。取值范围：正整数。默认值：无。 |
+| `--context-length` | 可选 | 每个 query 的上下文 token 长度；prefill 场景通常与 `--query-length` 一起设置，decode 场景通常大于 `--query-length`。取值范围：非负整数。默认值：`0`。 |
+| `--decode` | 可选 | 启用 decode 模式；不设置时按 prefill 模式运行。取值范围：开关参数。默认值：`False`。 |
+| `--prefix-cache-hit-rate` | 可选 | 指定 prefix cache 命中率，用于 prefill token 复用近似。取值范围：`[0, 1)`。默认值：`0.0`。 |
+| `--device` | 可选 | 指定用于仿真的设备配置。取值范围：已注册 DeviceProfile 名称。默认值：`TEST_DEVICE`。 |
+| `--num-devices` | 可选 | 指定参与仿真的设备数量。取值范围：正整数。默认值：`1`。 |
+| `--reserved-memory-gb` | 可选 | 指定每张设备预留的显存大小，单位为 GB。取值范围：非负数。默认值：`0.0`。 |
+| `--log-level` | 可选 | 指定日志级别。取值范围：`debug`、`info`、`warning`、`error`、`critical`。默认值：`error`。 |
+| `--quantize-linear-action` | 可选 | 指定线性层量化方式。取值范围：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-non-expert-linear-action` | 可选 | 指定非 expert 线性层的量化方式。取值范围：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。默认值：`DISABLED`。 |
+| `--quantize-lmhead` | 可选 | 对 lm head 启用量化。取值范围：开关参数。默认值：`False`。 |
+| `--mxfp4-group-size` | 可选 | 指定 MXFP4 量化的 group size。取值范围：正整数。默认值：`32`。 |
+| `--quantize-attention-action` | 可选 | 指定 attention 的量化方式。取值范围：`DISABLED`、`INT8`、`FP8`。默认值：`DISABLED`。 |
+| `--tp-size`、`--dp-size`、`--ep-size` | 可选 | 分别指定 tensor parallel、data parallel 和 expert parallel 的并行规模。取值范围：正整数。默认值：`1`、`None`、`1`。 |
+| `--compile` | 可选 | 启用编译路径执行仿真。取值范围：开关参数。默认值：`False`。 |
+| `--compile-allow-graph-break` | 可选 | 在编译路径中允许 graph break。取值范围：开关参数。默认值：`False`。 |
+| `--enable-multistream` | 可选 | 在 `--compile` 路径启用编译期多流仿真。取值范围：开关参数。默认值：`True`。 |
+| `--chrome-trace` | 可选 | 指定 Chrome trace 输出路径，用于导出性能时间线。取值范围：文件路径。默认值：`None`。 |
+| `--dump-input-shapes` | 可选 | 输出输入 shape 信息，便于排查模型输入配置。取值范围：开关参数。默认值：`False`。 |
+| `--image-batch-size`、`--image-height`、`--image-width` | 可选 | 用于 VL 模型，分别描述输入图像数量、高度和宽度。取值范围：正整数。默认值：`None`。 |
+| `--remote-source` | 可选 | 指定远端模型来源。取值范围：`huggingface`、`modelscope`。默认值：`huggingface`。 |
+| `--performance-model` | 可选 | 指定性能模型。取值范围：`analytic`、`profiling`，可重复指定。默认值：`analytic`。 |
+| `--profiling-database` | 可选 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。取值范围：目录路径。默认值：`None`。 |
 
 `--enable-multistream` 用于在 `--compile` 路径启用编译期多流仿真。该能力默认开启，因此已有 compile 命令会保持当前行为。
 
@@ -235,27 +238,29 @@ Run a simulated diffusion transformer forward and dump perf stats.
 
 主要参数说明如下：
 
-| 参数 | 是否必选 | 说明 |
+| 参数 | 可选/必选 | 说明 |
 | --- | --- | --- |
-| `model_id` | 是 | 视频生成模型 ID 或本地模型路径。 |
-| `--batch-size` | 是 | 输入 batch 大小。 |
-| `--seq-len` | 是 | 输入序列长度。 |
-| `--device` | 否 | 指定用于仿真的设备配置，默认为内置设备配置之一。 |
-| `--height`、`--width` | 否 | 指定输入视频或图像帧的高度和宽度。 |
-| `--frame-num` | 否 | 指定视频帧数。 |
-| `--sample-step` | 否 | 指定 diffusion 采样步数。 |
-| `--dtype` | 否 | 指定模型计算数据类型，可选 `float16`、`float32` 或 `bfloat16`。 |
-| `--quantize-linear-action` | 否 | 指定线性层量化方式，例如 `W8A8_DYNAMIC`、`W8A8_STATIC`、`FP8` 或 `MXFP4`。 |
-| `--use-cfg` | 否 | 启用 classifier-free guidance 相关仿真路径。 |
-| `--world-size` | 否 | 指定参与分布式仿真的总设备数。 |
-| `--ulysses-size` | 否 | 指定 Ulysses 并行规模。 |
-| `--cfg-parallel` | 否 | 启用 CFG 并行策略。 |
-| `--dit-cache` | 否 | 启用 DiT cache 仿真。 |
-| `--cache-step-range` | 否 | 指定启用 cache 的采样步范围。 |
-| `--cache-step-interval` | 否 | 指定 cache 的采样步间隔。 |
-| `--cache-block-range` | 否 | 指定启用 cache 的 block 范围。 |
-| `--chrome-trace` | 否 | 指定 Chrome trace 输出路径，用于导出性能时间线。 |
-| `--log-level` | 否 | 指定日志级别，可选 `debug`、`info`、`warning`、`error` 或 `critical`。 |
+| `model_id` | 必选 | 视频生成模型 ID 或本地模型路径。取值范围：Diffusers 模型目录、远端 repo ID 或带子目录的 repo ID。默认值：无。 |
+| `--batch-size` | 必选 | 输入 batch 大小。取值范围：正整数。默认值：无。 |
+| `--seq-len` | 必选 | 输入序列长度。取值范围：正整数。默认值：无。 |
+| `--device` | 可选 | 指定用于仿真的设备配置。取值范围：已注册 DeviceProfile 名称。默认值：`TEST_DEVICE`。 |
+| `--height`、`--width` | 可选 | 指定输入视频或图像帧的高度和宽度。取值范围：正整数。默认值：`400`、`832`。 |
+| `--frame-num` | 可选 | 指定视频帧数。取值范围：正整数。默认值：`81`。 |
+| `--sample-step` | 可选 | 指定 diffusion 采样步数。取值范围：正整数。默认值：`1`。 |
+| `--dtype` | 可选 | 指定模型计算数据类型。取值范围：`float16`、`float32`、`bfloat16`。默认值：`float16`。 |
+| `--remote-source` | 可选 | 指定远端模型来源。取值范围：`huggingface`、`modelscope`。默认值：`huggingface`。 |
+| `--quantize-linear-action` | 可选 | 指定线性层量化方式。取值范围：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-attention-action` | 可选 | 指定 attention 量化方式。取值范围：`DISABLED`、`INT8`、`FP8`。默认值：`DISABLED`。 |
+| `--use-cfg` | 可选 | 启用 classifier-free guidance 相关仿真路径。取值范围：开关参数。默认值：`False`。 |
+| `--world-size` | 可选 | 指定参与分布式仿真的总设备数。取值范围：正整数。默认值：`1`。 |
+| `--ulysses-size` | 可选 | 指定 Ulysses 并行规模。取值范围：正整数，且需整除 `--world-size`。默认值：`1`。 |
+| `--cfg-parallel` | 可选 | 启用 CFG 并行策略。取值范围：开关参数。默认值：`False`。 |
+| `--dit-cache` | 可选 | 启用 DiT cache 仿真。取值范围：开关参数。默认值：`False`。 |
+| `--cache-step-range` | 可选 | 指定启用 cache 的采样步范围；设置 `--dit-cache` 时必填。格式：`start,end`，非负整数范围。默认值：`None`。 |
+| `--cache-step-interval` | 可选 | 指定 cache 的采样步间隔，`1` 表示不启用 cache 更新复用。取值范围：正整数。默认值：`1`。 |
+| `--cache-block-range` | 可选 | 指定启用 cache 的 block 范围；未设置时使用默认 block 范围。格式：`start,end`，非负整数范围。默认值：`None`。 |
+| `--chrome-trace` | 可选 | 指定 Chrome trace 输出路径，用于导出性能时间线。取值范围：文件路径。默认值：`None`。 |
+| `--log-level` | 可选 | 指定日志级别。取值范围：`debug`、`info`、`warning`、`error`、`critical`。默认值：`info`。 |
 
 运行 `python -m cli.inference.video_generate --help` 查看详情。
 

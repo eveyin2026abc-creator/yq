@@ -356,43 +356,43 @@ PD Ratio Optimization Options:
 
 主要参数说明如下：
 
-| 参数 | 分类 | 是否必选 | 默认值 | 可选值 | 说明 |
-| --- | --- | --- | --- | --- | --- |
-| `model_id` | 通用 | 是 | 无 | Hugging Face ID、ModelScope ID 或本地绝对路径 | 模型 ID 或已审核的本地模型绝对路径。使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
-| `--device` | 通用 | 否 | `TEST_DEVICE` | 已注册 DeviceProfile 名称，可传多个 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。 |
-| `--num-devices` | 通用 | 否 | `1` | 正整数 | 指定参与仿真的设备总数。 |
-| `--reserved-memory-gb` | 通用 | 否 | `10.0` | 非负数 | 指定每张设备预留给系统使用的显存，单位为 GB。 |
-| `--log-level` | 通用 | 否 | `error` | `debug`、`info`、`warning`、`error`、`critical` | 指定日志级别。 |
-| `--input-length` | 请求配置 | 是 | `None` | 正整数 | 输入 prompt 的 token 长度。 |
-| `--output-length` | 请求配置 | 是 | `None` | 正整数 | 期望生成的输出 token 长度。 |
-| `--mtp-acceptance-rate` | 请求配置 | 否 | `[0.9, 0.6, 0.4, 0.2]` | 浮点数列表 | MTP token 的接受率列表。 |
-| `--dump-original-results` | 结果输出 | 否 | `False` | 开关参数 | 输出原始搜索结果，便于进一步分析。 |
-| `--compile` | 模型与量化 | 否 | `False` | 开关参数 | 在推理前对模型调用 `torch.compile()`。 |
-| `--compile-allow-graph-break` | 模型与量化 | 否 | `False` | 开关参数 | 允许 `torch.compile()` 过程中出现 graph break。 |
-| `--enable-multistream` | 模型与量化 | 否 | `True` | 开关参数 | 在 compile 路径启用编译期多流仿真，默认开启。 |
-| `--num-mtp-tokens` | 模型与量化 | 否 | `0` | `0` 到 `9` | 指定 MTP token 数量，`0` 表示不启用。 |
-| `--quantize-linear-action` | 模型与量化 | 否 | `W8A8_DYNAMIC` | `DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4` | 指定线性层量化方式。 |
-| `--quantize-non-expert-linear-action` | 模型与量化 | 否 | `DISABLED` | `DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4` | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。 |
-| `--mxfp4-group-size` | 模型与量化 | 否 | `32` | 正整数 | 指定 MXFP4 量化的 group size。 |
-| `--quantize-attention-action` | 模型与量化 | 否 | `DISABLED` | `DISABLED`、`INT8`、`FP8` | 指定 KV cache 量化方式。 |
-| `--tp-sizes` | 搜索空间 | 否 | `None` | 正整数列表 | 启用 TP 搜索，并可显式指定 TP 取值范围。 |
-| `--ep-sizes` | 搜索空间 | 否 | `None` | 正整数列表 | 启用 EP 搜索，并可显式指定 EP 取值范围。 |
-| `--moe-dp-sizes` | 搜索空间 | 否 | `None` | 正整数列表 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。 |
-| `--ttft-limits` | 服务约束 | 否 | `None` | 正数，单位 ms | 指定 TTFT 约束，用于在约束内搜索最优吞吐。 |
-| `--tpot-limits` | 服务约束 | 否 | `None` | 正数，单位 ms | 指定 TPOT 约束，用于在约束内搜索最优吞吐。 |
-| `--max-batched-tokens` | 服务约束 | 否 | `8192` | 正整数 | 指定单个 prefill 或混合 prefill/decode step 的最大 batched tokens。 |
-| `--prefix-cache-hit-rate` | 服务约束 | 否 | `0.0` | `[0, 1)` | 指定 prefix cache 命中率。 |
-| `--batch-range` | 服务约束 | 否 | `None` | `[min max]` 或 `[max]` | 指定 batch size 搜索范围。 |
-| `--serving-cost` | 服务约束 | 否 | `0` | 非负数 | 指定服务成本，用于成本相关指标计算。 |
-| `--disagg` | 服务约束 | 否 | `False` | 开关参数 | 启用 PD 分离模式。 |
-| `--jobs` | 服务约束 | 否 | `8` | 正整数 | 指定并行搜索任务数。 |
-| `--concurrency-search-strategy` | 服务约束 | 否 | `exponential` | `exponential`、`linear_exponential` | 指定并发度搜索策略。 |
-| `--image-batch-size` | 多模态 | 否 | `None` | 正整数 | 指定每个请求的图像数量；未设置时复用 batch size。 |
-| `--image-height` | 多模态 | 否 | `None` | 正整数 | 指定输入图像高度。 |
-| `--image-width` | 多模态 | 否 | `None` | 正整数 | 指定输入图像宽度。 |
-| `--enable-optimize-prefill-decode-ratio` | PD 配比 | 否 | `False` | 开关参数 | 启用 Prefill/Decode 实例配比优化模式，不能与 `--disagg` 同时使用。 |
-| `--prefill-devices-per-instance` | PD 配比 | 条件必选 | 无 | 正整数 | 启用 PD 配比优化时必填，指定每个 Prefill 实例的设备数。 |
-| `--decode-devices-per-instance` | PD 配比 | 条件必选 | 无 | 正整数 | 启用 PD 配比优化时必填，指定每个 Decode 实例的设备数。 |
+| 参数 | 可选/必选 | 说明 |
+| --- | --- | --- |
+| `model_id` | 必选 | 模型 ID 或已审核的本地模型绝对路径。使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。分类：通用。取值范围：Hugging Face ID、ModelScope ID 或本地绝对路径。默认值：无。 |
+| `--device` | 可选 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。分类：通用。取值范围：已注册 DeviceProfile 名称，可传多个。默认值：`TEST_DEVICE`。 |
+| `--num-devices` | 可选 | 指定参与仿真的设备总数。分类：通用。取值范围：正整数。默认值：`1`。 |
+| `--reserved-memory-gb` | 可选 | 指定每张设备预留给系统使用的显存，单位为 GB。分类：通用。取值范围：非负数。默认值：`10.0`。 |
+| `--log-level` | 可选 | 指定日志级别。分类：通用。取值范围：`debug`、`info`、`warning`、`error`、`critical`。默认值：`error`。 |
+| `--input-length` | 必选 | 输入 prompt 的 token 长度。分类：请求配置。取值范围：正整数。默认值：`None`。 |
+| `--output-length` | 必选 | 期望生成的输出 token 长度。分类：请求配置。取值范围：正整数。默认值：`None`。 |
+| `--mtp-acceptance-rate` | 可选 | MTP token 的接受率列表。分类：请求配置。取值范围：浮点数列表。默认值：`[0.9, 0.6, 0.4, 0.2]`。 |
+| `--dump-original-results` | 可选 | 输出原始搜索结果，便于进一步分析。分类：结果输出。取值范围：开关参数。默认值：`False`。 |
+| `--compile` | 可选 | 在推理前对模型调用 `torch.compile()`。分类：模型与量化。取值范围：开关参数。默认值：`False`。 |
+| `--compile-allow-graph-break` | 可选 | 允许 `torch.compile()` 过程中出现 graph break。分类：模型与量化。取值范围：开关参数。默认值：`False`。 |
+| `--enable-multistream` | 可选 | 在 compile 路径启用编译期多流仿真，默认开启。分类：模型与量化。取值范围：开关参数。默认值：`True`。 |
+| `--num-mtp-tokens` | 可选 | 指定 MTP token 数量，`0` 表示不启用。分类：模型与量化。取值范围：`0` 到 `9`。默认值：`0`。 |
+| `--quantize-linear-action` | 可选 | 指定线性层量化方式。分类：模型与量化。取值范围：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-non-expert-linear-action` | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。分类：模型与量化。取值范围：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。默认值：`DISABLED`。 |
+| `--mxfp4-group-size` | 可选 | 指定 MXFP4 量化的 group size。分类：模型与量化。取值范围：正整数。默认值：`32`。 |
+| `--quantize-attention-action` | 可选 | 指定 KV cache 量化方式。分类：模型与量化。取值范围：`DISABLED`、`INT8`、`FP8`。默认值：`DISABLED`。 |
+| `--tp-sizes` | 可选 | 启用 TP 搜索，并可显式指定 TP 取值范围。分类：搜索空间。取值范围：正整数列表。默认值：`None`。 |
+| `--ep-sizes` | 可选 | 启用 EP 搜索，并可显式指定 EP 取值范围。分类：搜索空间。取值范围：正整数列表。默认值：`None`。 |
+| `--moe-dp-sizes` | 可选 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。分类：搜索空间。取值范围：正整数列表。默认值：`None`。 |
+| `--ttft-limits` | 可选 | 指定 TTFT 约束，用于在约束内搜索最优吞吐。分类：服务约束。取值范围：正数，单位 ms。默认值：`None`。 |
+| `--tpot-limits` | 可选 | 指定 TPOT 约束，用于在约束内搜索最优吞吐。分类：服务约束。取值范围：正数，单位 ms。默认值：`None`。 |
+| `--max-batched-tokens` | 可选 | 指定单个 prefill 或混合 prefill/decode step 的最大 batched tokens。分类：服务约束。取值范围：正整数。默认值：`8192`。 |
+| `--prefix-cache-hit-rate` | 可选 | 指定 prefix cache 命中率。分类：服务约束。取值范围：`[0, 1)`。默认值：`0.0`。 |
+| `--batch-range` | 可选 | 指定 batch size 搜索范围。分类：服务约束。格式：`[min max]` 或 `[max]`。默认值：`None`。 |
+| `--serving-cost` | 可选 | 指定服务成本，用于成本相关指标计算。分类：服务约束。取值范围：非负数。默认值：`0`。 |
+| `--disagg` | 可选 | 启用 PD 分离模式。分类：服务约束。取值范围：开关参数。默认值：`False`。 |
+| `--jobs` | 可选 | 指定并行搜索任务数。分类：服务约束。取值范围：正整数。默认值：`8`。 |
+| `--concurrency-search-strategy` | 可选 | 指定并发度搜索策略。分类：服务约束。取值范围：`exponential`、`linear_exponential`。默认值：`exponential`。 |
+| `--image-batch-size` | 可选 | 指定每个请求的图像数量；未设置时复用 batch size。分类：多模态。取值范围：正整数。默认值：`None`。 |
+| `--image-height` | 可选 | 指定输入图像高度。分类：多模态。取值范围：正整数。默认值：`None`。 |
+| `--image-width` | 可选 | 指定输入图像宽度。分类：多模态。取值范围：正整数。默认值：`None`。 |
+| `--enable-optimize-prefill-decode-ratio` | 可选 | 启用 Prefill/Decode 实例配比优化模式，不能与 `--disagg` 同时使用。分类：PD 配比。取值范围：开关参数。默认值：`False`。 |
+| `--prefill-devices-per-instance` | 条件必选 | 启用 PD 配比优化时必填，指定每个 Prefill 实例的设备数。分类：PD 配比。取值范围：正整数。默认值：无。 |
+| `--decode-devices-per-instance` | 条件必选 | 启用 PD 配比优化时必填，指定每个 Decode 实例的设备数。分类：PD 配比。取值范围：正整数。默认值：无。 |
 
 ### 搜索维度与范围
 
