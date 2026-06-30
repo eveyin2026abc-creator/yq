@@ -188,7 +188,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   - PD 分离：在设置相应限制时，分别输出 Prefill 与 Decode 的跨硬件表。
   - PD 配比模式：在 TTFT/TPOT 限制下各设备的最佳均衡 QPS，包含 PD 配比；若设置 `--num-devices`，还可包含 P/D 实例数量。
 
-##### 使用多个 `--device` 时的示例输出
+#### 使用多个 `--device` 时的示例输出
 
 指定两个及以上设备配置时，优化器会先为每个配置打印单设备结果，再输出两张跨硬件表：
 
@@ -529,4 +529,3 @@ PD 配比模式使用 QPS（Queries Per Second，每秒查询数）作为匹配 
      - 尽可能接近 PD 配比
      - 落在总设备预算内
      - 使系统整体吞吐量最大
-
