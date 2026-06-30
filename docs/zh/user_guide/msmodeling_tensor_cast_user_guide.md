@@ -10,7 +10,7 @@
 | 2. 理解输出中的耗时、调用次数和显存指标 | [2.2 结果（文本生成）](#22-结果文本生成) |
 | 3. 运行视频生成模型仿真 | [2.3 快速入门：视频生成](#23-快速入门视频生成) |
 | 4. 查看或自定义硬件设备画像 | [3 支持的设备与自定义设备](#3-支持的设备与自定义设备) |
-| 5. 配置 prefill / decode 场景 | [5.2 运行 Prefill](#52-运行-prefill) 与 [5.3 运行 Decode](#53-运行-decode) |
+| 5. 配置 prefill / decode 场景 | [5 进阶说明](#5-进阶说明) |
 
 ## 1 简介
 
@@ -46,6 +46,30 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 **关键参数：** `--context-length`、`--decode`、`--quantize-linear-action`、`--chrome-trace`、`--device`
 
 **输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
+
+#### Prefill 场景
+
+要在 A2 上对 Qwen3-32B 运行 prefill，两个请求各 3500 token 输入长度，可运行以下命令：
+
+```bash
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 3500 --device TEST_DEVICE
+```
+
+Prefill 模式下不添加 `--decode`；`--query-length` 表示新输入长度，`--context-length` 表示每个请求的 context 长度。
+
+也可使用多种量化方案对线性层进行量化，例如 W8A8 动态量化，并以 4500 token 的 context 作为前缀：
+
+```bash
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_DYNAMIC
+```
+
+#### Decode 场景
+
+运行 decode 类似，只需调整输入长度 `--query-length` 和 context 长度。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 后，`--query-length` 应设置为 `1 + mtp_tokens`。
+
+```bash
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
+```
 
 ### 2.2 结果（文本生成）
 
@@ -323,26 +347,3 @@ Run a simulated diffusion transformer forward and dump perf stats.
 3. 同时启用 External Shared Experts 与 Redundant Experts：
 分配逻辑与"仅 External Shared Experts"模式相同，另有一项补充：若无需 redundant experts 来填充 routing experts（即 routing experts 在各设备间均匀分布），则每个托管 routing experts 的设备会额外托管一个 redundant expert。
 
-### 5.2 运行 Prefill
-
-要在 A2 上对 Qwen3-32B 运行 prefill，两个请求各 3500 token 输入长度，可运行以下命令：
-
-```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 3500 --device TEST_DEVICE
-```
-
-Prefill 模式下不添加 `--decode`；`--query-length` 表示新输入长度，`--context-length` 表示每个请求的 context 长度。
-
-也可使用多种量化方案对线性层进行量化，例如 W8A8 动态量化，并以 4500 token 的 context 作为前缀：
-
-```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_DYNAMIC
-```
-
-### 5.3 运行 Decode
-
-运行 decode 类似，只需调整输入长度 query-length和 context 长度。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 后，`--query-length` 应设置为 `1 + mtp_tokens`。
-
-```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
-```
