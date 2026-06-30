@@ -106,7 +106,7 @@ export HF_ENDPOINT="https://hf-mirror.com"
 
 在受限网络中，即使设置 `HF_ENDPOINT`，仍可能因代理策略、DNS、TLS 证书、镜像站不可达、模型仓库需要鉴权，或依赖库未使用该环境变量而下载失败。此时建议使用以下方案：
 
-优先在可访问外网的环境中提前下载并审核模型仓库，再将 `model_id` 指向本地绝对路径：
+优先在可访问外网的环境中提前下载并审核模型仓库中的配置文件（仅需 `.json`、`.yaml`、`.yml`、`.txt` 后缀），再将 `model_id` 指向本地绝对路径：
 
    ```bash
    python -m cli.inference.text_generate /data/models/Qwen3-32B --num-queries 2 --query-length 3500 --device TEST_DEVICE

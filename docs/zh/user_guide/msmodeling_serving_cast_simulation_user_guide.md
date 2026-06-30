@@ -89,4 +89,4 @@ output_token_throughput(tok/s) 285.598
 - TPOT：首 token 之后每个输出 token 的时间（Time-per-output-token）
 - OUTPUT_TOKEN_THROUGHPUT：单请求的输出 token 速率
 - request_throughput：系统级请求速率
-- input_token_throughput / output_token_throughput：聚合 token 吞吐
+- `input_token_throughput` / `output_token_throughput`：聚合 token 吞吐
