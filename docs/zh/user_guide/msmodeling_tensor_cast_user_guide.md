@@ -45,7 +45,7 @@ TensorCast 是一个面向 PyTorch 程序的性能仿真与分析框架。它使
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 3500 --device TEST_DEVICE
 ```
 
-Prefill 模式下不添加 `--decode`；`--query-length` 表示新输入长度，`--context-length` 表示每个请求的 context 长度。
+Prefill 模式下不添加 `--decode`；`--query-length` 表示输入长度，`--context-length` 表示每个请求的 context 长度。
 
 也可使用多种量化方案对线性层进行量化，例如 W8A8 动态量化，并以 4500 token 的 context 作为前缀：
 
@@ -55,7 +55,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 
 #### Decode 场景
 
-运行 decode 类似，只需调整输入长度 `--query-length` 和 context 长度。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 后，`--query-length` 应设置为 `1 + mtp_tokens`。
+Decode 场景的运行方式类似，仅需调整输入长度 `--query-length` 和请求的 context 长度 `--context-length`。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 时，`--query-length` 应设置为 `1 + --num-mtp-tokens`。
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_STATIC
