@@ -62,6 +62,7 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "-tab",
         "--enable-tab-completion",
         action="store_true",
         help="Enable static bash tab completion for python/python3 and msmodeling commands",

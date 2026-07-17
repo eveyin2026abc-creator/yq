@@ -96,7 +96,34 @@ export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 ```
 
-### 5. Hugging Face 访问
+### 5. 启用 Tab 补全（可选）
+
+在 Linux Bash 环境中，可启用静态 Tab 补全，补全 `python`、`python3` 和 `msmodeling` 命令下的常用 msmodeling 模块名与长选项。补全时只执行 shell 字符串匹配，不会启动 Python 或加载模型依赖。
+
+如果已通过 `pip install -e .` 或 `uv sync` 安装当前项目，可执行：
+
+```bash
+msmodeling -tab
+```
+
+该命令会生成补全脚本到 `$HOME/.local/share/msmodeling/completion.bash`，并在 `~/.bashrc` 中加入受管理的加载块；命令执行后会重新进入 Bash，使当前终端立即可用。
+
+如果不想安装 editable entry point，也可以在仓库根目录通过 `PYTHONPATH` 使用：
+
+```bash
+export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
+python -m cli.main -tab
+```
+
+启用后可验证：
+
+```bash
+python -m cli.inference.te<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+```
+
+### 6. Hugging Face 访问
 
 工具运行时需要从 Hugging Face 读取模型配置文件。如果无法直接访问，可以设置镜像：
 

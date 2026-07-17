@@ -25,7 +25,7 @@
 - 支持 `python`、`python3` 下的常用 msmodeling 命令补全。
 - 支持 `python -m cli.inference.<Tab>` 模块名补全。
 - 支持 `python -m cli.inference.text_generate ... --<Tab>` 等长选项补全。
-- 支持 `msmodeling --enable-tab-completion` 一键启用 Bash 补全。
+- 支持 `msmodeling --enable-tab-completion` 一键启用 Bash 补全，并提供等价短别名 `msmodeling -tab`。
 - 支持启用后自动重新进入 Bash，使当前终端和新终端均可使用补全。
 - 保持补全逻辑静态、快速、可测试。
 
@@ -38,7 +38,7 @@
 ```bash
 cd /path/to/msmodeling
 pip install -e .
-msmodeling --enable-tab-completion
+msmodeling -tab
 ```
 
 命令执行后：
@@ -53,7 +53,7 @@ msmodeling --enable-tab-completion
 ```bash
 cd /path/to/msmodeling
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
-python -m cli.main --enable-tab-completion
+python -m cli.main -tab
 ```
 
 该方式不创建 `msmodeling` shell 命令，只依赖当前仓库源码可被 Python 导入。
@@ -82,7 +82,7 @@ python -m cli.inference.te<Tab>
 flowchart LR
     User[User] --> Install["pip install -e ."]
     Install --> Entry["msmodeling command"]
-    Entry --> Enable["--enable-tab-completion"]
+    Entry --> Enable["-tab / --enable-tab-completion"]
     Enable --> Script["~/.local/share/msmodeling/completion.bash"]
     Enable --> Bashrc["~/.bashrc managed block"]
     Bashrc --> NewShell["exec bash"]
@@ -92,7 +92,7 @@ flowchart LR
 核心文件：
 
 - `cli/completion.py`：静态补全脚本渲染、Bash rc 管理、补全文件安装。
-- `cli/main.py`：新增 `--enable-tab-completion` 入口参数。
+- `cli/main.py`：新增 `-tab` / `--enable-tab-completion` 入口参数。
 - `pyproject.toml`：保留 `msmodeling` 主入口，并新增 `msmodeling-tab`、`msmodeling-completion` 兼容命令。
 - `tests/regression/cli/test_completion.py`：验证补全脚本渲染、rc 块写入和幂等性。
 - `tests/regression/cli/test_main.py`：验证 `msmodeling` 主入口能正确分发启用逻辑。
@@ -137,6 +137,12 @@ complete -o default -F _msmodeling_complete python python3 msmodeling
 msmodeling --enable-tab-completion
 ```
 
+等价短命令：
+
+```bash
+msmodeling -tab
+```
+
 执行行为：
 
 1. 渲染静态 Bash 补全脚本。
@@ -155,7 +161,7 @@ fi
 
 ### 4.5 幂等性
 
-`--enable-tab-completion` 可以重复执行：
+`-tab` / `--enable-tab-completion` 可以重复执行：
 
 - 如果 `~/.bashrc` 中已存在管理块，则替换旧块。
 - 如果不存在管理块，则追加新块。
@@ -167,7 +173,7 @@ fi
 安全性：
 
 - 默认 `pip install -e .` 不修改用户 shell 启动文件。
-- 只有用户显式执行 `msmodeling --enable-tab-completion` 才会写入 `~/.bashrc`。
+- 只有用户显式执行 `msmodeling -tab` 或 `msmodeling --enable-tab-completion` 才会写入 `~/.bashrc`。
 - 写入内容为固定 source 块，不执行动态下载或远程代码。
 
 兼容性：
@@ -205,6 +211,7 @@ fi
 
 - `tests/regression/cli/test_main.py`
   - 验证 `msmodeling --enable-tab-completion` 转发到 `enable_tab_completion`。
+  - 验证 `msmodeling -tab` 转发到 `enable_tab_completion`。
 
 ### 6.1 单元测试
 
@@ -224,7 +231,7 @@ python -m pytest tests/regression/cli/test_completion.py \
 
 ### 6.2 安装模式测试
 
-该方法验证 `pip install -e .` 后，`msmodeling` 命令已安装，同时用内部 helper 验证补全文件与 rc 管理块写入逻辑。由于正式入口会执行 `exec bash`，自动化测试中不直接运行 `msmodeling --enable-tab-completion`，避免测试进程被新的 Bash 替换。
+该方法验证 `pip install -e .` 后，`msmodeling` 命令已安装，同时用内部 helper 验证补全文件与 rc 管理块写入逻辑。由于正式入口会执行 `exec bash`，自动化测试中不直接运行 `msmodeling -tab`，避免测试进程被新的 Bash 替换。
 
 ```bash
 source /path/to/venv/bin/activate
@@ -259,7 +266,7 @@ grep -q "complete -o default -F _msmodeling_complete python python3 msmodeling" 
 
 ### 6.3 免安装模式测试
 
-该方法不执行 `pip install -e .`，通过 `PYTHONPATH` 让 Python 找到当前仓库源码，再用内部 helper 验证补全文件与 rc 管理块写入逻辑。正式使用时仍调用 `python -m cli.main --enable-tab-completion`。
+该方法不执行 `pip install -e .`，通过 `PYTHONPATH` 让 Python 找到当前仓库源码，再用内部 helper 验证补全文件与 rc 管理块写入逻辑。正式使用时仍调用 `python -m cli.main -tab`。
 
 ```bash
 source /path/to/venv/bin/activate
@@ -295,7 +302,7 @@ grep -q "complete -o default -F _msmodeling_complete python python3 msmodeling" 
 
 ### 7.1 当前终端立即生效方式
 
-Bash 补全函数必须加载到当前 shell 进程中。`msmodeling --enable-tab-completion` 无法把函数直接注入已经打开的父 shell，因此启用逻辑在写入 `~/.bashrc` 后执行 `exec bash`，用新的 Bash 替换当前进程并读取最新配置。
+Bash 补全函数必须加载到当前 shell 进程中。`msmodeling -tab` 无法把函数直接注入已经打开的父 shell，因此启用逻辑在写入 `~/.bashrc` 后执行 `exec bash`，用新的 Bash 替换当前进程并读取最新配置。
 
 效果：
 
@@ -315,7 +322,7 @@ CLI 参数新增或删除后，需要同步维护 `cli/completion.py` 中的 `OP
 
 ### 7.3 Shell 覆盖范围
 
-当前 `--enable-tab-completion` 只支持 Bash 自动写入。
+当前 `-tab` / `--enable-tab-completion` 只支持 Bash 自动写入。
 
 缓解方式：
 
@@ -341,7 +348,7 @@ CLI 参数新增或删除后，需要同步维护 `cli/completion.py` 中的 `OP
 ```bash
 cd /path/to/msmodeling
 pip install -e .
-msmodeling --enable-tab-completion
+msmodeling -tab
 ```
 
 免安装启用：
@@ -349,7 +356,7 @@ msmodeling --enable-tab-completion
 ```bash
 cd /path/to/msmodeling
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
-python -m cli.main --enable-tab-completion
+python -m cli.main -tab
 ```
 
 ### 示例补全

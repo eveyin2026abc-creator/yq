@@ -20,6 +20,7 @@ MODULES = (
 )
 
 TOP_LEVEL_OPTIONS = (
+    "-tab",
     "--enable-tab-completion",
     "--help",
 )

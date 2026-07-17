@@ -96,7 +96,34 @@ export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 ```
 
-### 5. Hugging Face Access
+### 5. Enable Tab Completion (Optional)
+
+On Linux Bash, you can enable static Tab completion for common msmodeling module names and long options under `python`, `python3`, and `msmodeling`. Completion only performs shell string matching; it does not start Python or load model dependencies.
+
+If the current project has been installed with `pip install -e .` or `uv sync`, run:
+
+```bash
+msmodeling -tab
+```
+
+This command writes the completion script to `$HOME/.local/share/msmodeling/completion.bash`, adds a managed source block to `~/.bashrc`, and re-enters Bash so the current terminal can use completion immediately.
+
+If you do not want to install the editable entry point, run the module entry from the repository root with `PYTHONPATH`:
+
+```bash
+export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
+python -m cli.main -tab
+```
+
+After enabling completion, verify it with:
+
+```bash
+python -m cli.inference.te<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+```
+
+### 6. Hugging Face Access
 
 The tool reads model configuration files from Hugging Face at runtime. If direct access is unavailable, set a mirror endpoint:
 

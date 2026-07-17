@@ -106,3 +106,13 @@ def test_main_enables_tab_completion() -> None:
     enable_completion.assert_called_once_with(
         reload_shell=True,
     )
+
+
+def test_main_enables_tab_completion_with_short_alias() -> None:
+    with patch("cli.completion.enable_tab_completion", return_value=0) as enable_completion:
+        result = run_cli_main(main, ["-tab"], prog="msmodeling")
+
+    assert result.returncode == 0
+    enable_completion.assert_called_once_with(
+        reload_shell=True,
+    )

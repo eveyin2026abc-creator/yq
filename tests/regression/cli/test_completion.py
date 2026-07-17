@@ -18,6 +18,7 @@ def test_render_bash_completion_registers_python_and_msmodeling() -> None:
     assert "--num-queries" in script
     assert "--quantize-linear-action" in script
     assert "--enable-tab-completion" in script
+    assert "-tab" in script
 
 
 def test_enable_tab_completion_writes_static_file_and_rc_block(tmp_path: Path) -> None:
