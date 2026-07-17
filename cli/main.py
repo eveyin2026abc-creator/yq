@@ -61,6 +61,32 @@ def main() -> int:
             "  msmodeling optix -e vllm -b ais_bench\n"
         ),
     )
+    parser.add_argument(
+        "--enable-tab-completion",
+        action="store_true",
+        help="Enable static bash tab completion for python/python3 and msmodeling commands",
+    )
+    parser.add_argument(
+        "--disable-tab-completion",
+        action="store_true",
+        help="Remove the msmodeling tab completion block from the bash startup file",
+    )
+    parser.add_argument(
+        "--completion-shell",
+        choices=("auto", "bash"),
+        default="auto",
+        help="Shell startup file to update for tab completion",
+    )
+    parser.add_argument(
+        "--completion-rc-file",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--reload-shell",
+        action="store_true",
+        help="After enabling completion, replace the current process with a fresh bash shell",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("optix", help="Service parameter optimizer", add_help=False)
@@ -73,6 +99,26 @@ def main() -> int:
     inference_sub.add_parser("video-generate", help="Run a simulated video generation pass")
 
     args, remaining = parser.parse_known_args()
+
+    if args.enable_tab_completion and args.disable_tab_completion:
+        parser.error("--enable-tab-completion and --disable-tab-completion are mutually exclusive")
+
+    if args.enable_tab_completion:
+        from cli.completion import enable_tab_completion
+
+        return enable_tab_completion(
+            shell=args.completion_shell,
+            rc_file=args.completion_rc_file,
+            reload_shell=args.reload_shell,
+        )
+
+    if args.disable_tab_completion:
+        from cli.completion import disable_tab_completion
+
+        return disable_tab_completion(
+            shell=args.completion_shell,
+            rc_file=args.completion_rc_file,
+        )
 
     if args.command == "optix":
         from optix.optimizer.optimizer import main as optix_main

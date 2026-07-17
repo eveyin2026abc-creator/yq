@@ -96,3 +96,26 @@ def test_main_dispatches_inference_subcommand() -> None:
 
     assert result.returncode == 0
     text_generate_main.assert_called_once()
+
+
+def test_main_enables_tab_completion() -> None:
+    with patch("cli.completion.enable_tab_completion", return_value=0) as enable_completion:
+        result = run_cli_main(main, ["--enable-tab-completion"], prog="msmodeling")
+
+    assert result.returncode == 0
+    enable_completion.assert_called_once_with(
+        shell="auto",
+        rc_file=None,
+        reload_shell=False,
+    )
+
+
+def test_main_disables_tab_completion() -> None:
+    with patch("cli.completion.disable_tab_completion", return_value=0) as disable_completion:
+        result = run_cli_main(main, ["--disable-tab-completion"], prog="msmodeling")
+
+    assert result.returncode == 0
+    disable_completion.assert_called_once_with(
+        shell="auto",
+        rc_file=None,
+    )
