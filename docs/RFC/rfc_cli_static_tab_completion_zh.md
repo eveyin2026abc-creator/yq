@@ -26,8 +26,7 @@
 - 支持 `python -m cli.inference.<Tab>` 模块名补全。
 - 支持 `python -m cli.inference.text_generate ... --<Tab>` 等长选项补全。
 - 支持 `msmodeling --enable-tab-completion` 一键启用 Bash 补全。
-- 支持新 Bash 终端自动加载补全。
-- 支持通过 `--reload-shell` 在启用后重新进入 Bash，使当前终端可直接使用补全。
+- 支持启用后自动重新进入 Bash，使当前终端和新终端均可使用补全。
 - 保持补全逻辑静态、快速、可测试。
 
 ## 3. 用例分析
@@ -39,14 +38,14 @@
 ```bash
 cd /path/to/msmodeling
 pip install -e .
-msmodeling --enable-tab-completion --reload-shell
+msmodeling --enable-tab-completion
 ```
 
 命令执行后：
 
 - 生成静态补全脚本：`~/.local/share/msmodeling/completion.bash`
 - 在 `~/.bashrc` 写入受管理的 source 块
-- 使用 `--reload-shell` 时，通过 `exec bash` 重新进入 Bash
+- 通过 `exec bash` 重新进入 Bash
 - 当前终端和后续新终端均可使用补全
 
 如果不希望执行 `pip install -e .`，也可以通过 `PYTHONPATH` 直接调用模块入口：
@@ -54,7 +53,7 @@ msmodeling --enable-tab-completion --reload-shell
 ```bash
 cd /path/to/msmodeling
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
-python -m cli.main --enable-tab-completion --reload-shell
+python -m cli.main --enable-tab-completion
 ```
 
 该方式不创建 `msmodeling` shell 命令，只依赖当前仓库源码可被 Python 导入。
@@ -73,21 +72,11 @@ python -m cli.inference.te<Tab>
 
 上述命令可以补全模块名和长选项，例如 `--num-queries`、`--query-length`、`--quantize-linear-action`、`--compile` 等。
 
-### 3.3 禁用补全
-
-用户可以执行：
-
-```bash
-msmodeling --disable-tab-completion
-```
-
-该命令会移除 `~/.bashrc` 中由 msmodeling 管理的补全块，不影响用户手写的其他 shell 配置。
-
 ## 4. 方案设计
 
 ### 4.1 总体设计
 
-新增 `cli/completion.py`，集中维护静态补全数据和启用/禁用逻辑。`cli/main.py` 作为现有 `msmodeling` 统一入口，新增顶层参数并转发到 `cli.completion`。
+新增 `cli/completion.py`，集中维护静态补全数据和启用逻辑。`cli/main.py` 作为现有 `msmodeling` 统一入口，新增顶层参数并转发到 `cli.completion`。
 
 ```mermaid
 flowchart LR
@@ -96,17 +85,17 @@ flowchart LR
     Entry --> Enable["--enable-tab-completion"]
     Enable --> Script["~/.local/share/msmodeling/completion.bash"]
     Enable --> Bashrc["~/.bashrc managed block"]
-    Bashrc --> NewShell["new bash / exec bash"]
+    Bashrc --> NewShell["exec bash"]
     NewShell --> Complete["python, python3, msmodeling completion"]
 ```
 
 核心文件：
 
 - `cli/completion.py`：静态补全脚本渲染、Bash rc 管理、补全文件安装。
-- `cli/main.py`：新增 `--enable-tab-completion`、`--disable-tab-completion`、`--reload-shell` 等入口参数。
+- `cli/main.py`：新增 `--enable-tab-completion` 入口参数。
 - `pyproject.toml`：保留 `msmodeling` 主入口，并新增 `msmodeling-tab`、`msmodeling-completion` 兼容命令。
-- `tests/regression/cli/test_completion.py`：验证补全脚本渲染、rc 块写入、幂等性和禁用逻辑。
-- `tests/regression/cli/test_main.py`：验证 `msmodeling` 主入口能正确分发启用/禁用逻辑。
+- `tests/regression/cli/test_completion.py`：验证补全脚本渲染、rc 块写入和幂等性。
+- `tests/regression/cli/test_main.py`：验证 `msmodeling` 主入口能正确分发启用逻辑。
 
 ### 4.2 静态补全数据
 
@@ -123,7 +112,7 @@ flowchart LR
 - `video_generate`
 - `throughput_optimizer`
 - `serving_cast_main`
-- `msmodeling` 顶层启用/禁用参数
+- `msmodeling` 顶层启用参数
 
 ### 4.3 Bash 补全脚本
 
@@ -140,7 +129,7 @@ complete -o default -F _msmodeling_complete python python3 msmodeling
 - 当前命令包含 `cli.inference.text_generate`、`cli/inference/text_generate.py` 等目标：补全对应长选项。
 - 当前词不是 `--*` 时不抢占默认路径补全。
 
-### 4.4 启用与禁用
+### 4.4 启用流程
 
 启用命令：
 
@@ -162,21 +151,7 @@ fi
 # <<< msmodeling completion <<<
 ```
 
-4. 提示用户新开终端或执行 `exec bash`。
-
-启用命令支持：
-
-- `--completion-shell bash`：指定更新 Bash 启动文件。
-- `--completion-rc-file PATH`：测试或定制场景下指定 rc 文件，默认隐藏在 help 中。
-- `--reload-shell`：启用后执行 `os.execvp("bash", ["bash"])`。
-
-禁用命令：
-
-```bash
-msmodeling --disable-tab-completion
-```
-
-禁用逻辑只删除 `# >>> msmodeling completion >>>` 与 `# <<< msmodeling completion <<<` 之间的受管理内容。
+4. 执行 `os.execvp("bash", ["bash"])`，用新的 Bash 替换当前进程。
 
 ### 4.5 幂等性
 
@@ -211,7 +186,7 @@ msmodeling --disable-tab-completion
 
 - 测试通过临时 rc 文件和临时补全文件验证，不触碰真实 `~/.bashrc`。
 - 渲染结果可直接断言关键字符串。
-- 启用和禁用逻辑可独立单测。
+- 启用逻辑可独立单测。
 
 可靠性：
 
@@ -227,11 +202,9 @@ msmodeling --disable-tab-completion
   - 验证补全脚本包含 `cli.inference.text_generate`、`--num-queries`、`--quantize-linear-action` 等关键项。
   - 验证启用命令写入静态补全文件和 rc 管理块。
   - 验证重复启用不会产生重复管理块。
-  - 验证禁用命令能移除管理块。
 
 - `tests/regression/cli/test_main.py`
   - 验证 `msmodeling --enable-tab-completion` 转发到 `enable_tab_completion`。
-  - 验证 `msmodeling --disable-tab-completion` 转发到 `disable_tab_completion`。
 
 ### 6.1 单元测试
 
@@ -240,19 +213,18 @@ msmodeling --disable-tab-completion
 ```bash
 source /path/to/venv/bin/activate
 python -m pytest tests/regression/cli/test_completion.py \
-  tests/regression/cli/test_main.py::test_main_enables_tab_completion \
-  tests/regression/cli/test_main.py::test_main_disables_tab_completion
+  tests/regression/cli/test_main.py::test_main_enables_tab_completion
 ```
 
 结果：
 
 ```text
-6 passed
+4 passed
 ```
 
 ### 6.2 安装模式测试
 
-该方法验证 `pip install -e .` 后，`msmodeling` 命令可直接用于启用补全。测试时使用临时 `HOME` 和临时 rc 文件，避免修改真实 `~/.bashrc`。
+该方法验证 `pip install -e .` 后，`msmodeling` 命令已安装，同时用内部 helper 验证补全文件与 rc 管理块写入逻辑。由于正式入口会执行 `exec bash`，自动化测试中不直接运行 `msmodeling --enable-tab-completion`，避免测试进程被新的 Bash 替换。
 
 ```bash
 source /path/to/venv/bin/activate
@@ -260,7 +232,12 @@ cd /path/to/msmodeling
 UV_CACHE_DIR="$HOME/.cache/uv" uv pip install -e . --no-deps
 
 tmp_home="$(mktemp -d)"
-HOME="$tmp_home" msmodeling --enable-tab-completion --completion-rc-file "$tmp_home/.bashrc"
+command -v msmodeling
+HOME="$tmp_home" python - <<'PY'
+from cli.completion import enable_tab_completion
+
+raise SystemExit(enable_tab_completion(reload_shell=False))
+PY
 ```
 
 验证点：
@@ -282,7 +259,7 @@ grep -q "complete -o default -F _msmodeling_complete python python3 msmodeling" 
 
 ### 6.3 免安装模式测试
 
-该方法不执行 `pip install -e .`，通过 `PYTHONPATH` 让 Python 找到当前仓库源码，再直接运行 `cli.main` 模块入口。测试同样使用临时 `HOME` 和临时 rc 文件。
+该方法不执行 `pip install -e .`，通过 `PYTHONPATH` 让 Python 找到当前仓库源码，再用内部 helper 验证补全文件与 rc 管理块写入逻辑。正式使用时仍调用 `python -m cli.main --enable-tab-completion`。
 
 ```bash
 source /path/to/venv/bin/activate
@@ -290,9 +267,11 @@ cd /path/to/msmodeling
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 
 tmp_home="$(mktemp -d)"
-HOME="$tmp_home" python -m cli.main \
-    --enable-tab-completion \
-    --completion-rc-file "$tmp_home/.bashrc"
+HOME="$tmp_home" python - <<'PY'
+from cli.completion import enable_tab_completion
+
+raise SystemExit(enable_tab_completion(reload_shell=False))
+PY
 ```
 
 验证点：
@@ -314,19 +293,15 @@ grep -q "complete -o default -F _msmodeling_complete python python3 msmodeling" 
 
 ## 7. 风险与限制
 
-### 7.1 当前终端立即生效限制
+### 7.1 当前终端立即生效方式
 
-Bash 补全函数必须加载到当前 shell 进程中。`pip install -e .` 和 `msmodeling --enable-tab-completion` 都是子进程，不能直接修改已经打开的父 shell 环境。
+Bash 补全函数必须加载到当前 shell 进程中。`msmodeling --enable-tab-completion` 无法把函数直接注入已经打开的父 shell，因此启用逻辑在写入 `~/.bashrc` 后执行 `exec bash`，用新的 Bash 替换当前进程并读取最新配置。
 
-缓解方式：
+效果：
 
-- 新终端自动生效。
-- 当前终端可执行 `exec bash`。
-- 若希望一条命令完成启用并刷新当前终端，可使用：
-
-```bash
-msmodeling --enable-tab-completion --reload-shell
-```
+- 当前终端在命令返回后已经进入新的 Bash，可直接使用补全。
+- 新终端也会通过 `~/.bashrc` 自动加载补全。
+- 启用命令必须放在命令链最后，因为 `exec bash` 后不会继续执行后续命令。
 
 ### 7.2 静态表维护成本
 
@@ -366,7 +341,7 @@ CLI 参数新增或删除后，需要同步维护 `cli/completion.py` 中的 `OP
 ```bash
 cd /path/to/msmodeling
 pip install -e .
-msmodeling --enable-tab-completion --reload-shell
+msmodeling --enable-tab-completion
 ```
 
 免安装启用：
@@ -374,27 +349,7 @@ msmodeling --enable-tab-completion --reload-shell
 ```bash
 cd /path/to/msmodeling
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
-python -m cli.main --enable-tab-completion --reload-shell
-```
-
-禁用：
-
-```bash
-msmodeling --disable-tab-completion
-```
-
-免安装禁用：
-
-```bash
-cd /path/to/msmodeling
-export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
-python -m cli.main --disable-tab-completion
-```
-
-临时打印 Bash 补全脚本：
-
-```bash
-msmodeling-tab print --shell bash
+python -m cli.main --enable-tab-completion
 ```
 
 ### 示例补全

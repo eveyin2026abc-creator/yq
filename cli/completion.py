@@ -21,10 +21,6 @@ MODULES = (
 
 TOP_LEVEL_OPTIONS = (
     "--enable-tab-completion",
-    "--disable-tab-completion",
-    "--completion-shell",
-    "--completion-rc-file",
-    "--reload-shell",
     "--help",
 )
 
@@ -549,22 +545,6 @@ def enable_tab_completion(
     return 0
 
 
-def disable_tab_completion(shell: str = "auto", rc_file: str | Path | None = None) -> int:
-    resolved_shell = _resolve_shell(shell)
-    if resolved_shell != "bash":
-        print("Only bash startup-file disablement is currently supported.", file=sys.stderr)
-        return 1
-
-    target_rc = Path(rc_file) if rc_file is not None else _rc_file_for_shell(resolved_shell)
-    if not target_rc.exists():
-        print(f"No shell startup file found at {target_rc}")
-        return 0
-
-    target_rc.write_text(_remove_managed_block(target_rc.read_text(encoding="utf-8")), encoding="utf-8")
-    print(f"Disabled msmodeling tab completion in {target_rc}")
-    return 0
-
-
 def install_completion_files(prefix: str | None = None, user: bool = False) -> int:
     target_prefix = Path(prefix) if prefix else _default_prefix(user)
     bash_path = _bash_target(target_prefix)
@@ -609,7 +589,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="target shell; may also be passed before the subcommand",
     )
     subparsers.add_parser("enable", help="enable bash completion from ~/.bashrc")
-    subparsers.add_parser("disable", help="disable bash completion from ~/.bashrc")
     return parser
 
 
@@ -620,8 +599,6 @@ def main() -> int:
         return install_completion_files(args.prefix, args.user)
     if args.command == "enable":
         return enable_tab_completion(args.shell)
-    if args.command == "disable":
-        return disable_tab_completion(args.shell)
     return print_completion(getattr(args, "print_shell", None) or args.shell)
 
 

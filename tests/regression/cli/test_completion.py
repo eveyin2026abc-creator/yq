@@ -5,7 +5,6 @@ from pathlib import Path
 from cli.completion import (
     BLOCK_BEGIN,
     BLOCK_END,
-    disable_tab_completion,
     enable_tab_completion,
     render_bash_completion,
 )
@@ -50,14 +49,3 @@ def test_enable_tab_completion_is_idempotent(tmp_path: Path) -> None:
     assert second.count(BLOCK_BEGIN) == 1
     assert second.count(BLOCK_END) == 1
 
-
-def test_disable_tab_completion_removes_managed_block(tmp_path: Path) -> None:
-    rc_file = tmp_path / ".bashrc"
-    completion_file = tmp_path / "completion.bash"
-    assert enable_tab_completion(shell="bash", rc_file=rc_file, completion_file=completion_file) == 0
-
-    assert disable_tab_completion(shell="bash", rc_file=rc_file) == 0
-
-    contents = rc_file.read_text(encoding="utf-8")
-    assert BLOCK_BEGIN not in contents
-    assert BLOCK_END not in contents
