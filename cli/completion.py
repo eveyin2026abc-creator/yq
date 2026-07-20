@@ -10,6 +10,7 @@ import argparse
 import os
 from pathlib import Path
 import shlex
+import shutil
 import site
 import sys
 
@@ -743,7 +744,11 @@ def enable_tab_completion(
     print("Open a new bash terminal to use it, or run: exec bash")
 
     if reload_shell:
-        os.execvp("bash", ["bash"])
+        bash_path = shutil.which("bash")
+        if bash_path is None:
+            print("bash not found in PATH; open a new bash terminal to use completion.", file=sys.stderr)
+            return 1
+        os.execv(bash_path, [bash_path])
     return 0
 
 
