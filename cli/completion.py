@@ -9,19 +9,43 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import shlex
 import site
 import sys
 
 
-MODULES = (
-    "cli.inference.text_generate",
-    "cli.inference.video_generate",
-    "cli.inference.throughput_optimizer",
-)
+MODULE_TARGETS = {
+    "cli.inference.text_generate": "text_generate",
+    "cli.inference.video_generate": "video_generate",
+    "cli.inference.throughput_optimizer": "throughput_optimizer",
+    "serving_cast.main": "serving_cast_main",
+}
+
+MODULE_SUBCOMMAND_TARGETS = {
+    "cli.inference.model_adapter": {
+        "doctor": "model_adapter_doctor",
+        "verify": "model_adapter_verify",
+        "export-evidence": "model_adapter_export_evidence",
+    },
+}
+
+CLI_TARGETS = {
+    "text-generate": "text_generate",
+    "video-generate": "video_generate",
+    "throughput-optimizer": "throughput_optimizer",
+}
+
+CLI_SUBCOMMAND_TARGETS = {
+    "model-adapter": MODULE_SUBCOMMAND_TARGETS["cli.inference.model_adapter"],
+}
+
+MODULES = (*MODULE_TARGETS.keys(), *MODULE_SUBCOMMAND_TARGETS.keys())
 
 TOP_LEVEL_OPTIONS = (
-    "-tab",
     "--enable-tab-completion",
+    "--disable-tab-completion",
+    "--reload-shell",
+    "--delete-completion-file",
     "--help",
 )
 
@@ -156,12 +180,76 @@ OPTIONS = {
         "--output_json",
         "--help",
     ),
+    "model_adapter_doctor": (
+        *COMMON_OPTIONS,
+        "--model-id",
+        "--model_id",
+        "--num-queries",
+        "--query-length",
+        "--context-length",
+        "--decode",
+        "--compile",
+        "--compile-allow-graph-break",
+        "--dump-input-shapes",
+        "--num-hidden-layers-override",
+        "--remote-source",
+        "--disable-repetition",
+        "--quantize-linear-action",
+        "--quantize-attention-action",
+        "--image-batch-size",
+        "--image-height",
+        "--image-width",
+        "--tp-size",
+        "--dp-size",
+        "--ep-size",
+        "--moe-tp-size",
+        "--moe-dp-size",
+        "--vision-tp-size",
+        "--from-command-file",
+        "--raw-insight-file",
+        "--hints-file",
+        "--patch-failure-file",
+        "--ignore-existing-profile",
+        "--profile-draft-output",
+        "--output",
+        "--help",
+    ),
+    "model_adapter_verify": (
+        *COMMON_OPTIONS,
+        "--model-id",
+        "--model_id",
+        "--evidence-file",
+        "--output",
+        "--st-case-output",
+        "--num-queries",
+        "--query-length",
+        "--context-length",
+        "--decode",
+        "--num-hidden-layers-override",
+        "--disable-repetition",
+        "--performance-model",
+        "--profiling-database",
+        "--tp-size",
+        "--dp-size",
+        "--ep-size",
+        "--moe-tp-size",
+        "--moe-dp-size",
+        "--vision-tp-size",
+        "--remote-source",
+        "--help",
+    ),
+    "model_adapter_export_evidence": (
+        "--doctor-report",
+        "--output",
+        "--help",
+    ),
 }
 
 BLOCK_BEGIN = "# >>> msmodeling completion >>>"
 BLOCK_END = "# <<< msmodeling completion <<<"
 DATA_DIR = Path.home() / ".local" / "share" / "msmodeling"
 BASH_COMPLETION_FILE = DATA_DIR / "completion.bash"
+BASH_COMPLETION_COMMANDS = ("python", "python3", "msmodeling")
 
 
 def _words(values: tuple[str, ...]) -> str:
@@ -170,6 +258,117 @@ def _words(values: tuple[str, ...]) -> str:
 
 def _ps_array(values: tuple[str, ...]) -> str:
     return "@(" + ", ".join(f"'{value}'" for value in values) + ")"
+
+
+def _module_script_path(module: str) -> str:
+    return module.replace(".", "/") + ".py"
+
+
+def _bash_path_patterns(module: str) -> tuple[str, ...]:
+    path = _module_script_path(module)
+    return (f"*/{path}", path, Path(path).name)
+
+
+def _ps_path_patterns(module: str) -> tuple[str, ...]:
+    path = _module_script_path(module)
+    windows_path = path.replace("/", "\\")
+    return (f"*/{path}", f"*\\{windows_path}", path, windows_path, Path(path).name)
+
+
+def _bash_subcommand_case(subtargets: dict[str, str], word_expr: str) -> str:
+    lines = [f'                    case "{word_expr}" in']
+    lines.extend(f"                        {command}) echo {target}; return 0 ;;" for command, target in subtargets.items())
+    lines.append("                    esac")
+    return "\n".join(lines)
+
+
+def _bash_complete_options_cases() -> str:
+    return "\n".join(
+        (
+            f"        {target})\n"
+            f'            COMPREPLY=( $(compgen -W "{_words(options)}" -- "$cur") )\n'
+            "            ;;"
+        )
+        for target, options in OPTIONS.items()
+    )
+
+
+def _bash_cli_target_cases() -> str:
+    lines = [f"        {command}) echo {target}; return 0 ;;" for command, target in CLI_TARGETS.items()]
+    for command, subtargets in CLI_SUBCOMMAND_TARGETS.items():
+        lines.append(f"        {command})")
+        lines.append(_bash_subcommand_case(subtargets, "${COMP_WORDS[3]}"))
+        lines.append("            ;;")
+    return "\n".join(lines)
+
+
+def _bash_module_target_cases() -> str:
+    lines: list[str] = []
+    for module, target in MODULE_TARGETS.items():
+        lines.append(f"                {module}) echo {target}; return 0 ;;")
+    for module, subtargets in MODULE_SUBCOMMAND_TARGETS.items():
+        lines.append(f"                {module})")
+        lines.append(_bash_subcommand_case(subtargets, "${COMP_WORDS[i + 2]}"))
+        lines.append("                    ;;")
+    return "\n".join(lines)
+
+
+def _bash_path_target_cases() -> str:
+    lines: list[str] = []
+    for module, target in MODULE_TARGETS.items():
+        lines.append(f"            {'|'.join(_bash_path_patterns(module))})")
+        lines.append(f"                echo {target}; return 0 ;;")
+    for module, subtargets in MODULE_SUBCOMMAND_TARGETS.items():
+        lines.append(f"            {'|'.join(_bash_path_patterns(module))})")
+        lines.append(_bash_subcommand_case(subtargets, "$next"))
+        lines.append("                ;;")
+    return "\n".join(lines)
+
+
+def _ps_subcommand_switch(subtargets: dict[str, str], indent: str = "                ") -> str:
+    return "\n".join(f'{indent}"{command}" {{ return "{target}" }}' for command, target in subtargets.items())
+
+
+def _ps_options_entries() -> str:
+    return "\n".join(f"    '{target}' = {_ps_array(options)}" for target, options in OPTIONS.items())
+
+
+def _ps_cli_target_switch() -> str:
+    lines = [f'        "{command}" {{ return "{target}" }}' for command, target in CLI_TARGETS.items()]
+    for command, subtargets in CLI_SUBCOMMAND_TARGETS.items():
+        lines.append(f'        "{command}" {{')
+        lines.append("            switch ($Words[3]) {")
+        lines.append(_ps_subcommand_switch(subtargets))
+        lines.append("            }")
+        lines.append("        }")
+    return "\n".join(lines)
+
+
+def _ps_module_target_switch() -> str:
+    lines: list[str] = []
+    for module, target in MODULE_TARGETS.items():
+        lines.append(f'                "{module}" {{ return "{target}" }}')
+    for module, subtargets in MODULE_SUBCOMMAND_TARGETS.items():
+        lines.append(f'                "{module}" {{')
+        lines.append("                    switch ($Words[$i + 2]) {")
+        lines.append(_ps_subcommand_switch(subtargets, indent="                        "))
+        lines.append("                    }")
+        lines.append("                }")
+    return "\n".join(lines)
+
+
+def _ps_path_target_switch() -> str:
+    lines: list[str] = []
+    for module, target in MODULE_TARGETS.items():
+        lines.extend(f'            "{pattern}" {{ return "{target}" }}' for pattern in _ps_path_patterns(module))
+    for module, subtargets in MODULE_SUBCOMMAND_TARGETS.items():
+        for pattern in _ps_path_patterns(module):
+            lines.append(f'            "{pattern}" {{')
+            lines.append("                switch ($next) {")
+            lines.append(_ps_subcommand_switch(subtargets, indent="                    "))
+            lines.append("                }")
+            lines.append("            }")
+    return "\n".join(lines)
 
 
 def render_bash_completion() -> str:
@@ -190,11 +389,6 @@ _msmodeling_complete()
 
     if [[ "$cmd" == "msmodeling" ]]; then
         _msmodeling_complete_cli_command
-        return 0
-    fi
-
-    if [[ $COMP_CWORD -gt 0 && "$prev" == "-m" ]]; then
-        COMPREPLY=( $(compgen -W "{_words(MODULES)}" -- "$cur") )
         return 0
     fi
 
@@ -234,6 +428,11 @@ _msmodeling_complete_cli_command()
         return 0
     fi
 
+    if [[ "$first" == "inference" && "$second" == "model-adapter" && $COMP_CWORD -eq 3 ]]; then
+        COMPREPLY=( $(compgen -W "doctor verify export-evidence --help" -- "$cur") )
+        return 0
+    fi
+
     target="$(_msmodeling_cli_completion_target)"
     if [[ -z "$target" || "$cur" != --* ]]; then
         return 0
@@ -248,27 +447,14 @@ _msmodeling_complete_options()
     cur="$2"
 
     case "$target" in
-        text_generate)
-            COMPREPLY=( $(compgen -W "{_words(OPTIONS["text_generate"])}" -- "$cur") )
-            ;;
-        video_generate)
-            COMPREPLY=( $(compgen -W "{_words(OPTIONS["video_generate"])}" -- "$cur") )
-            ;;
-        throughput_optimizer)
-            COMPREPLY=( $(compgen -W "{_words(OPTIONS["throughput_optimizer"])}" -- "$cur") )
-            ;;
-        serving_cast_main)
-            COMPREPLY=( $(compgen -W "{_words(OPTIONS["serving_cast_main"])}" -- "$cur") )
-            ;;
+{_bash_complete_options_cases()}
     esac
 }}
 
 _msmodeling_cli_completion_target()
 {{
     case "${{COMP_WORDS[2]}}" in
-        text-generate) echo text_generate; return 0 ;;
-        video-generate) echo video_generate; return 0 ;;
-        throughput-optimizer) echo throughput_optimizer; return 0 ;;
+{_bash_cli_target_cases()}
     esac
 }}
 
@@ -281,22 +467,12 @@ _msmodeling_completion_target()
 
         if [[ "$word" == "-m" ]]; then
             case "$next" in
-                cli.inference.text_generate) echo text_generate; return 0 ;;
-                cli.inference.video_generate) echo video_generate; return 0 ;;
-                cli.inference.throughput_optimizer) echo throughput_optimizer; return 0 ;;
-                serving_cast.main) echo serving_cast_main; return 0 ;;
+{_bash_module_target_cases()}
             esac
         fi
 
         case "$word" in
-            */cli/inference/text_generate.py|cli/inference/text_generate.py|text_generate.py)
-                echo text_generate; return 0 ;;
-            */cli/inference/video_generate.py|cli/inference/video_generate.py|video_generate.py)
-                echo video_generate; return 0 ;;
-            */cli/inference/throughput_optimizer.py|cli/inference/throughput_optimizer.py|throughput_optimizer.py)
-                echo throughput_optimizer; return 0 ;;
-            */serving_cast/main.py|serving_cast/main.py)
-                echo serving_cast_main; return 0 ;;
+{_bash_path_target_cases()}
         esac
     done
 }}
@@ -309,7 +485,7 @@ def render_zsh_completion() -> str:
     """Return a self-contained zsh completion script via bashcompinit."""
     return (
         "# Static completion for msmodeling in zsh via bashcompinit.\n"
-        "autoload -Uz +X compinit && compinit -u 2>/dev/null\n"
+        "autoload -Uz +X compinit && compinit\n"
         "autoload -Uz +X bashcompinit && bashcompinit\n"
         + render_bash_completion()
     )
@@ -322,10 +498,15 @@ def render_powershell_completion() -> str:
 
 $script:MsmodelingModules = {_ps_array(MODULES)}
 $script:MsmodelingOptions = @{{
-    'text_generate' = {_ps_array(OPTIONS["text_generate"])}
-    'video_generate' = {_ps_array(OPTIONS["video_generate"])}
-    'throughput_optimizer' = {_ps_array(OPTIONS["throughput_optimizer"])}
-    'serving_cast_main' = {_ps_array(OPTIONS["serving_cast_main"])}
+{_ps_options_entries()}
+}}
+
+function Get-MsmodelingCliCompletionTarget {{
+    param([string[]] $Words)
+
+    switch ($Words[2]) {{
+{_ps_cli_target_switch()}
+    }}
 }}
 
 function Get-MsmodelingCompletionTarget {{
@@ -337,45 +518,52 @@ function Get-MsmodelingCompletionTarget {{
 
         if ($word -eq "-m") {{
             switch ($next) {{
-                "cli.inference.text_generate" {{ return "text_generate" }}
-                "cli.inference.video_generate" {{ return "video_generate" }}
-                "cli.inference.throughput_optimizer" {{ return "throughput_optimizer" }}
-                "serving_cast.main" {{ return "serving_cast_main" }}
+{_ps_module_target_switch()}
             }}
         }}
 
         switch -Wildcard ($word) {{
-            "*/cli/inference/text_generate.py" {{ return "text_generate" }}
-            "*\\cli\\inference\\text_generate.py" {{ return "text_generate" }}
-            "cli/inference/text_generate.py" {{ return "text_generate" }}
-            "cli\\inference\\text_generate.py" {{ return "text_generate" }}
-            "text_generate.py" {{ return "text_generate" }}
-            "*/cli/inference/video_generate.py" {{ return "video_generate" }}
-            "*\\cli\\inference\\video_generate.py" {{ return "video_generate" }}
-            "cli/inference/video_generate.py" {{ return "video_generate" }}
-            "cli\\inference\\video_generate.py" {{ return "video_generate" }}
-            "video_generate.py" {{ return "video_generate" }}
-            "*/cli/inference/throughput_optimizer.py" {{ return "throughput_optimizer" }}
-            "*\\cli\\inference\\throughput_optimizer.py" {{ return "throughput_optimizer" }}
-            "cli/inference/throughput_optimizer.py" {{ return "throughput_optimizer" }}
-            "cli\\inference\\throughput_optimizer.py" {{ return "throughput_optimizer" }}
-            "throughput_optimizer.py" {{ return "throughput_optimizer" }}
-            "*/serving_cast/main.py" {{ return "serving_cast_main" }}
-            "*\\serving_cast\\main.py" {{ return "serving_cast_main" }}
-            "serving_cast/main.py" {{ return "serving_cast_main" }}
-            "serving_cast\\main.py" {{ return "serving_cast_main" }}
+{_ps_path_target_switch()}
         }}
     }}
 }}
 
-Register-ArgumentCompleter -Native -CommandName @("python", "python3") -ScriptBlock {{
+Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeling") -ScriptBlock {{
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $words = @($commandAst.CommandElements | ForEach-Object {{ $_.ToString() }})
-    if ($words.Count -gt 1 -and $words[$words.Count - 2] -eq "-m") {{
-        $script:MsmodelingModules |
+    $commandName = if ($words.Count -gt 0) {{ $words[0] }} else {{ "" }}
+
+    if ($commandName -eq "msmodeling") {{
+        if ($words.Count -gt 1 -and $words[1] -eq "inference" -and $words.Count -eq 2) {{
+            @("text-generate", "throughput-optimizer", "model-adapter", "video-generate", "--help") |
+                Where-Object {{ $_ -like "$wordToComplete*" }} |
+                ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+            return
+        }}
+
+        if ($words.Count -le 2) {{
+            @("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", "--reload-shell", "--delete-completion-file", "--help") |
+                Where-Object {{ $_ -like "$wordToComplete*" }} |
+                ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+            return
+        }}
+
+        if ($words.Count -gt 2 -and $words[1] -eq "inference" -and $words[2] -eq "model-adapter" -and $words.Count -eq 3) {{
+            @("doctor", "verify", "export-evidence", "--help") |
+                Where-Object {{ $_ -like "$wordToComplete*" }} |
+                ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+            return
+        }}
+
+        $target = Get-MsmodelingCliCompletionTarget -Words $words
+        if (-not $target -or -not $wordToComplete.StartsWith("--")) {{
+            return
+        }}
+
+        $script:MsmodelingOptions[$target] |
             Where-Object {{ $_ -like "$wordToComplete*" }} |
-            ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+            ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterName", $_) }}
         return
     }}
 
@@ -428,8 +616,9 @@ def _default_prefix(user: bool) -> Path:
     return Path(sys.prefix)
 
 
-def _bash_target(prefix: Path) -> Path:
-    return prefix / "share" / "bash-completion" / "completions" / "msmodeling-python"
+def _bash_targets(prefix: Path) -> tuple[Path, ...]:
+    completions_dir = prefix / "share" / "bash-completion" / "completions"
+    return tuple(completions_dir / command for command in BASH_COMPLETION_COMMANDS)
 
 
 def _zsh_target(prefix: Path) -> Path:
@@ -453,19 +642,16 @@ def _completion_for_shell(shell: str) -> str:
     return render_bash_completion()
 
 
-def _rc_file_for_shell(shell: str) -> Path:
-    if shell == "zsh":
-        return Path.home() / ".zshrc"
-    if shell == "powershell":
-        raise ValueError("PowerShell rc updates are not supported by --enable-tab-completion yet.")
+def _bash_rc_file() -> Path:
     return Path.home() / ".bashrc"
 
 
 def _managed_block(completion_path: Path) -> str:
+    quoted_path = shlex.quote(str(completion_path))
     return (
         f"{BLOCK_BEGIN}\n"
-        f'if [ -r "{completion_path}" ]; then\n'
-        f'    . "{completion_path}"\n'
+        f"if [ -r {quoted_path} ]; then\n"
+        f"    . {quoted_path}\n"
         "fi\n"
         f"{BLOCK_END}\n"
     )
@@ -474,24 +660,32 @@ def _managed_block(completion_path: Path) -> str:
 def _replace_managed_block(contents: str, block: str) -> str:
     lines = contents.splitlines(keepends=True)
     result: list[str] = []
+    pending_block: list[str] = []
     in_block = False
     replaced = False
 
     for line in lines:
         stripped = line.strip()
         if stripped == BLOCK_BEGIN:
+            pending_block = [line]
+            in_block = True
+            continue
+        if in_block:
+            pending_block.append(line)
+        if stripped == BLOCK_END and in_block:
             if not replaced:
                 if result and result[-1].strip():
                     result.append("\n")
                 result.append(block)
                 replaced = True
-            in_block = True
-            continue
-        if stripped == BLOCK_END:
+            pending_block = []
             in_block = False
             continue
         if not in_block:
             result.append(line)
+
+    if in_block:
+        result.extend(pending_block)
 
     if not replaced:
         if result and result[-1].strip():
@@ -504,17 +698,24 @@ def _replace_managed_block(contents: str, block: str) -> str:
 def _remove_managed_block(contents: str) -> str:
     lines = contents.splitlines(keepends=True)
     result: list[str] = []
+    pending_block: list[str] = []
     in_block = False
     for line in lines:
         stripped = line.strip()
         if stripped == BLOCK_BEGIN:
+            pending_block = [line]
             in_block = True
             continue
-        if stripped == BLOCK_END:
+        if in_block:
+            pending_block.append(line)
+        if stripped == BLOCK_END and in_block:
+            pending_block = []
             in_block = False
             continue
         if not in_block:
             result.append(line)
+    if in_block:
+        result.extend(pending_block)
     return "".join(result)
 
 
@@ -533,7 +734,7 @@ def enable_tab_completion(
     completion_path = Path(completion_file) if completion_file is not None else BASH_COMPLETION_FILE
     _write(completion_path, render_bash_completion())
 
-    target_rc = Path(rc_file) if rc_file is not None else _rc_file_for_shell(resolved_shell)
+    target_rc = Path(rc_file) if rc_file is not None else _bash_rc_file()
     original = target_rc.read_text(encoding="utf-8") if target_rc.exists() else ""
     target_rc.write_text(_replace_managed_block(original, _managed_block(completion_path)), encoding="utf-8")
 
@@ -546,15 +747,47 @@ def enable_tab_completion(
     return 0
 
 
+def disable_tab_completion(
+    shell: str = "auto",
+    rc_file: str | Path | None = None,
+    completion_file: str | Path | None = None,
+    delete_completion_file: bool = False,
+) -> int:
+    resolved_shell = _resolve_shell(shell)
+    if resolved_shell != "bash":
+        print("Only bash startup-file disablement is currently supported.", file=sys.stderr)
+        return 1
+
+    target_rc = Path(rc_file) if rc_file is not None else _bash_rc_file()
+    original = target_rc.read_text(encoding="utf-8") if target_rc.exists() else ""
+    updated = _remove_managed_block(original)
+    target_rc.write_text(updated, encoding="utf-8")
+
+    print(f"Disabled msmodeling tab completion in {target_rc}")
+
+    if delete_completion_file:
+        completion_path = Path(completion_file) if completion_file is not None else BASH_COMPLETION_FILE
+        try:
+            completion_path.unlink()
+            print(f"Deleted static completion script: {completion_path}")
+        except FileNotFoundError:
+            print(f"Static completion script already absent: {completion_path}")
+
+    return 0
+
+
 def install_completion_files(prefix: str | None = None, user: bool = False) -> int:
     target_prefix = Path(prefix) if prefix else _default_prefix(user)
-    bash_path = _bash_target(target_prefix)
+    bash_paths = _bash_targets(target_prefix)
     zsh_path = _zsh_target(target_prefix)
     powershell_path = _powershell_target(target_prefix)
-    _write(bash_path, render_bash_completion())
+    bash_completion = render_bash_completion()
+    for bash_path in bash_paths:
+        _write(bash_path, bash_completion)
     _write(zsh_path, render_zsh_completion())
     _write(powershell_path, render_powershell_completion())
-    print(f"Wrote bash completion: {bash_path}")
+    for bash_path in bash_paths:
+        print(f"Wrote bash completion: {bash_path}")
     print(f"Wrote zsh  completion: {zsh_path}")
     print(f"Wrote PowerShell completion: {powershell_path}")
     return 0
@@ -567,7 +800,7 @@ def print_completion(shell: str = "auto") -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Emit, install, enable, or disable static shell completion for msmodeling.",
+        description="Emit, install, or enable static shell completion for msmodeling.",
     )
     parser.add_argument(
         "--shell",

@@ -61,11 +61,26 @@ def main() -> int:
             "  msmodeling optix -e vllm -b ais_bench\n"
         ),
     )
-    parser.add_argument(
-        "-tab",
+    completion_group = parser.add_mutually_exclusive_group()
+    completion_group.add_argument(
         "--enable-tab-completion",
         action="store_true",
         help="Enable static bash tab completion for python/python3 and msmodeling commands",
+    )
+    completion_group.add_argument(
+        "--disable-tab-completion",
+        action="store_true",
+        help="Remove the managed bash tab completion block",
+    )
+    parser.add_argument(
+        "--reload-shell",
+        action="store_true",
+        help="Start a fresh bash shell after enabling tab completion",
+    )
+    parser.add_argument(
+        "--delete-completion-file",
+        action="store_true",
+        help="Delete the static completion file after disabling tab completion",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -84,7 +99,14 @@ def main() -> int:
         from cli.completion import enable_tab_completion
 
         return enable_tab_completion(
-            reload_shell=True,
+            reload_shell=args.reload_shell,
+        )
+
+    if args.disable_tab_completion:
+        from cli.completion import disable_tab_completion
+
+        return disable_tab_completion(
+            delete_completion_file=args.delete_completion_file,
         )
 
     if args.command == "optix":

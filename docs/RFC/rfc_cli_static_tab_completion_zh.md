@@ -157,7 +157,7 @@ fi
 # <<< msmodeling completion <<<
 ```
 
-4. 执行 `os.execvp("bash", ["bash"])`，用新的 Bash 替换当前进程。
+1. 打印提示，用户可按需执行 `exec bash` 重新加载补全。
 
 ### 4.5 幂等性
 
