@@ -148,12 +148,15 @@ def test_disable_tab_completion_can_delete_static_file(tmp_path: Path) -> None:
     completion_file = tmp_path / "completion.bash"
 
     assert enable_tab_completion(shell="bash", rc_file=rc_file, completion_file=completion_file) == 0
-    assert disable_tab_completion(
-        shell="bash",
-        rc_file=rc_file,
-        completion_file=completion_file,
-        delete_completion_file=True,
-    ) == 0
+    assert (
+        disable_tab_completion(
+            shell="bash",
+            rc_file=rc_file,
+            completion_file=completion_file,
+            delete_completion_file=True,
+        )
+        == 0
+    )
 
     assert not completion_file.exists()
 
@@ -333,4 +336,3 @@ printf '%s\n' "${COMPREPLY[@]}"
         assert result.returncode == 0
         assert f"complete -o default -F _msmodeling_complete {command}" in result.stdout
         assert "--num-queries" in result.stdout
-

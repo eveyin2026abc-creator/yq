@@ -278,7 +278,9 @@ def _ps_path_patterns(module: str) -> tuple[str, ...]:
 
 def _bash_subcommand_case(subtargets: dict[str, str], word_expr: str) -> str:
     lines = [f'                    case "{word_expr}" in']
-    lines.extend(f"                        {command}) echo {target}; return 0 ;;" for command, target in subtargets.items())
+    lines.extend(
+        f"                        {command}) echo {target}; return 0 ;;" for command, target in subtargets.items()
+    )
     lines.append("                    esac")
     return "\n".join(lines)
 
@@ -487,8 +489,7 @@ def render_zsh_completion() -> str:
     return (
         "# Static completion for msmodeling in zsh via bashcompinit.\n"
         "autoload -Uz +X compinit && compinit\n"
-        "autoload -Uz +X bashcompinit && bashcompinit\n"
-        + render_bash_completion()
+        "autoload -Uz +X bashcompinit && bashcompinit\n" + render_bash_completion()
     )
 
 
@@ -649,13 +650,7 @@ def _bash_rc_file() -> Path:
 
 def _managed_block(completion_path: Path) -> str:
     quoted_path = shlex.quote(str(completion_path))
-    return (
-        f"{BLOCK_BEGIN}\n"
-        f"if [ -r {quoted_path} ]; then\n"
-        f"    . {quoted_path}\n"
-        "fi\n"
-        f"{BLOCK_END}\n"
-    )
+    return f"{BLOCK_BEGIN}\nif [ -r {quoted_path} ]; then\n    . {quoted_path}\nfi\n{BLOCK_END}\n"
 
 
 def _replace_managed_block(contents: str, block: str) -> str:
