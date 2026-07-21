@@ -1,8 +1,8 @@
-# MindStudio Modeling 26.0.0 版本发布说明
+# MindStudio Modeling 26.1.0 版本发布说明
 
 ## 1. 版本概述
 
-MindStudio Modeling 26.0.0 是面向昇腾 AI 处理器的神经网络推理性能仿真与服务化部署寻优版本，主要服务于模型适配、性能预研、容量规划和大模型服务化调优场景。核心亮点如下：
+MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性能仿真与服务化部署寻优版本，主要服务于模型适配、性能预研、容量规划和大模型服务化调优场景。核心亮点如下：
 
 - 提供模型推理性能仿真能力，可在无需真实硬件的情况下，基于设备画像预测模型在昇腾 AI 处理器上的理论性能。
 - 支持 Prefill/Decode 分阶段仿真、Prefix Cache、MTP 投机解码、量化仿真、并行策略与 MoE 扩展等典型大模型推理场景。
@@ -33,25 +33,21 @@ MindStudio Modeling 26.0.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 2 | GLM-4 MoE 模型支持 | 新增 GLM-4 MoE 模型仿真支持，补齐 GLM 系列 MoE 推理性能评估能力。 | README 版本动态 |
 | 3 | GLM-5.2 IndexShare 适配 | 新增 GLM5 专用 IndexShare 辅助逻辑，支持全量层执行 indexer、共享层复用上一全量层 top-k indices，并扩展 MTP `indexer_types` 支持。 | !535 |
 | 4 | GLM-5/GLM-5.2 MTP 兼容性增强 | 修复 repetition、MTP、torch.compile 同时开启时的模型兼容与进程池序列化问题，恢复 `throughput_optimizer` 并行搜索能力。 | !563 |
-| 5 | transformers 版本下限提升 | 根据 GLM5 DSA 返回值与 `indexer_types` 契约变化，将 transformers 最低版本要求提升至 5.6.0，避免低版本环境不兼容。 | !509 |
-| 6 | throughput_optimizer 自适应 max-batched-tokens | `--max-batched-tokens` 支持自动模式，按 4 倍、2 倍、1 倍 input_length 顺序尝试 token budget，并在 Prefill OOM 时自动降级。 | !538 |
-| 7 | EvalScope benchmark 插件 | 新增 EvalScope 作为服务化寻优 benchmark 补充选项，增强模型类型覆盖、评估功能与生态集成能力。 | !515 |
-| 8 | optix 优化器可靠性增强 | 新增结构化 loguru 日志、领域异常体系、Benchmark 启动前 fail-fast 校验和安全清理守卫，提升服务化实测寻优稳定性。 | !518 |
-| 9 | 根目录 build.py 统一构建入口 | 新增 `build.py` 作为统一构建/测试委托入口，支持 wheel 构建、增量门禁测试委托和 `-v/--version` 指定制品版本。 | !485 |
-| 10 | build.py test 默认全量回归 | `python build.py test` 在未设置 `MSMODELING_TEST_MAP_PATH` 时默认执行全量 `pytest tests`，改善本地回归体验。 | !557 |
-| 11 | build.py 去除 pydantic 强依赖并支持 uv 自举 | 切断 `build.py` 对 pydantic 的 import-time 依赖，并在缺少 uv 时支持非交互自举，降低构建入口启动门槛。 | !546 |
-| 12 | pre-commit 集成 Gitleaks 本地离线密钥扫描 | 新增 `gitleaks-offline-scan` local hook，在提交前对暂存文件做本地离线密钥扫描，降低敏感信息进入 Git 历史的风险。 | !541 |
-| 13 | sig-review AI 代码检视 skill | 新增面向 PR 检视流程的 AI 代码检视 skill，支持按目录自动路由到子 SIG 并辅助完成检视移交。 | !553 |
+| 5 | throughput_optimizer 自适应 max-batched-tokens | `--max-batched-tokens` 支持自动模式，按 4 倍、2 倍、1 倍 input_length 顺序尝试 token budget，并在 Prefill OOM 时自动降级。 | !538 |
+| 6 | EvalScope benchmark 插件 | 新增 EvalScope 作为服务化寻优 benchmark 补充选项，增强模型类型覆盖、评估功能与生态集成能力。 | !515 |
+| 7 | optix 优化器可靠性增强 | 新增结构化 loguru 日志、领域异常体系、Benchmark 启动前 fail-fast 校验和安全清理守卫，提升服务化实测寻优稳定性。 | !518 |
 
 ## 4. 变更说明
 
-### 2.1 模型支持新增
+| 序号 | 变更内容 | 变更影响 | 关联 Issue/PR |
+| --- | --- | --- | --- |
+| 1 | `throughput_optimizer` 的 `--max-batched-tokens` 默认值调整 | 不兼容变更：默认值由固定 `8192` 调整为 `None` 自动模式。依赖旧默认值的脚本建议显式传参以保持原行为。 | !538 |
+| 2 | transformers 最低版本要求提升 | 不兼容变更：最低版本由 `>=5.3.0` 调整为 `>=5.6.0`。低于 5.6.0 的环境需升级后才能稳定运行 GLM5 系列模型。 | !509 |
+| 3 | `build.py test` 默认行为调整 | 未设置 `MSMODELING_TEST_MAP_PATH` 时，默认执行全量 `pytest tests`；设置后继续走 CI Gate 增量测试模式。依赖旧报错行为的 CI 脚本需同步适配。 | !557 |
+| 4 | 构建入口与依赖自举流程调整 | 新增根目录 `build.py` 统一构建/测试入口，去除 import-time 阶段对 pydantic 的强依赖，并在缺少 uv 时进行非交互自举。 | !485、!546 |
+| 5 | pre-commit 密钥扫描流程增强 | 新增 `gitleaks-offline-scan` 本地离线 hook，在提交前对暂存文件进行敏感信息扫描，降低密钥误提交风险。 | !541 |
 
-| 特性 | 说明 | 来源 |
-| --- | --- | --- |
-| GLM-5.2 IndexShare 适配 | 在 GLM-5/GLM-5.1 基础上新增 GLM-5.2 支持：新增 GLM5 专用 IndexShare 辅助逻辑，全量层执行 indexer、共享层复用上一全量层的 top-k indices；扩展 MTP `indexer_types` 支持 IndexShare 模式 | PR !535 |
-| Qwen3.5 Dense / MoE 文本输入支持 | 新增 Qwen3.5 Dense、Qwen3.5 MoE 模型的文本输入仿真支持 | README 版本动态（2026-03-31） |
-| GLM-4 MoE 模型支持 | 新增 GLM-4 MoE 模型仿真支持 | README 版本动态（2026-03-31） |
+## 5. 修复缺陷
 
 | 序号 | Issue 链接 | 问题描述 | 影响范围 |
 | --- | --- | --- | --- |
