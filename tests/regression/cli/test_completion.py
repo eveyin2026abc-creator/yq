@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 from cli.completion import (
     BASH_COMPLETION_COMMANDS,
     BLOCK_BEGIN,
     BLOCK_END,
+    _bash_rc_file,
+    _completion_for_shell,
+    _default_prefix,
+    _detect_shell,
+    build_parser,
     disable_tab_completion,
     enable_tab_completion,
     install_completion_files,
+    main as completion_main,
+    print_completion,
     render_bash_completion,
     render_powershell_completion,
 )
+from tests.helpers.cli_runner import run_cli_main
 
 
 def test_render_bash_completion_registers_python_and_msmodeling() -> None:
@@ -291,6 +300,89 @@ def test_render_powershell_completion_registers_python_and_msmodeling() -> None:
     assert "--evidence-file" in script
     assert "--model-id" in script
     assert 'if ($words.Count -gt 1 -and $words[$words.Count - 2] -eq "-m")' not in script
+
+
+def test_detect_shell_prefers_parent_process_comm(monkeypatch) -> None:
+    monkeypatch.setattr("os.getppid", lambda: 1234)
+    monkeypatch.setattr(Path, "read_text", lambda self, encoding=None: "pwsh\n")
+
+    assert _detect_shell() == "powershell"
+
+
+def test_detect_shell_falls_back_to_environment(monkeypatch) -> None:
+    def raise_os_error(self: Path, encoding: str | None = None) -> str:
+        raise OSError
+
+    monkeypatch.setattr(Path, "read_text", raise_os_error)
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+
+    assert _detect_shell() == "zsh"
+
+
+def test_default_prefix_uses_userbase_or_sys_prefix(monkeypatch, tmp_path: Path) -> None:
+    userbase = tmp_path / "userbase"
+    system_prefix = tmp_path / "system"
+    monkeypatch.setattr("site.getuserbase", lambda: str(userbase))
+    monkeypatch.setattr("sys.prefix", str(system_prefix))
+
+    assert _default_prefix(user=True) == userbase
+    assert _default_prefix(user=False) == system_prefix
+
+
+def test_bash_rc_file_uses_home_directory(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert _bash_rc_file() == tmp_path / ".bashrc"
+
+
+def test_completion_for_shell_selects_renderer() -> None:
+    assert "bashcompinit" in _completion_for_shell("zsh")
+    assert "Register-ArgumentCompleter" in _completion_for_shell("powershell")
+    assert "complete -o default -F _msmodeling_complete" in _completion_for_shell("bash")
+
+
+def test_print_completion_writes_resolved_completion(capsys) -> None:
+    assert print_completion("bash") == 0
+
+    assert "complete -o default -F _msmodeling_complete" in capsys.readouterr().out
+
+
+def test_build_parser_accepts_completion_subcommands() -> None:
+    parser = build_parser()
+
+    install_args = parser.parse_args(["--shell", "zsh", "install", "--prefix", "/tmp/msmodeling", "--user"])
+    print_args = parser.parse_args(["print", "--shell", "powershell"])
+
+    assert install_args.command == "install"
+    assert install_args.shell == "zsh"
+    assert install_args.prefix == "/tmp/msmodeling"
+    assert install_args.user is True
+    assert print_args.command == "print"
+    assert print_args.print_shell == "powershell"
+
+
+def test_completion_main_dispatches_install() -> None:
+    with patch("cli.completion.install_completion_files", return_value=7) as install:
+        result = run_cli_main(completion_main, ["install", "--prefix", "/tmp/msmodeling", "--user"], prog="msmodeling-tab")
+
+    assert result.returncode == 7
+    install.assert_called_once_with("/tmp/msmodeling", True)
+
+
+def test_completion_main_dispatches_enable() -> None:
+    with patch("cli.completion.enable_tab_completion", return_value=3) as enable:
+        result = run_cli_main(completion_main, ["--shell", "bash", "enable"], prog="msmodeling-tab")
+
+    assert result.returncode == 3
+    enable.assert_called_once_with("bash")
+
+
+def test_completion_main_defaults_to_print() -> None:
+    with patch("cli.completion.print_completion", return_value=5) as printer:
+        result = run_cli_main(completion_main, ["--shell", "zsh"], prog="msmodeling-tab")
+
+    assert result.returncode == 5
+    printer.assert_called_once_with("zsh")
 
 
 def test_install_completion_files_writes_bash_completion_command_names(tmp_path: Path) -> None:
