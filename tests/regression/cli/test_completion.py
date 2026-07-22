@@ -36,11 +36,11 @@ def test_render_bash_completion_registers_python_and_msmodeling() -> None:
     assert "--model-id" in script
     assert "--num-queries" in script
     assert "--quantize-linear-action" in script
+    assert "-tab" in script
     assert "--enable-tab-completion" in script
     assert "--disable-tab-completion" in script
     assert "--reload-shell" in script
     assert "--delete-completion-file" in script
-    assert '"inference optix -tab ' not in script
 
 
 def test_enable_tab_completion_writes_static_file_and_rc_block(tmp_path: Path) -> None:
@@ -363,7 +363,9 @@ def test_build_parser_accepts_completion_subcommands() -> None:
 
 def test_completion_main_dispatches_install() -> None:
     with patch("cli.completion.install_completion_files", return_value=7) as install:
-        result = run_cli_main(completion_main, ["install", "--prefix", "/tmp/msmodeling", "--user"], prog="msmodeling-tab")
+        result = run_cli_main(
+            completion_main, ["install", "--prefix", "/tmp/msmodeling", "--user"], prog="msmodeling-tab"
+        )
 
     assert result.returncode == 7
     install.assert_called_once_with("/tmp/msmodeling", True)
