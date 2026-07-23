@@ -46,6 +46,9 @@ uv sync --group ci
 
 完成后，可在已激活的虚拟环境中直接运行命令，也可以使用 `uv run ...` 执行命令。
 
+> [!NOTE]
+> 如果使用 `uv` 创建或管理虚拟环境，后续查看、升级、卸载也建议使用 `uv pip ...` 或 `uv run ...`。不要仅通过 `which pip` 判断当前环境，部分场景下 `pip` 可能指向非预期的 Python 环境。
+
 ### 2.3 备选方式：pip + requirements.txt
 
 如果不使用 `uv`，也可以通过 Python 原生虚拟环境和 `requirements.txt` 安装依赖。CPU 环境建议先从 PyTorch CPU 源安装 `torch` 与 `torchvision`，再安装其余依赖。
@@ -141,30 +144,63 @@ python -m cli.inference.text_generate /data/models/Qwen3-32B --num-queries 2 --q
 
 ## 4. 卸载
 
-可在安装 msModeling 的 Python 环境中执行如下命令卸载：
+可在安装 msModeling 的 Python 环境中执行如下命令卸载。
+
+如果使用 `uv` 管理虚拟环境，执行：
+
+```bash
+uv pip uninstall msmodeling
+```
+
+如果使用 `pip + requirements.txt` 方式安装，执行：
 
 ```bash
 pip uninstall msmodeling
 ```
 
 > [!NOTE]
-> 卸载前请确认当前终端使用的是安装 msModeling 的 Python 环境，避免卸载到其他环境中的同名包。若不再需要源码目录，可在卸载后手动删除。
+> 卸载前请确认当前终端使用的是安装 msModeling 的 Python 环境，避免卸载到其他环境中的同名包。若通过 `uv` 管理环境，优先使用 `uv pip uninstall msmodeling`。若不再需要源码目录，可在卸载后手动删除。
 
 ## 5. 升级
 
-升级前可先通过如下命令查看当前环境中的版本信息：
+升级前可先通过如下命令查看当前环境中的版本信息。
+
+如果使用 `uv` 管理虚拟环境，执行：
+
+```bash
+uv pip show msmodeling
+```
+
+如果使用 `pip + requirements.txt` 方式安装，执行：
 
 ```bash
 pip show msmodeling
 ```
 
-进入 msModeling 仓库根目录，拉取目标版本源码后，通过 `pip install --upgrade` 升级当前环境中的工具：
+进入 msModeling 仓库根目录，拉取目标版本源码：
 
 ```bash
 cd msmodeling
 git fetch
 git checkout 26.1.0
 git pull
+```
+
+如果使用 `uv` 管理虚拟环境，执行如下命令升级：
+
+```bash
+uv pip install --upgrade -e .
+```
+
+如果需要临时指定镜像源，可执行：
+
+```bash
+uv pip install --upgrade -e . -i https://mirrors.aliyun.com/pypi/simple
+```
+
+如果使用 `pip + requirements.txt` 方式安装，执行如下命令升级：
+
+```bash
 pip install --upgrade -e .
 ```
 
@@ -187,4 +223,4 @@ OptiX 子进程会自动剥离 msModeling 虚拟环境，使用系统 `PATH`；�
 - 若 `--help` 无法显示帮助信息，请优先排查虚拟环境、`PYTHONPATH` 与依赖安装。
 - 如果提示无法找到 `cli` 或 `tensor_cast` 模块，请确认当前目录为仓库根目录，或已正确设置 `PYTHONPATH`。
 - 如果模型配置下载失败，请确认网络可访问 Hugging Face；若 `HF_ENDPOINT` 镜像仍不可用，请改用本地模型路径。
-- 如果依赖安装失败，请先确认虚拟环境已激活，并升级 `pip` 后重新执行 `pip install -e .`，必要时切换 PyPI 镜像源。
+- 如果依赖安装失败，请先确认虚拟环境已激活。若使用 `uv`，请重新执行 `uv sync` 或 `uv pip install --upgrade -e .`；若使用 pip 方式，请升级 `pip` 后重新执行 `pip install -e .`，必要时切换 PyPI 镜像源。
