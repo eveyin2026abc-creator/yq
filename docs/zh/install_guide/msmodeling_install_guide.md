@@ -163,44 +163,31 @@ pip uninstall msmodeling
 
 ## 5. 升级
 
-升级前可先通过如下命令查看当前环境中的版本信息。
-
-如果使用 `uv` 管理虚拟环境，执行：
+升级前可先查看当前环境中的版本信息：
 
 ```bash
+# uv 环境
 uv pip show msmodeling
-```
 
-如果使用 `pip + requirements.txt` 方式安装，执行：
-
-```bash
+# pip 环境
 pip show msmodeling
 ```
 
-进入 msModeling 仓库根目录，拉取目标版本源码：
+进入 msModeling 仓库根目录，拉取目标版本源码后升级：
 
 ```bash
 cd msmodeling
 git fetch
 git checkout 26.1.0
 git pull
-```
 
-如果使用 `uv` 管理虚拟环境，执行如下命令升级：
-
-```bash
+# uv 环境
 uv pip install --upgrade -e .
-```
 
-如果需要临时指定镜像源，可执行：
-
-```bash
+# uv 环境临时指定镜像源
 uv pip install --upgrade -e . -i https://mirrors.aliyun.com/pypi/simple
-```
 
-如果使用 `pip + requirements.txt` 方式安装，执行如下命令升级：
-
-```bash
+# pip 环境
 pip install --upgrade -e .
 ```
 
