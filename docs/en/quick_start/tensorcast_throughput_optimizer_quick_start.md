@@ -55,7 +55,7 @@ python -m cli.inference.throughput_optimizer --help
 
 If the commands do not print help information, check that the virtual environment is activated, dependencies are installed, and `PYTHONPATH` points to the msModeling repository root.
 
-### 2.2 Model Inference Performance Simulation: Run TensorCast Text Generation
+### 2.2 Run TensorCast Text Generation
 
 TensorCast (model inference performance simulation) performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
 
@@ -116,7 +116,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 
 After generation, open the trace file with `chrome://tracing` or MindStudio Insight.
 
-### 2.3 Service-Level Performance Simulation: Run Throughput Optimizer
+### 2.3 Run Throughput Optimizer
 
 Throughput Optimizer (service-level performance simulation) searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
 
@@ -140,17 +140,36 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 #### 2.3.2 Check Simulation Results
 
-If the command succeeds, the terminal prints candidate configurations and throughput metrics. Focus on:
+If the command succeeds, the terminal first prints the input configuration and best configuration summary, followed by a candidate parallel configuration table. For example:
+
+```text
+Input Configuration:
+  Model: Qwen/Qwen3-32B
+  Devices: 8 TEST_DEVICE
+  TPOT Limits: 50.0 ms
+
+Overall Best Configuration:
+  Best Throughput: 2161.56 tokens/s
+  TTFT: 13848.08 ms
+  TPOT: 49.98 ms
+
+Top 4 PD Aggregated Configurations:
+| Top | Throughput (token/s) | TTFT (ms) | TPOT (ms) | concurrency | num_devices | parallel           | batch_size |
+|  1  | 2161.56              | 13848.08  | 49.98     | 128         | 8           | TP=4 | PP=1 | DP=2 | 64         |
+```
+
+Focus on the following fields:
 
 - `TP` / `DP`: Recommended parallel strategy.
+- `concurrency`: Number of concurrent requests supported by the candidate configuration.
 - `batch size`: Batch size that satisfies the SLO constraints.
 - `TTFT` / `TPOT`: Time to first token and time per output token.
-- `token throughput`: System-level token throughput.
+- `Throughput (token/s)`: System-level output token throughput. A larger value indicates higher throughput.
 
 Success criteria:
 
-- The terminal prints candidate or best configurations.
-- The output includes throughput, TTFT, and TPOT metrics.
+- The terminal prints `Overall Best Configuration` or a candidate configuration table.
+- The output includes `Throughput`, `TTFT`, and `TPOT` metrics.
 - No model configuration loading failure or parameter conflict is reported.
 
 ## 3. Validate Results and Next Steps

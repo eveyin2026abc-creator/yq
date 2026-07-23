@@ -55,7 +55,7 @@ python -m cli.inference.throughput_optimizer --help
 
 若上述命令无法正常输出帮助信息，请优先检查虚拟环境是否已激活、依赖是否安装完成，以及 `PYTHONPATH` 是否指向 msModeling 仓库根目录。
 
-### 2.2【模型推理性能仿真】运行 TensorCast 文本生成仿真
+### 2.2 模型推理性能仿真
 
 TensorCast（模型推理性能仿真）面向 PyTorch 程序进行性能建模。它不会在真实加速器上执行模型，而是拦截计算图，并基于目标设备画像估算算子耗时、显存占用和整体推理性能。
 
@@ -116,7 +116,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 
 生成后，可通过 `chrome://tracing` 或 MindStudio Insight 打开 trace 文件。
 
-### 2.3【服务化性能仿真】运行 Throughput Optimizer
+### 2.3 服务化性能仿真
 
 Throughput Optimizer（服务化性能仿真）可在 TTFT、TPOT 等 SLO 约束下，自动搜索最优并行策略和 batch 配置，帮助评估给定模型在目标硬件上的最大服务吞吐。
 
