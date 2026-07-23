@@ -1,22 +1,22 @@
-# Model Inference Performance Simulation and Service-Level Performance Simulation Quick Start
+# msModeling Quick Start
 
 <br>
 
 ## 1. Overview
 
-msModeling provides single-model performance simulation and service-level throughput optimization. This guide is for first-time TensorCast and Throughput Optimizer users. It walks through environment checks, LLM text-generation simulation, and throughput optimization, helping you understand the main inputs, outputs, and usage scenarios.
+msModeling provides model inference performance simulation and service-level performance simulation. This guide is for first-time users of these two capabilities. It walks through environment checks, LLM text-generation simulation, and service-level performance simulation, helping you understand the main inputs, outputs, and usage scenarios.
 
 ### 1.1 Before You Start
 
 **Experience Map (core operations take about 10 minutes)**
 
-> **Recommended order**: Step 1 is the environment baseline. Step 2 runs TensorCast single-model simulation. Step 3 runs Throughput Optimizer throughput optimization.
+> **Recommended order**: Step 1 is the environment baseline. Step 2 runs model inference performance simulation. Step 3 runs service-level performance simulation.
 
 | Step | Stage | Core Module | Reference Operation Time | Suggested Concept Study |
 | :---: | :---: | :--- | :---: | :---: |
 | **1** | **Environment setup** | `msModeling` | 2 minutes | 5 minutes |
-| **2** | **Single-model simulation** | `TensorCast` | 1 minute | 10 minutes |
-| **3** | **Throughput optimization** | `Throughput Optimizer` | 2 minutes | 15 minutes |
+| **2** | **Model inference performance simulation** | `TensorCast` | 1 minute | 10 minutes |
+| **3** | **Service-level performance simulation** | `Throughput Optimizer` | 2 minutes | 15 minutes |
 
 ### 1.2 Environment Preparation
 
@@ -40,7 +40,7 @@ The following commands assume you are in the msModeling repository root. If not,
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 ```
 
-TensorCast reads model configuration files from Hugging Face. If the environment cannot access Hugging Face directly, set a mirror:
+Model inference performance simulation reads model configuration files from Hugging Face. If the environment cannot access Hugging Face directly, set a mirror:
 
 ```bash
 export HF_ENDPOINT="https://hf-mirror.com"
@@ -55,9 +55,9 @@ python -m cli.inference.throughput_optimizer --help
 
 If the commands do not print help information, check that the virtual environment is activated, dependencies are installed, and `PYTHONPATH` points to the msModeling repository root.
 
-### 2.2 Single-Model Simulation: Run TensorCast Text Generation
+### 2.2 Model Inference Performance Simulation: Run TensorCast Text Generation
 
-TensorCast performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
+TensorCast (model inference performance simulation) performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
 
 > [!NOTE]
 > TensorCast prints operator-level performance summaries, total execution time, TPS/Device, and memory usage by default. If `--chrome-trace` is specified, it can also generate a Chrome Trace file for timeline analysis.
@@ -116,14 +116,14 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 
 After generation, open the trace file with `chrome://tracing` or MindStudio Insight.
 
-### 2.3 Throughput Optimization: Run the ServingCast Throughput Optimizer
+### 2.3 Service-Level Performance Simulation: Run Throughput Optimizer
 
-The ServingCast throughput optimizer searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
+Throughput Optimizer (service-level performance simulation) searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
 
 > [!NOTE]
-> PD colocated means Prefill and Decode run in the same instance. It is suitable for quickly evaluating overall service throughput. To evaluate Prefill and Decode separately, see the [Throughput Optimizer Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md).
+> PD colocated means Prefill and Decode run in the same instance. It is suitable for quickly evaluating overall service throughput. To evaluate Prefill and Decode separately, see the [Service-Level Performance Simulation User Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md).
 
-#### 2.3.1 Run Throughput Optimization
+#### 2.3.1 Run Service-Level Performance Simulation
 
 The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tp-sizes` in advanced usage to narrow the search space.
 
@@ -138,7 +138,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-#### 2.3.2 Check Optimization Results
+#### 2.3.2 Check Simulation Results
 
 If the command succeeds, the terminal prints candidate configurations and throughput metrics. Focus on:
 
@@ -155,25 +155,25 @@ Success criteria:
 
 ## 3. Validate Results and Next Steps
 
-If the commands above succeed, you have completed the core TensorCast and Throughput Optimizer workflow:
+If the commands above succeed, you have completed the core model inference performance simulation and service-level performance simulation workflow:
 
-- TensorCast: single-model text-generation performance simulation with operator latency, TPS/Device, and memory estimates.
-- Throughput Optimizer: throughput optimization under SLO constraints with recommended parallel strategy and throughput metrics.
+- Model inference performance simulation: completed the TensorCast workflow with operator latency, TPS/Device, and memory estimates.
+- Service-level performance simulation: completed the Throughput Optimizer workflow under SLO constraints with recommended parallel strategy and throughput metrics.
 
 Common issues:
 
 - If model configuration cannot be downloaded, check network access to Hugging Face or set the `HF_ENDPOINT` mirror.
 - If `cli` or `tensor_cast` cannot be imported, confirm that you are in the repository root or that `PYTHONPATH` is set correctly.
-- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
+- If service-level performance simulation takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
 
 Continue with:
 
-- [TensorCast User Guide](../user_guide/msmodeling_tensor_cast_user_guide.md)
-- [Throughput Optimizer Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md)
+- [Model Inference Performance Simulation User Guide](../user_guide/msmodeling_tensor_cast_user_guide.md)
+- [Service-Level Performance Simulation User Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md)
 
 ## 4. [Optional] Web UI Experience
 
-If you prefer a visual workflow, you can use Web UI after completing the CLI steps above to configure single-model simulation, throughput optimization, and other tasks in the browser, and view results as charts and tables.
+If you prefer a visual workflow, you can use Web UI after completing the CLI steps above to configure model inference performance simulation, service-level performance simulation, and other tasks in the browser, and view results as charts and tables.
 
 Start Web UI from the repository root:
 
