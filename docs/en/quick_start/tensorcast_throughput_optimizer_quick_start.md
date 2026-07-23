@@ -4,7 +4,7 @@
 
 ## 1. Overview
 
-msModeling provides model inference performance simulation and service-level performance simulation. This guide is for first-time users of these two capabilities. It walks through environment checks, LLM text-generation simulation, and service-level performance simulation, helping you understand the main inputs, outputs, and usage scenarios.
+msModeling provides single-model performance simulation and service-level throughput optimization. This guide is for first-time TensorCast and Throughput Optimizer users. It walks through environment checks, LLM text-generation simulation, and throughput optimization, helping you understand the main inputs, outputs, and usage scenarios.
 
 ### 1.1 Before You Start
 
@@ -40,7 +40,7 @@ The following commands assume you are in the msModeling repository root. If not,
 export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 ```
 
-Model inference performance simulation reads model configuration files from Hugging Face. If the environment cannot access Hugging Face directly, set a mirror:
+TensorCast reads model configuration files from Hugging Face. If the environment cannot access Hugging Face directly, set a mirror:
 
 ```bash
 export HF_ENDPOINT="https://hf-mirror.com"
@@ -57,7 +57,7 @@ If the commands do not print help information, check that the virtual environmen
 
 ### 2.2 Run TensorCast Text Generation
 
-TensorCast (model inference performance simulation) performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
+TensorCast performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
 
 > [!NOTE]
 > TensorCast prints operator-level performance summaries, total execution time, TPS/Device, and memory usage by default. If `--chrome-trace` is specified, it can also generate a Chrome Trace file for timeline analysis.
@@ -118,10 +118,10 @@ After generation, open the trace file with `chrome://tracing` or MindStudio Insi
 
 ### 2.3 Run Throughput Optimizer
 
-Throughput Optimizer (service-level performance simulation) searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
+The ServingCast throughput optimizer searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
 
 > [!NOTE]
-> PD colocated means Prefill and Decode run in the same instance. It is suitable for quickly evaluating overall service throughput. To evaluate Prefill and Decode separately, see the [Service-Level Performance Simulation User Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md).
+> PD colocated means Prefill and Decode run in the same instance. It is suitable for quickly evaluating overall service throughput. To evaluate Prefill and Decode separately, see the [Throughput Optimizer Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md).
 
 #### 2.3.1 Run Service-Level Performance Simulation
 
@@ -138,7 +138,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-#### 2.3.2 Check Simulation Results
+#### 2.3.2 Check Optimization Results
 
 If the command succeeds, the terminal first prints the input configuration and best configuration summary, followed by a candidate parallel configuration table. For example:
 
@@ -168,31 +168,31 @@ Focus on the following fields:
 
 Success criteria:
 
-- The terminal prints `Overall Best Configuration` or a candidate configuration table.
-- The output includes `Throughput`, `TTFT`, and `TPOT` metrics.
+- The terminal prints candidate or best configurations.
+- The output includes throughput, TTFT, and TPOT metrics.
 - No model configuration loading failure or parameter conflict is reported.
 
 ## 3. Validate Results and Next Steps
 
-If the commands above succeed, you have completed the core model inference performance simulation and service-level performance simulation workflow:
+If the commands above succeed, you have completed the core TensorCast and Throughput Optimizer workflow:
 
-- Model inference performance simulation: completed the TensorCast workflow with operator latency, TPS/Device, and memory estimates.
-- Service-level performance simulation: completed the Throughput Optimizer workflow under SLO constraints with recommended parallel strategy and throughput metrics.
+- TensorCast: single-model text-generation performance simulation with operator latency, TPS/Device, and memory estimates.
+- Throughput Optimizer: throughput optimization under SLO constraints with recommended parallel strategy and throughput metrics.
 
 Common issues:
 
 - If model configuration cannot be downloaded, check network access to Hugging Face or set the `HF_ENDPOINT` mirror.
 - If `cli` or `tensor_cast` cannot be imported, confirm that you are in the repository root or that `PYTHONPATH` is set correctly.
-- If service-level performance simulation takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
+- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
 
 Continue with:
 
-- [Model Inference Performance Simulation User Guide](../user_guide/msmodeling_tensor_cast_user_guide.md)
-- [Service-Level Performance Simulation User Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md)
+- [TensorCast User Guide](../user_guide/msmodeling_tensor_cast_user_guide.md)
+- [Throughput Optimizer Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md)
 
 ## 4. [Optional] Web UI Experience
 
-If you prefer a visual workflow, you can use Web UI after completing the CLI steps above to configure model inference performance simulation, service-level performance simulation, and other tasks in the browser, and view results as charts and tables.
+If you prefer a visual workflow, you can use Web UI after completing the CLI steps above to configure single-model simulation, throughput optimization, and other tasks in the browser, and view results as charts and tables.
 
 Start Web UI from the repository root:
 
