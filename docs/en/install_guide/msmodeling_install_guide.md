@@ -29,22 +29,18 @@ The project recommends using `uv` to manage the virtual environment and dependen
 
 ```bash
 pip install uv
-uv venv --python 3.13 .venv
-
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-
+cd msmodeling
 uv sync
+
+# Optional: specify the Python version (defaults to an available local version)
+# UV_PYTHON=3.13 uv sync
 
 # Optional: install lint or CI dependency groups
 uv sync --group lint
 uv sync --group ci
 ```
 
-After setup, you can run commands directly in the activated virtual environment, or use `uv run ...`.
+After setup, use `uv run ...` to run commands. If you need to activate the virtual environment manually, activate the `.venv` automatically created by `uv sync`.
 
 > [!NOTE]
 > If you use `uv` to create or manage the virtual environment, use `uv pip ...` or `uv run ...` for later inspection, upgrade, and uninstallation. Do not rely only on `which pip` to determine the active environment, because `pip` may point to an unexpected Python environment in some cases.
@@ -210,4 +206,4 @@ OptiX child processes automatically strip the msModeling virtual environment and
 - If `--help` cannot display help, first check the virtual environment, `PYTHONPATH`, and dependency installation.
 - If `cli` or `tensor_cast` cannot be found, confirm that the current directory is the repository root or that `PYTHONPATH` is configured correctly.
 - If model configuration download fails, confirm that the network can access Hugging Face. If the `HF_ENDPOINT` mirror is still unavailable, use a local model path.
-- If dependency installation fails, first confirm that the virtual environment is activated. If you use `uv`, rerun `uv sync` or `uv pip install --upgrade -e .`; if you use pip, upgrade `pip` and rerun `pip install -e .`. Switch PyPI mirrors if needed.
+- If dependency installation fails, first confirm that the virtual environment is activated. If you use `uv`, rerun `uv sync`; if you use pip, upgrade `pip` and rerun `pip install -r requirements.txt` followed by `pip install -e .`. Switch PyPI mirrors if needed.

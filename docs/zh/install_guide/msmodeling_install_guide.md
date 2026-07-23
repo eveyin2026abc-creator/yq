@@ -29,22 +29,18 @@ cd msmodeling
 
 ```bash
 pip install uv
-uv venv --python 3.13 .venv
-
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-
+cd msmodeling
 uv sync
+
+# 可选：指定 Python 版本（默认使用本机可用版本）
+# UV_PYTHON=3.13 uv sync
 
 # 可选：安装 lint 或 CI 相关依赖
 uv sync --group lint
 uv sync --group ci
 ```
 
-完成后，可在已激活的虚拟环境中直接运行命令，也可以使用 `uv run ...` 执行命令。
+完成后，可使用 `uv run ...` 执行命令；如需手动激活虚拟环境，可激活 `uv sync` 自动创建的 `.venv`。
 
 > [!NOTE]
 > 如果使用 `uv` 创建或管理虚拟环境，后续查看、升级、卸载也建议使用 `uv pip ...` 或 `uv run ...`。不要仅通过 `which pip` 判断当前环境，部分场景下 `pip` 可能指向非预期的 Python 环境。
@@ -210,4 +206,4 @@ OptiX 子进程会自动剥离 msModeling 虚拟环境，使用系统 `PATH`；�
 - 若 `--help` 无法显示帮助信息，请优先排查虚拟环境、`PYTHONPATH` 与依赖安装。
 - 如果提示无法找到 `cli` 或 `tensor_cast` 模块，请确认当前目录为仓库根目录，或已正确设置 `PYTHONPATH`。
 - 如果模型配置下载失败，请确认网络可访问 Hugging Face；若 `HF_ENDPOINT` 镜像仍不可用，请改用本地模型路径。
-- 如果依赖安装失败，请先确认虚拟环境已激活。若使用 `uv`，请重新执行 `uv sync` 或 `uv pip install --upgrade -e .`；若使用 pip 方式，请升级 `pip` 后重新执行 `pip install -e .`，必要时切换 PyPI 镜像源。
+- 如果依赖安装失败，请先确认虚拟环境已激活。若使用 `uv`，请重新执行 `uv sync`；若使用 pip 方式，请升级 `pip` 后依次重新执行 `pip install -r requirements.txt` 和 `pip install -e .`，必要时切换 PyPI 镜像源。
