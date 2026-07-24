@@ -162,7 +162,7 @@ fi
 # <<< msmodeling completion <<<
 ```
 
-4. 执行 `exec bash` 重新加载当前 Bash，使当前终端立即可用。
+1. 执行 `exec bash` 重新加载当前 Bash，使当前终端立即可用。
 
 ### 4.5 幂等性
 
