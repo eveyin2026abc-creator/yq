@@ -24,6 +24,36 @@ from cli.completion import (
 from tests.helpers.cli_runner import run_cli_main
 
 
+def _run_bash_completion(script: str, command_line: str) -> subprocess.CompletedProcess[str]:
+    words = command_line.split()
+    if command_line.endswith(" "):
+        words.append("")
+
+    return subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            r"""
+source "$1"
+shift
+COMP_WORDS=("$@")
+COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+_msmodeling_complete
+printf '%s\n' "${COMPREPLY[@]}"
+""",
+            "bash",
+            "/dev/stdin",
+            *words,
+        ],
+        input=script,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_render_bash_completion_registers_python_and_msmodeling() -> None:
     script = render_bash_completion()
 
@@ -41,6 +71,8 @@ def test_render_bash_completion_registers_python_and_msmodeling() -> None:
     assert "--disable-tab-completion" in script
     assert "--reload-shell" in script
     assert "--delete-completion-file" in script
+    assert "ATLAS_800_A2_376T_64G" in script
+    assert "W8A8_STATIC" in script
 
 
 def test_enable_tab_completion_writes_static_file_and_rc_block(tmp_path: Path) -> None:
@@ -204,6 +236,43 @@ printf '%s\n' "${COMPREPLY[@]}"
             capture_output=True,
             text=True,
         )
+
+        assert result.returncode == 0
+        assert expected in result.stdout, f"{command_line} did not complete {expected}; got {result.stdout!r}"
+
+
+def test_bash_completion_supports_common_argument_values() -> None:
+    script = render_bash_completion()
+    cases = (
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_",
+            "ATLAS_800_A2_376T_64G",
+        ),
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --log-level wa",
+            "warning",
+        ),
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --remote-source model",
+            "modelscope",
+        ),
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --performance-model prof",
+            "profiling",
+        ),
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_",
+            "W8A8_STATIC",
+        ),
+        (
+            "python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-attention-action I",
+            "INT8",
+        ),
+        ("msmodeling inference text-generate Qwen/Qwen3-32B --device TEST", "TEST_DEVICE"),
+    )
+
+    for command_line, expected in cases:
+        result = _run_bash_completion(script, command_line)
 
         assert result.returncode == 0
         assert expected in result.stdout, f"{command_line} did not complete {expected}; got {result.stdout!r}"

@@ -25,6 +25,7 @@
 - 支持 `python`、`python3` 下的常用 msmodeling 命令补全。
 - 支持 `python -m cli.inference.<Tab>` 模块名补全。
 - 支持 `python -m cli.inference.text_generate ... --<Tab>` 等长选项补全。
+- 支持 `--device`、`--log-level`、`--remote-source`、`--performance-model` 和量化相关参数的静态值补全。
 - 支持 `msmodeling --enable-tab-completion` 一键启用 Bash 补全，并提供等价短别名 `msmodeling -tab`。
 - 支持启用后自动重新进入 Bash，使当前终端和新终端均可使用补全。
 - 保持补全逻辑静态、快速、可测试。
@@ -67,10 +68,12 @@ python -m cli.main -tab
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_<Tab>
 python -m cli.inference.te<Tab>
 ```
 
-上述命令可以补全模块名和长选项，例如 `--num-queries`、`--query-length`、`--quantize-linear-action`、`--compile` 等。
+上述命令可以补全模块名和长选项，例如 `--num-queries`、`--query-length`、`--quantize-linear-action`、`--compile` 等；也可以补全部分枚举参数值，例如 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`W8A8_STATIC`、`INT8`、`huggingface` 等。
 
 ## 4. 方案设计
 
@@ -105,6 +108,7 @@ flowchart LR
 - `TOP_LEVEL_OPTIONS`：用于补全 `msmodeling --<Tab>`。
 - `COMMON_OPTIONS`：模型仿真命令共用选项。
 - `OPTIONS`：按目标命令划分的长选项列表。
+- `VALUE_OPTIONS`：按参数名划分的静态候选值列表。
 
 当前覆盖目标：
 
@@ -127,6 +131,7 @@ complete -o default -F _msmodeling_complete python python3 msmodeling
 - 当前命令是 `msmodeling`：补全顶层参数、`inference` 子命令及其长选项。
 - 当前命令是 `python`/`python3` 且前一个词是 `-m`：补全 `cli.inference.*` 模块名。
 - 当前命令包含 `cli.inference.text_generate`、`cli/inference/text_generate.py` 等目标：补全对应长选项。
+- 当前词的前一个参数是 `--device`、`--log-level`、`--remote-source`、`--performance-model`、`--quantize-linear-action`、`--quantize-non-expert-linear-action` 或 `--quantize-attention-action`：补全对应静态候选值。
 - 当前词不是 `--*` 时不抢占默认路径补全。
 
 ### 4.4 启用流程
@@ -157,7 +162,7 @@ fi
 # <<< msmodeling completion <<<
 ```
 
-1. 打印提示，用户可按需执行 `exec bash` 重新加载补全。
+4. 执行 `exec bash` 重新加载当前 Bash，使当前终端立即可用。
 
 ### 4.5 幂等性
 
@@ -206,6 +211,7 @@ fi
 - `tests/regression/cli/test_completion.py`
   - 验证 Bash 补全注册到 `python python3 msmodeling`。
   - 验证补全脚本包含 `cli.inference.text_generate`、`--num-queries`、`--quantize-linear-action` 等关键项。
+  - 验证 `--device`、`--log-level`、`--remote-source`、`--performance-model` 和量化参数的静态值补全。
   - 验证启用命令写入静态补全文件和 rc 管理块。
   - 验证重复启用不会产生重复管理块。
 
@@ -332,7 +338,7 @@ CLI 参数新增或删除后，需要同步维护 `cli/completion.py` 中的 `OP
 ## 8. 后续优化
 
 - 从 argparse 自动生成静态补全表，并在测试中校验静态表与实际参数一致。
-- 为参数值增加静态补全，例如量化枚举值、`--log-level`、`--remote-source`。
+- 继续扩展更多安全的参数值补全，例如 dtype、并发搜索策略等。
 - 支持 Zsh profile 自动启用。
 - 支持 PowerShell profile 自动启用。
 - 在 README 或用户指南中增加 Tab 补全使用说明。
@@ -359,11 +365,25 @@ export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
 python -m cli.main -tab
 ```
 
+取消补全：
+
+```bash
+msmodeling --disable-tab-completion
+```
+
+如需同时删除静态补全脚本：
+
+```bash
+msmodeling --disable-tab-completion --delete-completion-file
+```
+
 ### 示例补全
 
 ```bash
 python -m cli.inference.te<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-attention-action I<Tab>
 msmodeling --enable<Tab>
 ```

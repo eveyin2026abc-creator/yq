@@ -98,7 +98,7 @@ $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 
 ### 5. 启用 Tab 补全（可选）
 
-在 Linux Bash 环境中，可启用静态 Tab 补全，补全 `python`、`python3` 和 `msmodeling` 命令下的常用 msmodeling 模块名与长选项。补全时只执行 shell 字符串匹配，不会启动 Python 或加载模型依赖。
+在 Linux Bash 环境中，可启用静态 Tab 补全，补全 `python`、`python3` 和 `msmodeling` 命令下的常用 msmodeling 模块名、长选项以及部分枚举参数值。补全时只执行 shell 字符串匹配，不会启动 Python 或加载模型依赖。
 
 如果已通过 `pip install -e .` 或 `uv sync` 安装当前项目，可执行：
 
@@ -121,6 +121,22 @@ python -m cli.main -tab
 python -m cli.inference.te<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_<Tab>
+```
+
+当前支持值补全的参数包括 `--device`、`--log-level`、`--remote-source`、`--performance-model`、`--quantize-linear-action`、`--quantize-non-expert-linear-action` 和 `--quantize-attention-action`。
+
+如需取消 Tab 补全，可执行：
+
+```bash
+msmodeling --disable-tab-completion
+```
+
+该命令会移除 `~/.bashrc` 中由 msmodeling 管理的补全加载块，不影响其他 shell 配置。如需同时删除静态补全脚本，可执行：
+
+```bash
+msmodeling --disable-tab-completion --delete-completion-file
 ```
 
 ### 6. Hugging Face 访问

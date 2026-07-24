@@ -63,6 +63,7 @@ def main() -> int:
     )
     completion_group = parser.add_mutually_exclusive_group()
     completion_group.add_argument(
+        "-tab",
         "--enable-tab-completion",
         action="store_true",
         help="Enable static bash tab completion for python/python3 and msmodeling commands",

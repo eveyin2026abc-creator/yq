@@ -43,6 +43,7 @@ CLI_SUBCOMMAND_TARGETS = {
 MODULES = (*MODULE_TARGETS.keys(), *MODULE_SUBCOMMAND_TARGETS.keys())
 
 TOP_LEVEL_OPTIONS = (
+    "-tab",
     "--enable-tab-completion",
     "--disable-tab-completion",
     "--reload-shell",
@@ -56,6 +57,46 @@ COMMON_OPTIONS = (
     "--reserved-memory-gb",
     "--log-level",
 )
+
+DEVICE_PROFILE_VALUES = (
+    "TEST_DEVICE",
+    "ATLAS_800_A2_376T_64G",
+    "ATLAS_800_A2_313T_64G",
+    "ATLAS_800_A2_280T_64G",
+    "ATLAS_800_A2_280T_64G_PCIE",
+    "ATLAS_800_A2_280T_32G_PCIE",
+    "ATLAS_800_A3_752T_128G_DIE",
+    "ATLAS_800_A3_560T_128G_DIE",
+    "ATLAS_800_A3_560T_128G_DIE_ROCE",
+    "ATLAS_350_425T_112G",
+    "ATLAS_350_425T_84G",
+)
+
+LOG_LEVEL_VALUES = ("debug", "info", "warning", "error", "critical")
+REMOTE_SOURCE_VALUES = ("huggingface", "modelscope")
+PERFORMANCE_MODEL_VALUES = ("analytic", "profiling")
+QUANTIZE_LINEAR_ACTION_VALUES = (
+    "DISABLED",
+    "W8A16_STATIC",
+    "W8A8_STATIC",
+    "W4A8_STATIC",
+    "W8A16_DYNAMIC",
+    "W8A8_DYNAMIC",
+    "W4A8_DYNAMIC",
+    "FP8",
+    "MXFP4",
+)
+QUANTIZE_ATTENTION_ACTION_VALUES = ("DISABLED", "INT8", "FP8")
+
+VALUE_OPTIONS = {
+    "--device": DEVICE_PROFILE_VALUES,
+    "--log-level": LOG_LEVEL_VALUES,
+    "--remote-source": REMOTE_SOURCE_VALUES,
+    "--performance-model": PERFORMANCE_MODEL_VALUES,
+    "--quantize-linear-action": QUANTIZE_LINEAR_ACTION_VALUES,
+    "--quantize-non-expert-linear-action": QUANTIZE_LINEAR_ACTION_VALUES,
+    "--quantize-attention-action": QUANTIZE_ATTENTION_ACTION_VALUES,
+}
 
 OPTIONS = {
     "text_generate": (
@@ -336,6 +377,12 @@ def _ps_options_entries() -> str:
     return "\n".join(f"    '{target}' = {_ps_array(options)}" for target, options in OPTIONS.items())
 
 
+def _ps_value_options_entries() -> str:
+    return "\n".join(
+        f"    '{option}' = {_ps_array(values)}" for option, values in VALUE_OPTIONS.items()
+    )
+
+
 def _ps_cli_target_switch() -> str:
     lines = [f'        "{command}" {{ return "{target}" }}' for command, target in CLI_TARGETS.items()]
     for command, subtargets in CLI_SUBCOMMAND_TARGETS.items():
@@ -403,6 +450,9 @@ _msmodeling_complete()
     esac
 
     target="$(_msmodeling_completion_target)"
+    if [[ -n "$target" ]]; then
+        _msmodeling_complete_values "$prev" "$cur" && return 0
+    fi
     if [[ -z "$target" || "$cur" != --* ]]; then
         return 0
     fi
@@ -412,8 +462,12 @@ _msmodeling_complete()
 
 _msmodeling_complete_cli_command()
 {{
-    local cur first second target
+    local cur prev first second target
     cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev=""
+    if [[ $COMP_CWORD -gt 0 ]]; then
+        prev="${{COMP_WORDS[COMP_CWORD - 1]}}"
+    fi
     first="${{COMP_WORDS[1]}}"
     second="${{COMP_WORDS[2]}}"
 
@@ -437,10 +491,45 @@ _msmodeling_complete_cli_command()
     fi
 
     target="$(_msmodeling_cli_completion_target)"
+    if [[ -n "$target" ]]; then
+        _msmodeling_complete_values "$prev" "$cur" && return 0
+    fi
     if [[ -z "$target" || "$cur" != --* ]]; then
         return 0
     fi
     _msmodeling_complete_options "$target" "$cur"
+}}
+
+_msmodeling_complete_values()
+{{
+    local option cur
+    option="$1"
+    cur="$2"
+
+    case "$option" in
+        --device)
+            COMPREPLY=( $(compgen -W "{_words(DEVICE_PROFILE_VALUES)}" -- "$cur") )
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W "{_words(LOG_LEVEL_VALUES)}" -- "$cur") )
+            ;;
+        --remote-source)
+            COMPREPLY=( $(compgen -W "{_words(REMOTE_SOURCE_VALUES)}" -- "$cur") )
+            ;;
+        --performance-model)
+            COMPREPLY=( $(compgen -W "{_words(PERFORMANCE_MODEL_VALUES)}" -- "$cur") )
+            ;;
+        --quantize-linear-action|--quantize-non-expert-linear-action)
+            COMPREPLY=( $(compgen -W "{_words(QUANTIZE_LINEAR_ACTION_VALUES)}" -- "$cur") )
+            ;;
+        --quantize-attention-action)
+            COMPREPLY=( $(compgen -W "{_words(QUANTIZE_ATTENTION_ACTION_VALUES)}" -- "$cur") )
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    return 0
 }}
 
 _msmodeling_complete_options()
@@ -502,6 +591,9 @@ $script:MsmodelingModules = {_ps_array(MODULES)}
 $script:MsmodelingOptions = @{{
 {_ps_options_entries()}
 }}
+$script:MsmodelingValueOptions = @{{
+{_ps_value_options_entries()}
+}}
 
 function Get-MsmodelingCliCompletionTarget {{
     param([string[]] $Words)
@@ -535,6 +627,7 @@ Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeli
 
     $words = @($commandAst.CommandElements | ForEach-Object {{ $_.ToString() }})
     $commandName = if ($words.Count -gt 0) {{ $words[0] }} else {{ "" }}
+    $previousWord = if ($words.Count -ge 2) {{ $words[$words.Count - 2] }} else {{ "" }}
 
     if ($commandName -eq "msmodeling") {{
         if ($words.Count -gt 1 -and $words[1] -eq "inference" -and $words.Count -eq 2) {{
@@ -559,7 +652,18 @@ Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeli
         }}
 
         $target = Get-MsmodelingCliCompletionTarget -Words $words
-        if (-not $target -or -not $wordToComplete.StartsWith("--")) {{
+        if (-not $target) {{
+            return
+        }}
+
+        if ($script:MsmodelingValueOptions.ContainsKey($previousWord)) {{
+            $script:MsmodelingValueOptions[$previousWord] |
+                Where-Object {{ $_ -like "$wordToComplete*" }} |
+                ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+            return
+        }}
+
+        if (-not $wordToComplete.StartsWith("--")) {{
             return
         }}
 
@@ -577,7 +681,18 @@ Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeli
     }}
 
     $target = Get-MsmodelingCompletionTarget -Words $words
-    if (-not $target -or -not $wordToComplete.StartsWith("--")) {{
+    if (-not $target) {{
+        return
+    }}
+
+    if ($script:MsmodelingValueOptions.ContainsKey($previousWord)) {{
+        $script:MsmodelingValueOptions[$previousWord] |
+            Where-Object {{ $_ -like "$wordToComplete*" }} |
+            ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
+        return
+    }}
+
+    if (-not $wordToComplete.StartsWith("--")) {{
         return
     }}
 

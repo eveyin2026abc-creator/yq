@@ -98,7 +98,7 @@ $env:PYTHONPATH = "C:\path\to\msmodeling;$env:PYTHONPATH"
 
 ### 5. Enable Tab Completion (Optional)
 
-On Linux Bash, you can enable static Tab completion for common msmodeling module names and long options under `python`, `python3`, and `msmodeling`. Completion only performs shell string matching; it does not start Python or load model dependencies.
+On Linux Bash, you can enable static Tab completion for common msmodeling module names, long options, and selected enum option values under `python`, `python3`, and `msmodeling`. Completion only performs shell string matching; it does not start Python or load model dependencies.
 
 If the current project has been installed with `pip install -e .` or `uv sync`, run:
 
@@ -121,6 +121,22 @@ After enabling completion, verify it with:
 python -m cli.inference.te<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
 python -m cli.inference.text_generate Qwen/Qwen3-32B --quant<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_<Tab>
+```
+
+Value completion is currently supported for `--device`, `--log-level`, `--remote-source`, `--performance-model`, `--quantize-linear-action`, `--quantize-non-expert-linear-action`, and `--quantize-attention-action`.
+
+To disable Tab completion, run:
+
+```bash
+msmodeling --disable-tab-completion
+```
+
+This command removes the msmodeling-managed completion block from `~/.bashrc` without changing other shell settings. To also delete the static completion script, run:
+
+```bash
+msmodeling --disable-tab-completion --delete-completion-file
 ```
 
 ### 6. Hugging Face Access
