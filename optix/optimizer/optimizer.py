@@ -31,6 +31,7 @@ from ..config.base_config import (
     REAL_EVALUATION,
     REQUESTRATES,
     simulate_flag,
+    reuse_simulator_in_fine_tune_flag,
 )
 from ..config.config import DecodeContext, field_to_param, map_param_with_value
 from ..logging import LogStage, format_evaluation_failure
@@ -89,6 +90,7 @@ class PSOOptimizer(PerformanceTuner):
         self.max_fine_tune = min(max_fine_tune, MAX_ITER_NUM)
         self.use_request_rate_calibration = use_request_rate_calibration
         self._iteration = 0  # op_func call count, used for balanced strategy inter-iteration direction alternation
+        self._refine_iter = 0  # +1 per refine candidate group, so backup dirs look like back_up/refine_1
         self._seen_params = {}
 
     @staticmethod
@@ -209,6 +211,8 @@ class PSOOptimizer(PerformanceTuner):
         n_particles = x.shape[0]
         current_iteration = self._iteration
         self._iteration += 1
+        # pyswarms calls op_func once per iteration; use the incremented index so backup dirs look like back_up/pso_1
+        self.scheduler.set_backup_phase("pso", self._iteration)
         generate_speed = []
         scheduler_run = (
             self.scheduler.run_with_request_rate if self.use_request_rate_calibration else self.scheduler.run
@@ -268,11 +272,18 @@ class PSOOptimizer(PerformanceTuner):
         _record_res = [self.default_res]
         _record_fitness = [self.default_fitness]
         for _, _pso_info in best_results.iterrows():
+            # The fine-tuning of each optimization candidate group is placed in one refine iteration dir, e.g. back_up/refine_1
+            self._refine_iter += 1
+            self.scheduler.set_backup_phase("refine", self._refine_iter)
             _target_field = self.get_target_field_from_case_data(_pso_info)
             for _field in _target_field:
                 if _field.name in REQUESTRATES:
                     _field.value = _field.find_available_value(_field.value * 2)
             params = field_to_param(_target_field)
+            # Fine-tune switch: when enabled, reuse the running simulator and only rerun the benchmark
+            reuse = reuse_simulator_in_fine_tune_flag
+            stop_simulator = not reuse
+            # First run the search params in full (start simulator + benchmark)
             try:
                 _res = self.scheduler.run(params, self.target_field)
                 if self.scheduler.last_outcome and self.scheduler.last_outcome.status == RunStatus.FAILED:
@@ -292,45 +303,63 @@ class PSOOptimizer(PerformanceTuner):
                 _fitness = inf
                 self.scheduler.save_result(fitness=_fitness)
                 continue
-            self.scheduler.save_result(fitness=_fitness)
+            # When reuse=True, keep the simulator running so a later rerun_benchmark_only can reuse it;
+            # when reuse=False, stop simulator + benchmark following the original path.
+            self.scheduler.save_result(fitness=_fitness, stop_simulator=stop_simulator)
             _record_params.append(params)
             _record_res.append(_res)
             _record_fitness.append(_fitness)
             self.fine_tune.reset_history()
-            for _ in range(self.max_fine_tune):
-                try:
-                    simulate_run_info = self.fine_tune.fine_tune_with_concurrency_and_request_rate(params, _res)
-                except ValueError as e:
-                    logger.error("Failed in fine-tuning parameter. error: {}", e)
-                    break
-                except StopFineTune:
-                    break
-                params = field_to_param(simulate_run_info)
-                if self.params_in_records(params, _record_params):
-                    break
-                try:
-                    _res = self.scheduler.run(params, self.target_field)
-                    if self.scheduler.last_outcome and self.scheduler.last_outcome.status == RunStatus.FAILED:
+            try:
+                for _ in range(self.max_fine_tune):
+                    try:
+                        simulate_run_info = self.fine_tune.fine_tune_with_concurrency_and_request_rate(params, _res)
+                    except ValueError as e:
+                        logger.error("Failed in fine-tuning parameter. error: {}", e)
+                        break
+                    except StopFineTune:
+                        break
+                    params = field_to_param(simulate_run_info)
+                    if self.params_in_records(params, _record_params):
+                        break
+                    try:
+                        if reuse:
+                            # Only concurrency/request rate changed: reuse the running simulator, rerun benchmark only
+                            _res = self.scheduler.rerun_benchmark_only(
+                                params,
+                                self.target_field,
+                                with_request_rate=self.use_request_rate_calibration,
+                            )
+                        else:
+                            # Restart simulator + benchmark
+                            _res = self.scheduler.run(params, self.target_field)
+                        if self.scheduler.last_outcome and self.scheduler.last_outcome.status == RunStatus.FAILED:
+                            logger.error(
+                                "Runtime exception. error: {}, please check.",
+                                format_evaluation_failure(self.scheduler, self.scheduler.error_info),
+                            )
+                            _fitness = inf
+                            self.scheduler.save_result(fitness=_fitness, stop_simulator=stop_simulator)
+                            break
+                        _fitness = self.minimum_algorithm(_res)
+                    except Exception as e:
                         logger.error(
                             "Runtime exception. error: {}, please check.",
-                            format_evaluation_failure(self.scheduler, self.scheduler.error_info),
+                            format_evaluation_failure(self.scheduler, e),
                         )
                         _fitness = inf
-                        self.scheduler.save_result(fitness=_fitness)
+                        self.scheduler.save_result(fitness=_fitness, stop_simulator=stop_simulator)
                         break
-                    _fitness = self.minimum_algorithm(_res)
-                except Exception as e:
-                    logger.error(
-                        "Runtime exception. error: {}, please check.",
-                        format_evaluation_failure(self.scheduler, e),
-                    )
-                    _fitness = inf
-                    self.scheduler.save_result(fitness=_fitness)
-                    break
-                self.scheduler.save_result(fitness=_fitness)
-                _record_params.append(params)
-                _record_res.append(_res)
-                _record_fitness.append(_fitness)
+                    self.scheduler.save_result(fitness=_fitness, stop_simulator=stop_simulator)
+                    _record_params.append(params)
+                    _record_res.append(_res)
+                    _record_fitness.append(_fitness)
+            finally:
+                # In the reuse path, save_result keeps the simulator alive throughout, so it must be
+                # stopped explicitly after fine-tuning to make room for the next candidate's full run.
+                if reuse:
+                    del_log = self.scheduler.del_log if self.scheduler.del_log is not None else False
+                    self.scheduler.stop_target_server(del_log)
         return _record_fitness, _record_params, _record_res
 
     def get_max_generate_speed_index(self, performance_index_list, slo_index):
@@ -476,6 +505,38 @@ class PSOOptimizer(PerformanceTuner):
         self.scheduler.stop_target_server(del_log)
         raise err
 
+    @staticmethod
+    def _field_names(data_field) -> set[str]:
+        return {field.name for field in data_field if hasattr(field, "name")}
+
+    @staticmethod
+    def _select_fields_by_name(target_field, names: set[str]):
+        return tuple(field for field in target_field if field.name in names)
+
+    def _restore_search_data_field(self, target_field, simulator_names: set[str], benchmark_names: set[str]) -> None:
+        if hasattr(self.scheduler.simulator, "data_field"):
+            self.scheduler.simulator.data_field = self._select_fields_by_name(target_field, simulator_names)
+        if hasattr(self.scheduler.benchmark, "data_field"):
+            self.scheduler.benchmark.data_field = self._select_fields_by_name(target_field, benchmark_names)
+
+    def _run_baseline_preserving_search_space(self):
+        """Run baseline evaluation while preserving search-space data fields.
+
+        scheduler.run may overwrite simulator.data_field and benchmark.data_field
+        as a side effect. Snapshot the original field names before the run and
+        restore them in finally so the PSO search space defined by
+        self.target_field remains intact for subsequent iterations.
+        """
+        simulator_names = self._field_names(getattr(self.scheduler.simulator, "data_field", ()))
+        benchmark_names = self._field_names(getattr(self.scheduler.benchmark, "data_field", ()))
+        search_target_field = tuple(self.target_field)
+        baseline_target_field = tuple(deepcopy(self.target_field))
+        self.default_run_param = field_to_param(baseline_target_field)
+        try:
+            return self.scheduler.run(self.default_run_param, baseline_target_field)
+        finally:
+            self._restore_search_data_field(search_target_field, simulator_names, benchmark_names)
+
     def prepare_plugin(self):
         from ..config.config import get_settings
         from ..config.model_config import MindieModelConfig
@@ -483,6 +544,8 @@ class PSOOptimizer(PerformanceTuner):
         from ..optimizer.plugins.simulate import Simulator
 
         with logger.contextualize(stage=LogStage.BASELINE.value):
+            # The default-parameter baseline run is placed in the default phase, backup dir looks like back_up/default_1
+            self.scheduler.set_backup_phase("default", 1)
             if isinstance(self.scheduler.simulator, Simulator):
                 settings = get_settings()
                 mc = None
@@ -495,8 +558,7 @@ class PSOOptimizer(PerformanceTuner):
                         )
                     elif _field.config_position == "env":
                         _field.value = os.getenv(_field.name, _field.value)
-                self.default_run_param = field_to_param(self.target_field)
-                self.default_res = self.scheduler.run(self.default_run_param, self.target_field)
+                self.default_res = self._run_baseline_preserving_search_space()
                 self._raise_if_baseline_failed()
                 if self.default_res.generate_speed:
                     self.gen_speed_target = 10 * self.default_res.generate_speed
@@ -515,8 +577,7 @@ class PSOOptimizer(PerformanceTuner):
                             else:
                                 _field.value = _field.max
             else:
-                self.default_run_param = field_to_param(self.target_field)
-                self.default_res = self.scheduler.run(self.default_run_param, self.target_field)
+                self.default_res = self._run_baseline_preserving_search_space()
                 self._raise_if_baseline_failed()
                 self.default_fitness = self.minimum_algorithm(self.default_res)
                 self.scheduler.save_result(fitness=self.default_fitness)
@@ -561,14 +622,7 @@ class PSOOptimizer(PerformanceTuner):
                 **self.pso_init_kwargs,
             )
             with enable_simulate(self.scheduler):
-                try:
-                    cost, joint_vars = optimizer.optimize(self.op_func, iters=self.iters)
-                except ValueError as e:
-                    if "operands could not be broadcast together with shape" in str(e):
-                        logger.warning(f"The first round of operation may have failed; please try again. error: {e}")
-                        cost, joint_vars = optimizer.optimize(self.op_func, iters=self.iters)
-                    else:
-                        raise e
+                cost, joint_vars = optimizer.optimize(self.op_func, iters=self.iters)
                 best_results = self.scheduler.data_storage.get_best_result()
         _record_fitness, _record_params, _record_res = self.refine_optimization_candidates(best_results)
         best_fitness, best_param, best_performance_index = self.best_params(
@@ -738,20 +792,38 @@ def _run_optimizer() -> None:
             register_settings(create_custom_settings)
             logger.info("Using custom config file: {}", custom_config_path)
         settings = get_settings()
+        from ..deploy_env import emit_runtime_hints, resolve_deploy_context, validate_deploy_stack
+
+        runtime_ctx, deploy_env = resolve_deploy_context()
+        emit_runtime_hints(runtime_ctx, engine=args.engine)
+        validate_deploy_stack(
+            engine=args.engine,
+            benchmark=args.benchmark_policy,
+            env=deploy_env,
+            ctx=runtime_ctx,
+        )
         bak_path = None
         if args.backup:
-            bak_path = settings.output.joinpath("bak")
+            bak_path = settings.output.joinpath("back_up")
             if not bak_path.exists():
                 bak_path.mkdir(parents=True, mode=0o750)
         _simu = _bench = None
         _target_field = []
         if args.engine:
             validate_simulator_policy(args.engine)
-            _simu = simulates[args.engine](bak_path=bak_path)
+            _simu = simulates[args.engine](
+                bak_path=bak_path,
+                runtime_ctx=runtime_ctx,
+                deploy_env=deploy_env,
+            )
             _target_field.extend(_simu.data_field)
         if args.benchmark_policy:
             validate_benchmark_policy(args.benchmark_policy)
-            _bench = benchmarks[args.benchmark_policy](bak_path=bak_path)
+            _bench = benchmarks[args.benchmark_policy](
+                bak_path=bak_path,
+                runtime_ctx=runtime_ctx,
+                deploy_env=deploy_env,
+            )
             _target_field.extend(_bench.data_field)
         _target_field = tuple(_target_field)
         if not _simu:

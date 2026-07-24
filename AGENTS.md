@@ -42,7 +42,7 @@ msmodeling（MindStudio Modeling）是一个全系统性能仿真与分析框架
 | `device_config` | `/device_config` 或"我要导入新的设备拓扑" | 通过自然语言将硬件规格转换为 TensorCast `DeviceProfile` |
 | `op-mapping` | `/op_mapping` 或"生成 op_mapping.yaml" | 将 TensorCast 仿真算子映射到 NPU profiling 内核类型 |
 | `microbench` | `/microbench` 或"生成 xxx_run.py" | 从 profiling CSV 生成可在 NPU 上重放的 run script |
-| `msmodeling-env-installer` | "安装 msmodeling 环境"、"创建 myenv" | 安装并验证当前仓库开发环境、依赖和必要环境变量 |
+| `msmodeling-env-installer` | "安装 msmodeling 环境"、"uv sync" | 安装并验证当前仓库开发环境、依赖和必要环境变量 |
 | `model-adaptation` | "接入新模型"、"生成 ModelProfile"、"处理 doctor report" | 从仿真命令和 raw profiling 出发，完成 TensorCast 新模型适配流程 |
 | `text-generate-executor` | "跑 text_generate"、"验证 best row"、"导出 trace" | 生成并执行 `python -m cli.inference.text_generate` 单点验证命令 |
 | `throughput-optimizer-executor` | "搜索最佳 TP/EP"、"硬件对比"、"PD 配比优化" | 生成并执行 `python -m cli.inference.throughput_optimizer` 吞吐规划命令 |
@@ -201,7 +201,13 @@ msmodeling/
 │   ├── throughput-optimizer-explainer/
 │   ├── optix-deploy/
 │   ├── optix-config/
-│   └── optix-param-recommend/
+│   ├── optix-param-recommend/
+│   └── sig-review/           # GitCode PR 检视（SIG 责任田路由 + AI 自动检视）
+├── .loop/                   # AI 自主开发框架（经验池 + prompt 模板）
+│   └── memory/lessons.md     # 跨会话经验教训库（团队共享，随代码版本管理）
+├── spec/                    # 项目正式规范（最高权威）
+│   ├── governance/           #   治理规则（source-of-truth-matrix.md 等）
+│   └── foundations/          #   基础规范（后续补齐）
 ├── tensor_cast/             # 核心仿真框架
 │   ├── device.py             # DeviceProfile 定义
 │   ├── device_profiles/     # 用户自定义 profiles
@@ -210,13 +216,15 @@ msmodeling/
 │   ├── performance_model/   # 性能模型
 │   └── compilation/         # 编译相关
 ├── serving_cast/            # 服务仿真
-├── tests/                   # 测试（UT + ST + skill_eval）
-│   ├── perf_database/       # Profiling 数据库
-│   └── skill_eval/         # Skill 评测框架
+├── tests/                   # 测试（UT + ST + benchmark）
+│   └── perf_database/       # Profiling 数据库
 ├── docs/                    # 文档
 │   ├── RFC/                 # 设计提案
+│   ├── design/              # 实现设计
 │   └── perf_database/      # 专项文档
 ├── cli/                     # CLI 入口
+├── optix/                   # 服务化自动寻优工具
+├── web_ui/                  # Web UI
 ├── pre-commit/              # pre-commit 配置
 └── tools/                   # 辅助工具
 ```
@@ -243,7 +251,7 @@ msmodeling/
 ### 文档
 
 - [ ] 新增/修改的功能反映在相关文档中
-- [ ] 如果是 Skill 相关改动，更新 `.agents/skills/README.md` 对应章节
+- [ ] 如果是 Skill 相关改动，更新 `.agents/README.md` 对应章节
 
 ### Skill 相关（若涉及）
 

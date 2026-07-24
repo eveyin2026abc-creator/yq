@@ -4,7 +4,7 @@
 
 > **使用提示**：如需在 Claude Code 中启用这些 skills，请将本目录 `.agents/skills` 完整复制到 `.claude/skills`。
 >
-> **AI agents 必读**：请先阅读项目根目录的 [AGENTS.md](../../AGENTS.md)，了解项目规范和 Skill 体系。
+> **AI agents 必读**：请先阅读项目根目录的 [AGENTS.md](../AGENTS.md)，了解项目规范和 Skill 体系。
 
 ## Table of Contents
 
@@ -21,16 +21,16 @@
 
 ## msmodeling-env-installer
 
-msmodeling 环境安装器——将“安装 msmodeling 环境依赖”“创建 myenv”“安装当前仓库 requirements.txt”“配置 PYTHONPATH / HF_ENDPOINT”等明确指向 msmodeling 的请求转换为可执行、可验证、可回溯的环境安装流程。用户只说“安装环境”或“安装依赖”时，需要先确认是否安装 msmodeling 当前仓库的环境依赖。
+msmodeling 环境安装器——将“安装 msmodeling 环境依赖”“`uv sync` 安装”“安装当前仓库 requirements.txt（legacy fallback）”“配置 PYTHONPATH / HF_ENDPOINT”等明确指向 msmodeling 的请求转换为可执行、可验证、可回溯的环境安装流程。用户只说“安装环境”或“安装依赖”时，需要先确认是否安装 msmodeling 当前仓库的环境依赖。
 
 ### What it does
 
 引导 AI agent 按 RFC 中定义的流程完成开发环境初始化：
 
-1. **仓库根目录校验**：确认当前目录包含 `README.md` 和 `requirements.txt`。
+1. **仓库根目录校验**：确认当前目录包含 `README.md` 和 `pyproject.toml`。
 2. **Python 与 uv 检查**：要求 Python `3.10+`，缺少 `uv` 时按镜像安装并解析真实可执行路径。
-3. **安装路径选择**：默认用 `uv` 新建 `myenv`；已有环境 fallback 前检查 `torch_npu`、`torch-npu` 和 `cudatoolkit`。
-4. **依赖安装与验证**：安装 `requirements.txt` 后执行 `uv pip check --python <venv-python>` 或 `python -m pip check`。
+3. **安装路径选择**：默认在仓库根目录执行 `uv sync`（自动创建 `.venv`、可编辑安装 msmodeling）；legacy fallback 使用 `requirements.txt` 前检查 `torch_npu`、`torch-npu` 和 `cudatoolkit`。
+4. **依赖安装与验证**：`uv sync` 后执行 `uv pip check` 与 `uv run msmodeling --help`。
 5. **环境变量配置**：按需设置当前会话 `PYTHONPATH` 和 `HF_ENDPOINT=https://hf-mirror.com`。
 
 ### File layout
@@ -60,10 +60,9 @@ bash ./.agents/skills/msmodeling-env-installer/scripts/install-current-project-d
 ### Key constraints
 
 - 不修改 `requirements.txt`、README 或项目源码。
-- 不默认覆盖已有 `myenv`，也不默认持久化系统级环境变量。
+- `uv sync` 会复用已有 `.venv` 并更新依赖，不默认持久化系统级环境变量。
 - 网络安装需要用户确认和工具权限授权。
 - `scripts/install-current-project-deps.ps1` 当前仅适用于 Windows PowerShell；Linux/macOS 使用 README 通用命令。
-
 
 ---
 
@@ -98,7 +97,6 @@ TensorCast 新模型接入流程 skill——从仿真命令和 MindStudio Insigh
 - `evidence.yaml` 从 `doctor_after_profile.json.evidence_draft` 导出后再人工审阅。
 - 不提交 raw profiling、本地 walkthrough、私人路径或临时材料。
 
-
 ---
 
 ## device_config
@@ -131,7 +129,6 @@ TensorCast 新模型接入流程 skill——从仿真命令和 MindStudio Insigh
 - 默认写入 `tensor_cast/device.py`，只有用户明确要求时才写入 `tensor_cast/device_profiles/`。
 
 - 所有默认值、估值和假设必须对用户可见，列入 `needs calibration`。
-
 
 ---
 
@@ -167,7 +164,6 @@ TensorCast 新模型接入流程 skill——从仿真命令和 MindStudio Insigh
 
 - `alternate_kernel_types` 必须在同一抽象层级，禁止用融合大 op 作为子 op 的备选。
 
-
 ---
 
 ## microbench
@@ -195,7 +191,6 @@ Microbench Run Script 生成器——从 profiling CSV 生成可在 NPU 上重�
 - repo 缺失时按 `SKILL.md` 中提供的 clone 命令获取。
 
 - 生成的 run script 由 `run_all_op.py` / `profile_and_update_db.py` 调用。
-
 
 ---
 
@@ -297,7 +292,6 @@ Microbench Run Script 生成器——从 profiling CSV 生成可在 NPU 上重�
 - `text_generate --dump-op-bound-results` 是 TensorCast 模拟 operator 归因，必须与真实 profiler/kernel 证据区分。
 - aggregation throughput 不是单次 forward TPS；解释和复验时必须拆成 Prefill 与 Decode 两条验证命令。
 
-
 ---
 
 ## sig-review
@@ -367,4 +361,3 @@ python3 .agents/skills/sig-review/scripts/review_api.py complete 123 --to lutean
 - `assign` 命令使用最长前缀匹配路由文件到 SIG，支持 chair==author 自动改指派 reviewer、跨 SIG 双签、根目录文件标记架构共审。
 - 检视意见自动添加 `【review】【类别】` 前缀，`--content` 只需提供正文。
 - 评论必须提交在 diff 中新增或修改的行上，不能提交在未修改的上下文行上。
-

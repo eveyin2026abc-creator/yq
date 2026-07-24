@@ -35,6 +35,14 @@ from optix.optimizer.health_check import (
 )
 from optix.optimizer.scheduler import Scheduler
 
+# health()-path simulator mock. Omitting check_success avoids Python <3.12
+# isinstance(..., SupportsCheckSuccess) becoming True via MagicMock.__getattr__.
+_HEALTH_SIMULATOR_SPEC = ("health", "process", "run", "backup", "bak_path", "command", "run_log", "get_last_log")
+
+
+def _make_health_simulator() -> MagicMock:
+    return MagicMock(spec=list(_HEALTH_SIMULATOR_SPEC))
+
 
 class TestScheduler(unittest.TestCase):
     def setUp(self):
@@ -58,14 +66,57 @@ class TestScheduler(unittest.TestCase):
         mock_get_train_sub_path.return_value = "sub_path"
         self.scheduler.set_back_up_path()
 
+    def test_backup_phase_defaults_to_none(self):
+        """Default state: no phase set, _get_phase_bak_path returns bak_path unchanged"""
+        self.assertIsNone(self.scheduler.backup_phase)
+        self.assertEqual(self.scheduler.backup_iter, 0)
+        self.assertIs(self.scheduler._get_phase_bak_path(), self.bak_path)
+
+    def test_set_backup_phase_updates_state(self):
+        """set_backup_phase records phase and iteration for later path building"""
+        self.scheduler.set_backup_phase("pso", 3)
+        self.assertEqual(self.scheduler.backup_phase, "pso")
+        self.assertEqual(self.scheduler.backup_iter, 3)
+
+    def test_get_phase_bak_path_builds_phase_dir(self):
+        """_get_phase_bak_path creates a <phase>_<iter> subdir under bak_path"""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.scheduler.bak_path = Path(tmp)
+            self.scheduler.set_backup_phase("refine", 2)
+            phase_dir = self.scheduler._get_phase_bak_path()
+            self.assertEqual(phase_dir, Path(tmp) / "refine_002")
+            self.assertTrue(phase_dir.is_dir())
+
+    @patch("optix.optimizer.scheduler.get_train_sub_path")
+    @patch("optix.optimizer.scheduler.get_folder_size")
+    def test_set_back_up_path_uses_phase_dir(self, mock_get_folder_size, mock_get_train_sub_path):
+        """set_back_up_path routes through the phase dir when a phase is active"""
+        import tempfile
+        from pathlib import Path
+
+        mock_get_folder_size.return_value = FOLDER_LIMIT_SIZE - 1
+        mock_get_train_sub_path.side_effect = lambda p: p
+        with tempfile.TemporaryDirectory() as tmp:
+            self.scheduler.bak_path = Path(tmp)
+            self.scheduler.set_backup_phase("pso", 1)
+            self.scheduler.set_back_up_path()
+            mock_get_train_sub_path.assert_called_once_with(Path(tmp) / "pso_001")
+
     @patch("time.sleep", return_value=None)
     def test_wait_simulate_success(self, mock_sleep):
-        self.simulator.health = MagicMock(return_value=ProcessState(stage=Stage.running))
+        simulator = _make_health_simulator()
+        simulator.health = MagicMock(return_value=ProcessState(stage=Stage.running))
+        self.scheduler.simulator = simulator
         self.scheduler.wait_simulate()
 
     @patch("time.sleep", return_value=None)
     def test_wait_simulate_timeout(self, mock_sleep):
-        self.simulator.health = MagicMock(return_value=ProcessState(stage=Stage.error))
+        simulator = _make_health_simulator()
+        simulator.health = MagicMock(return_value=ProcessState(stage=Stage.error))
+        self.scheduler.simulator = simulator
         with self.assertRaises(Exception):
             self.scheduler.wait_simulate()
 
@@ -408,7 +459,7 @@ class TestWaitSimulateHealthBranches(unittest.TestCase):
     """Test wait_simulate with various health() stage returns"""
 
     def setUp(self):
-        self.simulator = MagicMock()
+        self.simulator = _make_health_simulator()
         self.benchmark = MagicMock()
         self.data_storage = MagicMock()
         self.scheduler = Scheduler(self.simulator, self.benchmark, self.data_storage)
@@ -444,9 +495,8 @@ class TestWaitSimulateHealthBranches(unittest.TestCase):
         """Test wait_simulate raises RuntimeError if no health/check_success method"""
         # start_time=0, iter1: elapsed+context
         mock_time.side_effect = [0, 1, 1]
-        # Remove both health and check_success
+        # Remove health; check_success is already absent via _make_health_simulator spec
         del self.simulator.health
-        del self.simulator.check_success
 
         with self.assertRaises(RuntimeError):
             self.scheduler.wait_simulate()
@@ -665,5 +715,63 @@ class TestSchedulerRunEvaluation(unittest.TestCase):
         result = self.scheduler.run(np.array([10.0]), self.params_field)
 
         self.assertIsNotNone(self.scheduler.last_outcome)
+        self.assertEqual(self.scheduler.last_outcome.status, RunStatus.FAILED)
+        self.assertIsInstance(result, PerformanceIndex)
+
+
+class TestSchedulerRerunBenchmarkOnly(unittest.TestCase):
+    """Tests for rerun_benchmark_only: reuse the running simulator, rerun only the benchmark."""
+
+    def setUp(self):
+        self.simulator = MagicMock()
+        self.benchmark = MagicMock()
+        self.benchmark.run_log = "/tmp/benchmark.log"
+        self.data_storage = MagicMock()
+        self.scheduler = Scheduler(
+            simulator=self.simulator,
+            benchmark=self.benchmark,
+            data_storage=self.data_storage,
+        )
+        # monitoring_status touches many collaborators; stub it out for these unit tests.
+        self.scheduler.monitoring_status = MagicMock()
+
+        self.params = np.array([64.0, 5.0])
+        self.params_field = (
+            OptimizerConfigField(name="CONCURRENCY", value=64.0, min=1, max=100, dtype="int"),
+            OptimizerConfigField(name="REQUESTRATE", value=5.0, min=5.0, max=5.0, dtype="float"),
+        )
+        self.performance_index = PerformanceIndex(throughput=100.0, generate_speed=100)
+        self.benchmark.get_performance_index.return_value = self.performance_index
+
+    @patch("time.time")
+    @patch("time.sleep")
+    def test_rerun_success_returns_performance_index(self, mock_sleep, mock_time):
+        """A successful rerun returns the performance index and records a SUCCESS outcome."""
+        from optix.optimizer.outcome import RunStatus
+
+        mock_time.return_value = 1000.0
+
+        result = self.scheduler.rerun_benchmark_only(self.params, self.params_field)
+
+        self.assertIsInstance(result, PerformanceIndex)
+        self.assertEqual(result.throughput, 100.0)
+        self.assertEqual(self.scheduler.last_outcome.status, RunStatus.SUCCESS)
+        self.assertIsNone(self.scheduler.error_info)
+        # The live simulator is never stopped; only the benchmark is restarted.
+        self.simulator.stop.assert_not_called()
+        self.benchmark.run.assert_called_once()
+
+    @patch("time.time")
+    @patch("time.sleep")
+    def test_rerun_handles_exception_records_failure(self, mock_sleep, mock_time):
+        """A runtime error records a FAILED outcome instead of raising."""
+        from optix.optimizer.outcome import RunStatus
+
+        mock_time.return_value = 1000.0
+        self.benchmark.run.side_effect = RuntimeError("benchmark crashed")
+
+        result = self.scheduler.rerun_benchmark_only(self.params, self.params_field)
+
+        self.assertIsNotNone(self.scheduler.error_info)
         self.assertEqual(self.scheduler.last_outcome.status, RunStatus.FAILED)
         self.assertIsInstance(result, PerformanceIndex)

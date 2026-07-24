@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from math import isinf, isnan
 from pathlib import Path
@@ -34,6 +34,7 @@ from ...config.base_config import (
     MODEL_EVAL_STATE_CONFIG_PATH,
     ms_serviceparam_optimizer_config_path,
 )
+from ...deploy_env import RuntimeContext, materialize_command, resolve_deploy_context
 from ...io_utils import open_file
 from ...logging import format_subprocess_start
 from ..utils import backup, close_file_fp, kill_children, kill_process, remove_file
@@ -46,6 +47,8 @@ FIELD_TO_CLI_FLAG = {
 # Fields whose values are non-positive (<=0) should be considered invalid and CLI params removed
 # Note: non-positive filtering is a semantic constraint for specific fields, not a universal behavior
 NON_POSITIVE_INVALID_FIELDS = frozenset(FIELD_TO_CLI_FLAG.keys())
+
+SENSITIVE_ENV_PATTERNS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 
 
 @contextmanager
@@ -69,6 +72,8 @@ class CustomProcess:
         work_path: Optional[Path] = None,
         print_log: bool = False,
         process_name: str = "",
+        runtime_ctx: Optional[RuntimeContext] = None,
+        deploy_env: Optional[Mapping[str, str]] = None,
     ):
         self.command = command
         self.bak_path = bak_path
@@ -79,7 +84,13 @@ class CustomProcess:
         self.process = None
         self.print_log = print_log
         self.process_name = process_name
-        self.env = os.environ.copy()
+        if (runtime_ctx is None) != (deploy_env is None):
+            raise ValueError("runtime_ctx and deploy_env must be provided together")
+        if runtime_ctx is None:
+            self._runtime_ctx, self.env = resolve_deploy_context()
+        else:
+            self._runtime_ctx = runtime_ctx
+            self.env = dict(deploy_env)
         from ...config.constant import ProcessState, Stage
 
         self._process_stage = ProcessState(stage=Stage.stop)
@@ -249,6 +260,17 @@ class CustomProcess:
         from ...config.config import get_settings
 
         if not run_params:
+            if CUSTOM_OUTPUT not in self.env:
+                self.env[CUSTOM_OUTPUT] = str(get_settings().output)
+            if MODEL_EVAL_STATE_CONFIG_PATH not in self.env:
+                self.env[MODEL_EVAL_STATE_CONFIG_PATH] = str(ms_serviceparam_optimizer_config_path)
+            if self.command:
+                self.command = materialize_command(
+                    self.command,
+                    self.env,
+                    self._runtime_ctx,
+                    cwd=getattr(self, "work_path", None),
+                )
             return
         for k in run_params:
             if k.config_position == "env":
@@ -320,6 +342,14 @@ class CustomProcess:
         if MODEL_EVAL_STATE_CONFIG_PATH not in self.env:
             self.env[MODEL_EVAL_STATE_CONFIG_PATH] = str(ms_serviceparam_optimizer_config_path)
 
+        if self.command:
+            self.command = materialize_command(
+                self.command,
+                self.env,
+                self._runtime_ctx,
+                cwd=getattr(self, "work_path", None),
+            )
+
     def _flush_run_log(self) -> None:
         if self.run_log_fp is None:
             return
@@ -387,6 +417,15 @@ class CustomProcess:
         logger.info(format_subprocess_start(self.command, self.run_log, pid=self.process.pid))
         logger.debug("subprocess started pid={}", self.process.pid)
 
+        try:
+            if self.bak_path:
+                save_dir = os.path.join(self.bak_path, "Reproduce")
+                os.makedirs(save_dir, exist_ok=True, mode=0o750)
+                script_name = f"{self._get_caller_type()}.py"
+                self.save_as_python_reproducer(os.path.join(save_dir, script_name))
+        except Exception as e:
+            logger.error(f"Failed to save reproducer. error {e}")
+
     def get_log(self):
         output = None
         if not self.run_log:
@@ -403,6 +442,81 @@ class CustomProcess:
             except (UnicodeError, OSError) as e:
                 logger.debug("failed reading subprocess log path={} error={}", run_log_path, e)
         return output
+
+    def _get_caller_type(self) -> str:
+        for cls in type(self).__mro__:
+            if cls.__name__ == "SimulatorInterface":
+                return "simulator"
+            if cls.__name__ == "BenchmarkInterface":
+                return "benchmark"
+        return "custom_process"
+
+    def save_as_python_reproducer(self, script_path):
+        """Save command and environment as a reproducible Python script, with pretty-printed env and pre-execution logging."""
+
+        # Format env as a multi-line dict literal
+        def format_env(env_dict):
+            if not env_dict:
+                return "{}"
+            lines = ["{"]
+            for k, v in sorted(env_dict.items()):
+                if any(p in k.upper() for p in SENSITIVE_ENV_PATTERNS):
+                    lines.append(f"    {repr(k)}: '***REDACTED***',")
+                else:
+                    lines.append(f"    {repr(k)}: {repr(v)},")
+            lines.append("}")
+            return "\n".join(lines)
+
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write('#!/usr/bin/env python3\n')
+            f.write('# ---------------------------------------------------------------------------\n')
+            f.write('# DISCLAIMER: This script is auto-generated to help reproduce a subprocess\n')
+            f.write('# call for debugging purposes. It is provided "as is", without warranty of\n')
+            f.write('# any kind. The captured command, environment, and working directory may no\n')
+            f.write('# longer be valid, and the script may not run in your current environment.\n')
+            f.write('# Review it before running, and run it at your own risk.\n')
+            f.write('# ---------------------------------------------------------------------------\n')
+            f.write('import subprocess\n')
+            f.write('import sys\n')
+            f.write('import pprint\n\n')
+
+            f.write('# Original command\n')
+            f.write(f'command = {repr(self.command)}\n\n')
+
+            f.write('# Environment variables (pretty printed)\n')
+            f.write(f'env = {format_env(self.env)}\n\n')
+
+            f.write('# Working directory\n')
+            work_path_literal = repr(os.fspath(self.work_path) if self.work_path is not None else None)
+            f.write(f'work_path = {work_path_literal}\n\n')
+
+            f.write('if __name__ == "__main__":\n')
+            f.write('    print("=" * 60)\n')
+            f.write('    print("Reproducing subprocess.Popen call")\n')
+            f.write('    print("=" * 60)\n\n')
+
+            f.write('    print(f"Working directory: {work_path}")\n')
+            f.write('    print(f"Command: {command}")\n\n')
+
+            f.write('    print("Environment variables:")\n')
+            f.write('    pprint.pprint(env, indent=2, width=100)\n')
+            f.write('    print("=" * 60)\n\n')
+
+            f.write('    # Optional: ask for confirmation before running\n')
+            f.write('    # reply = input("Proceed? (y/n): ").strip().lower()\n')
+            f.write('    # if reply != "y":\n')
+            f.write('    #     sys.exit(0)\n\n')
+
+            f.write('    process = subprocess.Popen(\n')
+            f.write('        command,\n')
+            f.write('        env=env,\n')
+            f.write('        cwd=work_path\n')
+            f.write('    )\n')
+            f.write('    print(f"Process started, PID: {process.pid}")\n')
+            f.write('    return_code = process.wait()\n')
+            f.write('    print(f"Process exited with return code: {return_code}")\n')
+
+        os.chmod(script_path, 0o755)
 
     def health(self):
         from ...config.constant import ProcessState, Stage

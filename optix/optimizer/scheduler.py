@@ -76,6 +76,10 @@ class Scheduler:
         self.retry_number = retry_number
         self.wait_time = wait_start_time or get_settings().wait_start_time
         self.current_back_path = None
+        # Backup phase marker: "pso" / "refine" / "default"; None means no optimization phase (falls back to the old plain-number dirs)
+        self.backup_phase = None
+        # Iteration index of the current phase; together with backup_phase forms a top-level dir under back_up, e.g. pso_001, refine_002
+        self.backup_iter = 0
         self.simulate_run_info = None
         self.performance_index = None
         self._error_info = None
@@ -131,13 +135,34 @@ class Scheduler:
             log_tail = get_last_log(10)
         return format_subprocess_failure(command, return_code, log_path, log_tail=log_tail)
 
+    def set_backup_phase(self, phase: Optional[str], iter_num: int):
+        """Set the current backup phase and iteration index, used to create pso_N / refine_N / default_N top-level dirs under back_up.
+
+        phase: "pso" / "refine" / "default"; None means no phase prefix (falls back to the old plain-number dirs).
+        iter_num: iteration index of the current phase (starting from 1).
+        """
+        self.backup_phase = phase
+        self.backup_iter = iter_num
+
+    def _get_phase_bak_path(self) -> Optional[Path]:
+        """Create/return the top-level phase dir under bak_path based on the current phase, e.g. back_up/pso_001.
+
+        Returns bak_path itself when no phase is set, preserving the original behavior.
+        """
+        if not self.backup_phase:
+            return self.bak_path
+        phase_dir = self.bak_path.joinpath(f"{self.backup_phase}_{self.backup_iter:03d}")
+        if not phase_dir.exists():
+            phase_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        return phase_dir
+
     def set_back_up_path(self):
         if self.bak_path:
             if get_folder_size(self.bak_path) > FOLDER_LIMIT_SIZE:
                 self.simulator.bak_path = None
                 self.benchmark.bak_path = None
             else:
-                self.current_back_path = get_train_sub_path(self.bak_path)
+                self.current_back_path = get_train_sub_path(self._get_phase_bak_path())
                 self.simulator.bak_path = self.current_back_path
                 self.benchmark.bak_path = self.current_back_path
 
@@ -284,7 +309,11 @@ class Scheduler:
         self.simulator.stop(del_log)
         self.benchmark.stop(del_log)
 
-    def save_result(self, **kwargs):
+    def save_result(self, stop_simulator: bool = True, **kwargs):
+        """Save the result of this run and clean up processes.
+        stop_simulator: when True, stop both simulator and benchmark (default behavior).
+        When False, stop only the benchmark and keep the simulator running
+        """
         duration = None
         if self.run_start_timestamp:
             duration = time.time() - self.run_start_timestamp
@@ -305,7 +334,11 @@ class Scheduler:
         if self.bak_path:
             self.backup()
         del_log = self.del_log if self.del_log is not None else False
-        self.stop_target_server(del_log)
+        if stop_simulator:
+            self.stop_target_server(del_log)
+        else:
+            # Stop only the benchmark, keep the simulator running
+            self.benchmark.stop(del_log=del_log)
 
     def update_data_field(self, params_field: tuple[OptimizerConfigField]):
         if isinstance(self.simulator, SupportsDataField):
@@ -414,3 +447,78 @@ class Scheduler:
         params: 1D array whose values correspond to mindie related configurations.
         """
         return self._run_evaluation(params, params_field, decode_context, with_request_rate=True)
+
+    def rerun_benchmark_only(
+        self,
+        params: np.ndarray,
+        params_field: tuple[OptimizerConfigField],
+        decode_context: Optional[DecodeContext] = None,
+        *,
+        with_request_rate: bool = False,
+    ) -> PerformanceIndex:
+        """
+        Reuse the currently running simulator and rerun only the benchmark.
+        """
+        with logger.contextualize(stage=LogStage.BENCH_RUN.value):
+            self.run_start_timestamp = time.time()
+            self.set_back_up_path()
+            self.simulate_run_info = map_param_with_value(params, params_field, decode_context)
+            logger.debug(
+                "rerun benchmark start (reuse running simulator) param info {}",
+                {v.name: v.value for v in self.simulate_run_info},
+            )
+            self._error_info = None
+            self.last_outcome = None
+            self.del_log = True
+            self.performance_index = PerformanceIndex()
+            try:
+                # Stop any lingering benchmark process, then re-run it against the live simulator.
+                self.benchmark.stop()
+                # Update only the benchmark-side data field and command; the simulator is untouched.
+                if isinstance(self.benchmark, SupportsDataField):
+                    self.benchmark.data_field = self.simulate_run_info
+                    self.benchmark.update_command()
+                if isinstance(self.benchmark, SupportsPrepare):
+                    self.benchmark.prepare()
+                self.benchmark.run(tuple(self.simulate_run_info))
+                time.sleep(1)
+                # monitoring_status runs health-check hooks on both the live simulator and benchmark.
+                self.monitoring_status()
+                time.sleep(1)
+                self.performance_index = self.benchmark.get_performance_index()
+                if with_request_rate:
+                    self._apply_request_rate_second_run(params_field)
+            except OptimizerError:
+                raise
+            except Exception as e:
+                logger.error(
+                    "Failed rerun benchmark. bak path: {}. error: {}, simulator log: {}, benchmark log: {}",
+                    self.simulator.bak_path,
+                    e,
+                    self.simulator.run_log,
+                    self.benchmark.run_log,
+                )
+                self._error_info = e
+                self.del_log = False
+                # The benchmark may have produced results before the server errored; try to fetch
+                # the performance index to avoid losing valid data.
+                try:
+                    self.performance_index = self.benchmark.get_performance_index()
+                    logger.info("Successfully retrieved performance index despite server error.")
+                except Exception as perf_err:
+                    logger.warning("Failed to get performance index after server error: {}", perf_err)
+            status = RunStatus.FAILED if self._error_info else RunStatus.SUCCESS
+            duration = time.time() - self.run_start_timestamp if self.run_start_timestamp else None
+            error_type = type(self._error_info).__name__ if self._error_info else "-"
+            logger.debug(
+                "rerun benchmark finished status={} duration={:.2f}s error_type={}",
+                status.value,
+                duration or 0.0,
+                error_type,
+            )
+            self.last_outcome = RunOutcome(
+                status=status,
+                performance_index=self.performance_index,
+                error_context=self._error_info,
+            )
+            return self.performance_index

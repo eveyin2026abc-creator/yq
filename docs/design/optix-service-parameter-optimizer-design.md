@@ -64,7 +64,7 @@ TOML 配置，按用户选择的推理引擎和 benchmark 工具生成待优化�
 输出：
 
 1. `result/store/data_storage_<timestamp>.csv` 形式的实验记录。
-2. 可选 `result/bak/` 下的服务配置、benchmark 输出和日志备份。
+2. 可选 `result/back_up/` 下的服务配置、benchmark 输出和日志备份。
 3. 日志中的最优参数、TTFT、TPOT、generate speed、success rate、throughput 等信息。
 
 ### 整体思路
@@ -72,6 +72,10 @@ TOML 配置，按用户选择的推理引擎和 benchmark 工具生成待优化�
 整体采用“配置模型 + 插件接口 + 调度器 + PSO 优化器”的分层设计。配置层使用 pydantic-settings 将 TOML 与环境变量合并
 为 `Settings` 对象；插件层将推理服务抽象为 `SimulatorInterface`，将 benchmark 工具抽象为 `BenchmarkInterface`；
 调度层统一执行服务启动、benchmark、健康检查、重试、停止和结果保存；优化层负责生成候选参数、计算 fitness、筛选最佳结果。
+
+部署环境层由 `optix/deploy_env.py` 提供。CLI 在创建 simulator 和 benchmark 前识别 msmodeling 虚拟环境，构建剥离
+venv 路径的部署子进程环境，并对内置 engine、benchmark 的实际可执行文件执行 fail-fast 校验。校验通过的
+`RuntimeContext` 与 `deploy_env` 会注入两个插件对象，保证启动前校验和子进程运行使用同一份环境。
 
 参数空间通过 `OptimizerConfigField` 描述，每个字段包含名称、配置位置、取值范围、数据类型、当前值和派生规则。PSO 只处理
 连续空间向量，`map_param_with_value()` 负责把连续向量转换成真实参数，并处理枚举选择、布尔转换、比例值、派生值和非法组合修复。
@@ -91,12 +95,19 @@ benchmark 运行完成后返回统一的 `PerformanceIndex`，由 `PerformanceTu
 该图表示 optix 的主要协作关系：CLI 负责装配对象，PSO 负责搜索，Scheduler 负责执行一次真实评测，Simulator 和 Benchmark
 负责对接外部服务与压测工具，DataStorage 负责记录实验过程。
 
+在图示主流程之前，CLI 还会经过部署环境准备阶段：`resolve_deploy_context()` 生成运行上下文和隔离环境，
+`validate_deploy_stack()` 校验部署命令，再把同一上下文传给 Simulator 与 Benchmark。详细设计见
+[RFC: OptiX 部署子进程环境隔离](../RFC/rfc_optix_deploy_environment_isolation_zh.md)。
+
 ### 核心流程
 
 ![plantuml-diagram (3).png](https://raw.gitcode.com/user-images/assets/8428112/81009f08-a6d1-4d99-a66e-997ce723c46c/plantuml-diagram__3_.png 'plantuml-diagram (3).png')
 
 该流程体现了一次完整寻优任务。baseline 用于确认默认服务可运行并提供初始指标，PSO 阶段负责全局搜索，fine tune 阶段对 top
 候选做局部改进，最终按 SLO 和吞吐策略选择结果。
+
+进入 baseline 前增加统一预检：解析 `OPTIX_DEPLOY_PATH` 或 `[deploy].path_prefix`，从子进程环境中剥离 msmodeling
+venv 路径，并校验 engine 与 benchmark 可执行文件。预检失败时直接退出，不创建 Scheduler，也不启动或清理部署进程。
 
 ### 参数映射与约束修复
 
@@ -180,6 +191,9 @@ benchmark 运行完成后返回统一的 `PerformanceIndex`，由 `PerformanceTu
 2. 新增 benchmark 需继承 `BenchmarkInterface`，实现 `update_command()` 和 `get_performance_index()`。
 3. 使用 `register_simulator(name, cls)` 或 `register_benchmarks(name, cls)` 注册，注册名会进入 CLI `--engine` 或
    `--benchmark_policy` 候选集合。
+4. 插件依赖 `PATH` 中的命令时，在实现类上声明 `required_executable`，由框架在构造插件前检查。
+5. 插件若自行创建部署子进程，应复用 `resolve_deploy_context()` 或 `build_deploy_env()`，并用
+   `materialize_command()` 解析显式命令路径；不得直接把 `os.environ` 传给部署子进程。
 
 ### 调度与健康检查
 
@@ -218,7 +232,8 @@ Scheduler 的职责是执行一次候选参数评测：
 | `cli/main.py` | CLI 顶层入口，转发 `msmodeling inference` / `msmodeling optix` |
 | `optix/config.toml` | 默认配置模板 |
 | `optix/config/config.py` | Settings、参数字段、性能指标、参数映射和派生字段规则 |
-| `optix/config/custom_command.py` | MindIE/vLLM/AISBench/vLLM benchmark 命令构造 |
+| `optix/config/custom_command.py` | vLLM/AISBench/vLLM benchmark 参数列表构造，不负责查找可执行文件 |
+| `optix/deploy_env.py` | 运行上下文识别、部署环境隔离、命令物化与启动前部署栈校验 |
 | `optix/optimizer/optimizer.py` | PSOOptimizer、fine tune 编排和主函数 |
 | `optix/optimizer/scheduler.py` | 服务、benchmark、健康检查、重试和保存调度 |
 | `optix/optimizer/store.py` | CSV 持久化、历史数据加载和最佳结果筛选 |
@@ -237,7 +252,7 @@ Scheduler 的职责是执行一次候选参数评测：
 | vLLM 输出 | `./result/vllm` | vLLM 服务和 benchmark 输出 |
 | MindIE 输出 | `./result/mindie` | MindIE 相关输出 |
 | AISBench 输出 | `./result/ais_bench` | AISBench 输出 |
-| 备份目录 | `./result/bak` | `--backup` 开启后创建 |
+| 备份目录 | `./result/back_up` | `--backup` 开启后创建 |
 
 ### 功能与性能影响
 
@@ -247,6 +262,7 @@ Scheduler 的职责是执行一次候选参数评测：
 2. 新增服务参数自动寻优能力，支持 MindIE/vLLM 与 AISBench/vLLM benchmark 组合。
 3. 新增插件注册机制，允许扩展服务引擎和 benchmark。
 4. 新增健康检查 hook，支持按日志规则区分 fatal/retryable 错误。
+5. 新增部署环境隔离与统一命令物化，避免 msmodeling 仿真依赖污染真机部署栈。
 
 性能影响：
 
@@ -260,19 +276,23 @@ Scheduler 的职责是执行一次候选参数评测：
 2. MindIE simulator 会在启动前备份原始配置，停止时恢复默认配置。
 3. `--backup` 可保存日志和配置，便于失败后排查。
 4. 数据存储使用 CSV，便于人工查看，但并发多进程写入不是当前设计目标。
+5. 部署栈在 baseline 前完成校验，且校验环境与实际子进程环境共用同一份解析结果。
 
 安全性影响：
 
 1. CLI 检测到 root 用户时输出安全告警，不建议以 root 运行。
 2. CSV 写入前通过 `sanitize_csv_value()` 规避公式注入风险。
 3. 进程启动依赖用户配置的命令和 `others` 字段，使用方需要保证配置来源可信。
+4. 显式部署命令路径会解析为真实绝对路径；命令落在 msmodeling venv 时拒绝启动。
 
 兼容性影响：
 
 1. 默认配置读取多个路径，兼容安装目录、用户目录、运行目录和环境变量指定配置。
 2. `--config` 追加自定义 TOML，并允许额外字段，便于灰度新增配置。
 3. 对 MindIE 默认安装路径和 `MIES_INSTALL_PATH` 均有兼容逻辑。
-4. vLLM 和 AISBench 依赖命令在 `PATH` 中可发现。
+4. 支持 virtualenv、PEP 405 venv 与非 base Conda；Conda base 不作为隔离根目录。
+5. vLLM 和 AISBench 从剥离 msmodeling venv 后的部署 `PATH` 解析；特殊目录可通过
+   `OPTIX_DEPLOY_PATH` 或 `[deploy].path_prefix` 指定。
 
 ## 使用说明
 
@@ -309,7 +329,7 @@ msmodeling optix \
 | `--engine` / `-e` | 可选 | `mindie` | 推理服务引擎，内置支持 `mindie`、`vllm`，也支持已注册自定义 simulator |
 | `--benchmark_policy` / `-b` | 可选 | `ais_bench` | benchmark 策略，内置支持 `ais_bench`、`vllm_benchmark`，也支持已注册自定义 benchmark |
 | `--config` / `-c` | 可选 | `None` | 自定义 TOML 配置路径，支持绝对路径、相对路径和当前目录文件名 |
-| `--backup` | 可选 | `False` | 是否将服务配置、benchmark 输出和日志备份到 `output/bak` |
+| `--backup` | 可选 | `False` | 是否将服务配置、benchmark 输出和日志备份到 `output/back_up` |
 | `--load_breakpoint` / `-lb` | 可选 | `False` | 是否从历史 CSV 加载真实评测结果并断点续跑 |
 
 ### 配置加载优先级
@@ -344,6 +364,16 @@ msmodeling optix \
 | `success_rate_penalty` | float | `5.0` | 成功率指数惩罚系数 |
 | `use_request_rate_calibration` | bool | `true` | false → scheduler.run 搜索 CONCURRENCY（REQUESTRATE 固定 max）；true → scheduler.run_with_request_rate 固定 CONCURRENCY=max |
 | `data_storage.pso_top_k` | int | `3` | PSO 后进入 fine tune 的 top 结果数量 |
+
+部署环境配置：
+
+```toml
+[deploy]
+# path_prefix = "/opt/deploy-stack"
+```
+
+`deploy.path_prefix` 表示部署根目录，OptiX 会把其 `bin/` 放到隔离后 `PATH` 的最前面。环境变量
+`OPTIX_DEPLOY_PATH` 优先级更高；两者均未设置时使用剥离 msmodeling venv 后的系统 `PATH`。
 
 ### target_field 配置
 
@@ -455,18 +485,21 @@ io_error = ["IO error"]
 1. 建议使用普通用户运行，不建议 root 运行。
 2. MindIE 场景需要可访问 MindIE 配置文件；默认路径为
    `/usr/local/Ascend/mindie/latest/mindie-service/conf/config.json`，也支持 `MIES_INSTALL_PATH`。
-3. vLLM 场景要求 `vllm` 命令在 `PATH` 中。
-4. AISBench 场景要求 `ais_bench` 命令在 `PATH` 中。
-5. 部分真实 benchmark 需要 NPU、模型文件和数据集文件，当前工具不负责准备这些资源。
-6. `others` 字段会被拆分并拼接到命令行，配置来源需要可信。
-7. CSV 历史数据用于断点续跑时，会按 benchmark 请求数和真实评测标记过滤。
+3. msmodeling 应安装在独立 venv；vLLM、MindIE 和 benchmark 工具保留在系统部署环境中。
+4. vLLM 场景要求 `vllm` 在隔离后的部署 `PATH` 中可发现。
+5. AISBench 场景要求 `ais_bench` 在隔离后的部署 `PATH` 中可发现。
+6. 部署命令不在系统 `PATH` 时，可设置 `OPTIX_DEPLOY_PATH` 或 `[deploy].path_prefix`；不要把部署包安装到 msmodeling venv。
+7. 部分真实 benchmark 需要 NPU、模型文件和数据集文件，当前工具不负责准备这些资源。
+8. `others` 字段会被拆分并拼接到命令行，配置来源需要可信。
+9. CSV 历史数据用于断点续跑时，会按 benchmark 请求数和真实评测标记过滤。
 
 兼容与迁移：
 
 1. 该功能位于 `optix`，对 `tensor_cast/`、`serving_cast/` 主流程无直接运行时影响。
 2. 旧用户可继续通过默认 `config.toml` 使用，新增字段通过 pydantic-settings 允许扩展。
-3. 回滚路径是停止 optix 进程并恢复原始服务配置；MindIE simulator 停止时会写回默认配置。
-4. 若启用 `--backup`，可从 `output/bak` 查看每轮变更前后的日志和配置。
+3. 默认不要求新增部署专用 venv；现有系统部署栈可继续使用。路径布局特殊时才需要配置部署根目录。
+4. 回滚路径是停止 optix 进程并恢复原始服务配置；MindIE simulator 停止时会写回默认配置。
+5. 若启用 `--backup`，可从 `output/back_up` 查看每轮变更前后的日志和配置。
 
 ## 测试设计
 
@@ -496,6 +529,9 @@ io_error = ["IO error"]
 | UT-prepare/run_plugin | 单元测试 | mock Scheduler 与插件 | 调用 `prepare_plugin`、`run_plugin` | baseline 失败、无可行解 exit、断点加载行为符合预期 |
 | UT-enable_simulate | 单元测试 | `simulate_flag=True` | 进入 `enable_simulation_model()` | 上下文管理器正确调用 |
 | UT-main CLI | 单元测试 | mock argv / settings | 执行 `main()` | config、backup、breakpoint、顶层异常路径 |
+| UT-部署环境隔离 | 单元测试 | 构造 venv/Conda 环境和路径变量 | 调用 `detect_runtime_context()`、`build_deploy_env()` | 正确识别隔离根并过滤 venv 路径，保留 Conda base 与部署变量 |
+| UT-命令物化 | 单元测试 | 构造系统、venv、绝对和相对命令路径 | 调用 `materialize_command()` | 系统命令解析为绝对路径，venv 内命令被拒绝 |
+| UT-部署上下文注入 | 单元测试 | mock 已解析 `runtime_ctx` 和 `deploy_env` | 创建 `CustomProcess` | 校验环境和运行环境复用同一上下文，不重复解析 |
 | Smoke-optix optimizer | 冒烟测试 | mock 全栈 | `main()` 最小路径 | <10s 完成且无未处理异常 |
 
 ### 集成测试
@@ -508,6 +544,8 @@ io_error = ["IO error"]
 | IT-断点续跑 | 集成测试 | 准备历史 `data_storage_*.csv` | 使用 `--load_breakpoint` 运行 | 历史 position/cost 被加载并用于 PSO 初始化 |
 | IT-健康检查重试 | 集成测试 | mock 日志出现 retryable pattern | 执行单轮 Scheduler | 触发重试且保存错误上下文 |
 | IT-健康检查 fatal | 集成测试 | mock 日志出现 fatal pattern | 执行单轮 Scheduler | 当前候选终止，不继续重试 |
+| IT-部署栈 fail-fast | 集成测试 | mock 隔离后 PATH 和内置 engine/benchmark | 执行 OptiX 启动流程 | 命令缺失或落在 venv 时在 baseline 前失败，成功时上下文注入两个插件 |
+| IT-部署路径覆盖 | 集成测试 | 命令仅存在于 `OPTIX_DEPLOY_PATH/bin` | 执行部署栈预检、策略校验和插件构造 | 三阶段使用同一部署环境并成功解析命令 |
 
 ### 端到端测试
 
@@ -527,8 +565,10 @@ io_error = ["IO error"]
 | 异常-配置文件不存在 | 异常测试 | 指定不存在 TOML | 执行 `--config missing.toml` | 输出错误并返回 |
 | 异常-TOML 格式错误 | 异常测试 | 准备非法 TOML | 执行 `--config invalid.toml` | 抛出配置校验错误 |
 | 异常-MindIE 配置不存在 | 异常测试 | `mindie.config_path` 不存在 | 创建 `Simulator` | 抛出 `FileNotFoundError` |
-| 异常-vLLM 命令缺失 | 异常测试 | PATH 中无 `vllm` | 创建 `VllmCommand` | 抛出命令缺失错误 |
-| 异常-AISBench 命令缺失 | 异常测试 | PATH 中无 `ais_bench` | 创建 `AisBenchCommand` | 抛出命令缺失错误 |
+| 异常-vLLM 命令缺失 | 异常测试 | 隔离后 PATH 中无 `vllm` | 调用 `validate_deploy_stack()` | baseline 前抛出 `OptixDeployEnvError` |
+| 异常-AISBench 命令缺失 | 异常测试 | 隔离后 PATH 中无 `ais_bench` | 调用 `validate_deploy_stack()` | baseline 前抛出 `OptixDeployEnvError` |
+| 异常-部署路径无效 | 异常测试 | `OPTIX_DEPLOY_PATH` 或 `[deploy].path_prefix` 指向无效目录 | 解析部署上下文 | 抛出 `OptixDeployEnvError` |
+| 异常-命令落在 msmodeling venv | 异常测试 | 部署命令解析到 venv 内 | 校验或物化命令 | 拒绝启动并输出 `[optix/env]` 修复建议 |
 | 边界-粒子数过大 | 边界测试 | `n_particles > 200` | 创建 PSOOptimizer | 自动截断为 200 |
 | 边界-迭代数过大 | 边界测试 | `iters > 200` | 创建 PSOOptimizer | 自动截断为 200 |
 | 边界-request rate 固定 | 边界测试 | `REQUESTRATE.min == max` | 调用 `run_with_request_rate()` | 跳过第二次 request rate 评测 |
@@ -542,6 +582,7 @@ io_error = ["IO error"]
 | 兼容-默认配置路径 | 兼容测试 | 多路径配置存在 | 初始化 Settings | 按 pydantic-settings 顺序合并配置 |
 | 兼容-MIES_INSTALL_PATH | 兼容测试 | 设置 `MIES_INSTALL_PATH` | 获取 MindIE 配置路径 | 使用 MindIE 新安装路径 |
 | 兼容-命令 JSON 参数 | 兼容测试 | `others` 包含 JSON 参数 | 调用 `CustomProcess.before_run()` | 合并参数被拆分为独立 CLI 参数 |
+| 兼容-venv 与 Conda | 兼容测试 | virtualenv、PEP 405、legacy virtualenv、Conda base/非 base | 构建部署环境 | 隔离根优先级和 Conda 变量处理符合 RFC |
 
 完成标准：
 
@@ -554,4 +595,5 @@ io_error = ["IO error"]
 
 | 日期 | 变更摘要 | 参考 |
 |------|----------|------|
+| 2026-07-21 | 增加部署子进程环境隔离、统一命令物化、部署路径配置与启动前 fail-fast | [RFC: OptiX 部署子进程环境隔离](../RFC/rfc_optix_deploy_environment_isolation_zh.md) |
 | 2026-07-03 | optix optimizer 可靠性、结构化日志、RunOutcome、测试与 CLI 退出语义增强 | [RFC: optix optimizer 重构](../RFC/rfc_optix_optimizer_refactor_zh.md) |

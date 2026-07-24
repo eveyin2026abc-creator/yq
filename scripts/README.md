@@ -37,7 +37,7 @@ Department-standard root entry. Thin wrapper over existing shell scripts. Requir
 | Mode | Sync | Delegates to |
 |------|------|--------------|
 | `python build.py` | `uv sync --frozen --group build` | `bash scripts/build.sh` → wheel under `artifacts/` |
-| `python build.py test` (no `MSMODELING_TEST_MAP_PATH`) | `uv sync --frozen --group ci` | `python -m pytest tests` → markers from `pyproject.toml` `[tool.pytest.ini_options] addopts`; log under `artifacts/test-reports/full_suite.log` |
+| `python build.py test` (no `MSMODELING_TEST_MAP_PATH`) | `uv sync --frozen --group ci` | `uv run pytest tests` → markers from `pyproject.toml` `[tool.pytest.ini_options] addopts`; log under `artifacts/test-reports/full_suite.log` |
 | `python build.py test` (with `MSMODELING_TEST_MAP_PATH` or `-e test_map_path=...`) | `uv sync --frozen --group ci` | `bash scripts/run_ci_gate.sh` → log under `artifacts/test-reports/ci_gate.log` |
 
 - **`build` group**: build-time helpers only (e.g. `tomli` on Python < 3.11). Does not pull CI/test packages.
@@ -82,7 +82,7 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
 - `exemptions.sources` symbols validated at load: must be `path::symbol` with symbol present in source AST; **coverage omit paths cannot be exempted**.
 - Duplicate function defs in changed product files: identical mangled symbol → last-wins for mapping; **non-blocking** GitCode PR comment when `GITCODE_*` set (reports mangled qualified name collisions).
 - Symbol mangling applies to **functions and methods** (`foo@deco`, `Foo::run@staticmethod`); class-level decorators gate via `Class::%`, not `Class@decorator`.
-- Modified definitions: three-branch coverage fallback — decorator diff → relaxed import on `%`/`Class::%` plus body proxy; def-header-only → body proxy; body diff → strict on changed lines (strict suppresses proxy). See [tests/README.md](../tests/README.md) § Coverage fallback.
+- Modified definitions: three-branch coverage fallback — decorator diff → relaxed import on `%`/`Class::%` plus body proxy; def-header-only → body proxy; body diff → strict on changed lines (strict suppresses proxy). Multi-line statement continuations (paren imports, list/dict/tuple, backslash, multi-line decorators) remap to Coverage statement-start lines before fallback query; `except` / `case` headers map to themselves (`ExceptHandler` / `match_case`). See [tests/README.md](../tests/README.md) § Coverage fallback.
 - Execution waves:
   - Changed-test wave: **no `-m`**, skip via `exemptions.tests`.
   - Mapped/guard wave: `-m "not npu and not nightly and not network"`.
