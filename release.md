@@ -30,7 +30,7 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 序号 | 特性名称 | 特性描述 | 关联 Issue/PR |
 | --- | --- | --- | --- |
 | 1 | Qwen3.5 Dense/MoE 文本输入支持 | 新增 Qwen3.5 Dense、Qwen3.5 MoE 模型的文本输入仿真支持，扩展 Qwen 系列模型覆盖范围。 | [!349](https://gitcode.com/Ascend/msmodeling/pull/349) |
-| 2 | GLM-4 MoE 模型支持 | 新增 GLM-4 MoE 模型仿真支持，补齐 GLM 系列 MoE 推理性能评估能力。 | [!349](https://gitcode.com/Ascend/msmodeling/pull/349) |
+| 2 | GLM-4 MoE 模型支持 | 新增 GLM-4 MoE 模型仿真支持，补齐 GLM 系列 MoE 推理性能评估能力。 | [!217](https://gitcode.com/Ascend/msmodeling/pull/217) |
 | 3 | GLM-5.2 IndexShare 适配 | 新增 GLM5 专用 IndexShare 辅助逻辑，支持全量层执行 indexer、共享层复用上一全量层 top-k indices，并扩展 MTP `indexer_types` 支持。 | [!535](https://gitcode.com/Ascend/msmodeling/merge_requests/535) |
 | 4 | GLM-5/GLM-5.2 MTP 兼容性增强 | 修复 repetition、MTP、torch.compile 同时开启时的模型兼容与进程池序列化问题，恢复 `throughput_optimizer` 并行搜索能力。 | [!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) |
 | 5 | throughput_optimizer 自适应 max-batched-tokens | `--max-batched-tokens` 支持自动模式，按 4 倍、2 倍、1 倍 input_length 顺序尝试 token budget，并在 Prefill OOM 时自动降级。 | [!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538) |
