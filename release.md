@@ -72,15 +72,3 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 1 | @jia_ya_nan | 新增 throughput_optimizer 自适应 max-batched-tokens，并修复 GLM-5/GLM-5.2 MTP 兼容性问题。 | !538、!563 |
 | 2 | @minghang_c | 完成 GLM-5.2 IndexShare 适配，并调整 transformers 版本要求。 | !535、!509 |
 | 3 | @liujiawang / @AvadaKedavrua | 重构 optix 优化器可靠性，并完善 build.py 构建测试入口。 | !518、!485、!546、!557 |
-| 4 | @eveyin1 | 集成 pre-commit Gitleaks 本地离线密钥扫描，并修复文档格式问题。 | !541、!559 |
-| 5 | @tt0cool | 修复文档失效链接。 | !558 |
-| 6 | @jhon-117 | 新增 sig-review AI 代码检视 skill。 | !553 |
-| 7 | @liu977803265 | 新增 EvalScope benchmark 插件。 | !515 |
-
-## 参考链接
-
-- 仓库首页（master）：<https://gitcode.com/Ascend/msmodeling>
-- develop 开发分支：<https://gitcode.com/Ascend/msmodeling/tree/develop>
-- Issues：<https://gitcode.com/Ascend/msmodeling/issues>
-- Releases：<https://gitcode.com/Ascend/msmodeling/releases>
-- 模型支持与特性支持矩阵：<https://gitcode.com/Ascend/msmodeling/blob/master/docs/zh/user_guide/support_matrix/support_matrix_user_guide.md>
