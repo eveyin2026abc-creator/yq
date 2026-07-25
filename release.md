@@ -37,17 +37,7 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 6 | EvalScope benchmark 插件 | 新增 EvalScope 作为服务化寻优 benchmark 补充选项，增强模型类型覆盖、评估功能与生态集成能力。 | [!515](https://gitcode.com/Ascend/msmodeling/merge_requests/515) |
 | 7 | optix 优化器可靠性增强 | 新增结构化 loguru 日志、领域异常体系、Benchmark 启动前 fail-fast 校验和安全清理守卫，提升服务化实测寻优稳定性。 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
 
-## 4. 变更说明
-
-| 序号 | 变更内容 | 变更影响 | 关联 Issue/PR |
-| --- | --- | --- | --- |
-| 1 | `throughput_optimizer` 的 `--max-batched-tokens` 默认值调整 | 不兼容变更：默认值由固定 `8192` 调整为 `None` 自动模式。依赖旧默认值的脚本建议显式传参以保持原行为。 | [!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538) |
-| 2 | transformers 最低版本要求提升 | 不兼容变更：最低版本由 `>=5.3.0` 调整为 `>=5.6.0`。低于 5.6.0 的环境需升级后才能稳定运行 GLM5 系列模型。 | [!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) |
-| 3 | `build.py test` 默认行为调整 | 未设置 `MSMODELING_TEST_MAP_PATH` 时，默认执行全量 `pytest tests`；设置后继续走 CI Gate 增量测试模式。依赖旧报错行为的 CI 脚本需同步适配。 | [!557](https://gitcode.com/Ascend/msmodeling/merge_requests/557) |
-| 4 | 构建入口与依赖自举流程调整 | 新增根目录 `build.py` 统一构建/测试入口，去除 import-time 阶段对 pydantic 的强依赖，并在缺少 uv 时进行非交互自举。 | [!485](https://gitcode.com/Ascend/msmodeling/merge_requests/485)、[!546](https://gitcode.com/Ascend/msmodeling/merge_requests/546) |
-| 5 | pre-commit 密钥扫描流程增强 | 新增 `gitleaks-offline-scan` 本地离线 hook，在提交前对暂存文件进行敏感信息扫描，降低密钥误提交风险。 | [!541](https://gitcode.com/Ascend/msmodeling/merge_requests/541) |
-
-## 5. 修复缺陷
+## 4. 修复缺陷
 
 | 序号 | 问题描述 | 影响范围 | 关联 Issue/PR |
 | --- | --- | --- | --- |
@@ -56,14 +46,7 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 3 | 修复文档失效链接、Markdown 格式问题和部分模型支持说明缺失问题，提升文档可读性与可维护性。 | 文档阅读与维护场景 | [!558](https://gitcode.com/Ascend/msmodeling/merge_requests/558)、[!559](https://gitcode.com/Ascend/msmodeling/merge_requests/559) |
 | 4 | 重构 optix 优化器可靠性，新增结构化日志、领域异常、Benchmark 启动前 fail-fast 校验和安全清理守卫。 | optix 服务化实测寻优场景 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
 
-## 6. 已知问题
-
-| 序号 | 问题描述 | 影响范围 | 规避方案 |
-| --- | --- | --- | --- |
-| 1 | Windows 环境下 PyTorch 2.10 可能运行异常。 | Windows 本地仿真场景 | 建议使用 PyTorch 2.8 及更早版本。 |
-| 2 | optix 实测寻优依赖真实硬件、推理引擎、CANN、驱动和固件的配套关系，仓库未单独声明固定组合版本。 | optix 服务化实测寻优场景 | 按 vLLM、MindIE 及昇腾软件栈官方配套表准备环境。 |
-
-## 7. 致谢
+## 5. 致谢
 
 感谢以下贡献者对本版本的贡献：
 
