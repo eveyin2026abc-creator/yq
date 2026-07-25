@@ -27,15 +27,22 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 
 ## 3. 新增特性
 
+本版本新增特性围绕 Q2 Roadmap 的模型适配效率、推理特性建模、算子建模底座、易用性与结果分析、精度治理与工程稳定性五条主线展开。
+
 | 序号 | 特性名称 | 特性描述 | 关联 Issue/PR |
 | --- | --- | --- | --- |
-| 1 | Qwen3.5 Dense/MoE 文本输入支持 | 新增 Qwen3.5 Dense、Qwen3.5 MoE 模型的文本输入仿真支持，扩展 Qwen 系列模型覆盖范围。 | [!349](https://gitcode.com/Ascend/msmodeling/pull/349) |
-| 2 | GLM-4 MoE 模型支持 | 新增 GLM-4 MoE 模型仿真支持，补齐 GLM 系列 MoE 推理性能评估能力。 | [!217](https://gitcode.com/Ascend/msmodeling/pull/217) |
-| 3 | GLM-5.2 IndexShare 适配 | 新增 GLM5 专用 IndexShare 辅助逻辑，支持全量层执行 indexer、共享层复用上一全量层 top-k indices，并扩展 MTP `indexer_types` 支持。 | [!535](https://gitcode.com/Ascend/msmodeling/merge_requests/535) |
-| 4 | GLM-5/GLM-5.2 MTP 兼容性增强 | 修复 repetition、MTP、torch.compile 同时开启时的模型兼容与进程池序列化问题，恢复 `throughput_optimizer` 并行搜索能力。 | [!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) |
-| 5 | throughput_optimizer 自适应 max-batched-tokens | `--max-batched-tokens` 支持自动模式，按 4 倍、2 倍、1 倍 input_length 顺序尝试 token budget，并在 Prefill OOM 时自动降级。 | [!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538) |
-| 6 | EvalScope benchmark 插件 | 新增 EvalScope 作为服务化寻优 benchmark 补充选项，增强模型类型覆盖、评估功能与生态集成能力。 | [!515](https://gitcode.com/Ascend/msmodeling/merge_requests/515) |
-| 7 | optix 优化器可靠性增强 | 新增结构化 loguru 日志、领域异常体系、Benchmark 启动前 fail-fast 校验和安全清理守卫，提升服务化实测寻优稳定性。 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
+| 1 | Qwen3.5 Dense/MoE 模型适配 | 新增 Qwen3.5 Dense、Qwen3.5 MoE 模型文本输入仿真支持，扩展 Qwen 系列重点模型覆盖范围，支撑 Q2 新模型适配目标。 | [!349](https://gitcode.com/Ascend/msmodeling/pull/349) |
+| 2 | GLM-4 MoE 模型适配 | 新增 GLM-4 MoE 模型仿真支持，补齐 GLM 系列 MoE 推理性能评估能力，提升重点模型接入效率。 | [!217](https://gitcode.com/Ascend/msmodeling/pull/217) |
+| 3 | GLM-5.2 IndexShare 推理特性适配 | 新增 GLM5 专用 IndexShare 辅助逻辑，支持全量层执行 indexer、共享层复用上一全量层 top-k indices，并扩展 MTP `indexer_types` 支持。 | [!535](https://gitcode.com/Ascend/msmodeling/merge_requests/535)、[!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) |
+| 4 | GLM-5/GLM-5.2 MTP 兼容性增强 | 增强 repetition、MTP、torch.compile 组合场景下的模型兼容性与进程池序列化能力，恢复 `throughput_optimizer` 并行搜索能力。 | [!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563)、[!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538) |
+| 5 | throughput_optimizer 结果分析与 token budget 自适应 | `--max-batched-tokens` 支持自动模式，按 4 倍、2 倍、1 倍 input_length 顺序尝试 token budget，并在 Prefill OOM 时自动降级，降低 case 构造与调参成本。 | [!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538)、[!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) |
+| 6 | EvalScope benchmark 插件 | 新增 EvalScope 作为服务化寻优 benchmark 补充选项，增强模型类型覆盖、评估功能与生态集成能力，支撑服务化部署寻优和结果验证。 | [!515](https://gitcode.com/Ascend/msmodeling/merge_requests/515) |
+| 7 | optix 优化器工程稳定性增强 | 新增结构化 loguru 日志、领域异常体系、Benchmark 启动前 fail-fast 校验和安全清理守卫，提升服务化实测寻优稳定性和故障可排查性。 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
+| 8 | 构建入口与依赖自举流程优化 | 新增根目录 `build.py` 统一构建/测试入口，去除 import-time 阶段对 pydantic 的强依赖，并在缺少 uv 时进行非交互自举，降低安装和测试门槛。 | [!485](https://gitcode.com/Ascend/msmodeling/merge_requests/485)、[!546](https://gitcode.com/Ascend/msmodeling/merge_requests/546) |
+| 9 | CI Gate 与测试入口稳定性增强 | `build.py test` 在未设置 `MSMODELING_TEST_MAP_PATH` 时默认执行全量 `pytest tests`，设置后继续走 CI Gate 增量测试模式，提升回归防护能力。 | [!557](https://gitcode.com/Ascend/msmodeling/merge_requests/557) |
+| 10 | pre-commit 密钥扫描流程增强 | 新增 `gitleaks-offline-scan` 本地离线 hook，在提交前对暂存文件进行敏感信息扫描，降低密钥误提交风险。 | [!541](https://gitcode.com/Ascend/msmodeling/merge_requests/541) |
+| 11 | 文档体系与模型支持说明完善 | 修复文档失效链接、Markdown 格式问题和部分模型支持说明缺失问题，提升安装、运行、结果解读等高频使用场景的文档可用性。 | [!558](https://gitcode.com/Ascend/msmodeling/merge_requests/558)、[!559](https://gitcode.com/Ascend/msmodeling/merge_requests/559) |
+
 
 ## 4. 修复缺陷
 
