@@ -378,9 +378,7 @@ def _ps_options_entries() -> str:
 
 
 def _ps_value_options_entries() -> str:
-    return "\n".join(
-        f"    '{option}' = {_ps_array(values)}" for option, values in VALUE_OPTIONS.items()
-    )
+    return "\n".join(f"    '{option}' = {_ps_array(values)}" for option, values in VALUE_OPTIONS.items())
 
 
 def _ps_cli_target_switch() -> str:
