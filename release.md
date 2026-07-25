@@ -52,13 +52,3 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 | 2 | 修复 GLM5 DSA 契约不匹配导致的运行时错误，通过提升 transformers 最低版本要求避免低版本返回值不兼容。 | GLM5 系列模型仿真场景 | [!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) |
 | 3 | 修复文档失效链接、Markdown 格式问题和部分模型支持说明缺失问题，提升文档可读性与可维护性。 | 文档阅读与维护场景 | [!558](https://gitcode.com/Ascend/msmodeling/merge_requests/558)、[!559](https://gitcode.com/Ascend/msmodeling/merge_requests/559) |
 | 4 | 重构 optix 优化器可靠性，新增结构化日志、领域异常、Benchmark 启动前 fail-fast 校验和安全清理守卫。 | optix 服务化实测寻优场景 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
-
-## 5. 致谢
-
-感谢以下贡献者对本版本的贡献：
-
-| 序号 | 贡献者 | 贡献内容 | 关联 PR |
-| --- | --- | --- | --- |
-| 1 | @jia_ya_nan | 新增 throughput_optimizer 自适应 max-batched-tokens，并修复 GLM-5/GLM-5.2 MTP 兼容性问题。 | [!538](https://gitcode.com/Ascend/msmodeling/merge_requests/538)、[!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) |
-| 2 | @minghang_c | 完成 GLM-5.2 IndexShare 适配，并调整 transformers 版本要求。 | [!535](https://gitcode.com/Ascend/msmodeling/merge_requests/535)、[!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) |
-| 3 | @liujiawang / @AvadaKedavrua | 重构 optix 优化器可靠性，并完善 build.py 构建测试入口。 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518)、[!485](https://gitcode.com/Ascend/msmodeling/merge_requests/485)、[!546](https://gitcode.com/Ascend/msmodeling/merge_requests/546)、[!557](https://gitcode.com/Ascend/msmodeling/merge_requests/557) |
