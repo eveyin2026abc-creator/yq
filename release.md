@@ -49,12 +49,12 @@ MindStudio Modeling 26.1.0 是面向昇腾 AI 处理器的神经网络推理性�
 
 ## 5. 修复缺陷
 
-| 序号 | Issue 链接 | 问题描述 | 影响范围 |
+| 序号 | 问题描述 | 影响范围 | 关联 Issue/PR |
 | --- | --- | --- | --- |
-| 1 | [!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) | 修复 GLM-5/GLM-5.2 在同时启用 repetition、MTP、torch.compile 时的模型兼容与进程池序列化问题，恢复并行搜索能力。 | GLM-5/GLM-5.2 服务化寻优场景 |
-| 2 | [!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) | 修复 GLM5 DSA 契约不匹配导致的运行时错误，通过提升 transformers 最低版本要求避免低版本返回值不兼容。 | GLM5 系列模型仿真场景 |
-| 3 | [!558](https://gitcode.com/Ascend/msmodeling/merge_requests/558)、[!559](https://gitcode.com/Ascend/msmodeling/merge_requests/559) | 修复文档失效链接、Markdown 格式问题和部分模型支持说明缺失问题，提升文档可读性与可维护性。 | 文档阅读与维护场景 |
-| 4 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) | 重构 optix 优化器可靠性，新增结构化日志、领域异常、Benchmark 启动前 fail-fast 校验和安全清理守卫。 | optix 服务化实测寻优场景 |
+| 1 | 修复 GLM-5/GLM-5.2 在同时启用 repetition、MTP、torch.compile 时的模型兼容与进程池序列化问题，恢复并行搜索能力。 | GLM-5/GLM-5.2 服务化寻优场景 | [!563](https://gitcode.com/Ascend/msmodeling/merge_requests/563) |
+| 2 | 修复 GLM5 DSA 契约不匹配导致的运行时错误，通过提升 transformers 最低版本要求避免低版本返回值不兼容。 | GLM5 系列模型仿真场景 | [!509](https://gitcode.com/Ascend/msmodeling/merge_requests/509) |
+| 3 | 修复文档失效链接、Markdown 格式问题和部分模型支持说明缺失问题，提升文档可读性与可维护性。 | 文档阅读与维护场景 | [!558](https://gitcode.com/Ascend/msmodeling/merge_requests/558)、[!559](https://gitcode.com/Ascend/msmodeling/merge_requests/559) |
+| 4 | 重构 optix 优化器可靠性，新增结构化日志、领域异常、Benchmark 启动前 fail-fast 校验和安全清理守卫。 | optix 服务化实测寻优场景 | [!518](https://gitcode.com/Ascend/msmodeling/merge_requests/518) |
 
 ## 6. 已知问题
 
