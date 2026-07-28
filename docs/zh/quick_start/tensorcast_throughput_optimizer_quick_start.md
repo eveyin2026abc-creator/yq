@@ -55,14 +55,84 @@ python -m cli.inference.throughput_optimizer --help
 
 若上述命令无法正常输出帮助信息，请优先检查虚拟环境是否已激活、依赖是否安装完成，以及 `PYTHONPATH` 是否指向 msModeling 仓库根目录。
 
-### 2.2 模型推理性能仿真
+### 2.2【可选】启用 Tab 补全
+
+在 Linux Bash 环境中，可启用静态 Tab 补全，补全 `python`、`python3` 和 `msmodeling` 命令下的常用 msModeling 模块名、长选项以及部分枚举参数值。补全时只执行 shell 字符串匹配，不会启动 Python 或加载模型依赖。
+
+如果已通过 `pip install -e .`、`pip install .` 或 `uv sync` 安装当前项目，可执行：
+
+```bash
+msmodeling -tab
+```
+
+`msmodeling -tab` 是 `msmodeling --enable-tab-completion` 的短别名。该命令会生成静态补全脚本到 `$HOME/.local/share/msmodeling/completion.bash`，并在 `~/.bashrc` 中加入由 msModeling 管理的加载块。完成后重新进入 Bash，当前终端和新终端都可以使用补全。
+
+也可以使用完整命令启用：
+
+```bash
+msmodeling --enable-tab-completion
+```
+
+如果不想安装 `msmodeling` entry point，也可以在仓库根目录通过 `PYTHONPATH` 使用模块入口启用：
+
+```bash
+cd /path/to/msmodeling
+export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
+python -m cli.main -tab
+```
+
+新增命令说明如下：
+
+| 命令或参数 | 作用 | 说明 |
+| --- | --- | --- |
+| `msmodeling -tab` | 启用静态 Tab 补全 | 推荐使用的短命令，等价于 `msmodeling --enable-tab-completion`。 |
+| `msmodeling --enable-tab-completion` | 启用静态 Tab 补全 | 生成补全脚本并写入 `~/.bashrc` 中由 msModeling 管理的加载块。 |
+| `python -m cli.main -tab` | 免安装 entry point 启用补全 | 适用于未安装 `msmodeling` 命令、但已通过 `PYTHONPATH` 指向仓库源码的场景。 |
+| `msmodeling --disable-tab-completion` | 禁用 Tab 补全 | 只移除 `~/.bashrc` 中由 msModeling 管理的加载块，不影响其他 shell 配置。 |
+| `--delete-completion-file` | 删除静态补全脚本 | 需要与 `--disable-tab-completion` 一起使用，同时删除 `$HOME/.local/share/msmodeling/completion.bash`。 |
+
+启用后可通过以下方式验证模块名、长选项和参数值补全：
+
+```bash
+python -m cli.inference.te<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device AT<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_<Tab>
+msmodeling inference text-generate Qwen/Qwen3-32B --remote-source <Tab>
+```
+
+当前支持参数值补全的参数如下：
+
+| 参数 | 补全内容示例 | 说明 |
+| --- | --- | --- |
+| `--device` | `TEST_DEVICE`、`ATLAS_800_A2_376T_64G` | 目标硬件设备画像。 |
+| `--log-level` | `debug`、`info`、`warning`、`error`、`critical` | 日志级别。 |
+| `--remote-source` | `huggingface`、`modelscope` | 远端模型配置来源。 |
+| `--performance-model` | `analytic`、`profiling` | 性能模型来源。 |
+| `--quantize-linear-action` | `DISABLED`、`W8A8_STATIC`、`W8A8_DYNAMIC`、`FP8`、`MXFP4` | 线性层量化策略。 |
+| `--quantize-non-expert-linear-action` | `DISABLED`、`W8A8_STATIC`、`W8A8_DYNAMIC`、`FP8`、`MXFP4` | 非 expert 线性层量化策略。 |
+| `--quantize-attention-action` | `DISABLED`、`INT8`、`FP8` | Attention 量化策略。 |
+
+如需取消 Tab 补全，可执行：
+
+```bash
+msmodeling --disable-tab-completion
+```
+
+如需取消补全并同时删除静态补全脚本，可执行：
+
+```bash
+msmodeling --disable-tab-completion --delete-completion-file
+```
+
+### 2.3 模型推理性能仿真
 
 TensorCast（模型推理性能仿真）面向 PyTorch 程序进行性能建模。它不会在真实加速器上执行模型，而是拦截计算图，并基于目标设备画像估算算子耗时、显存占用和整体推理性能。
 
 > [!NOTE]知识点：模型推理性能仿真输出
 > TensorCast 默认输出算子级性能汇总、总执行时间、TPS/Device 与显存占用。若指定 `--chrome-trace`，还可以生成 Chrome Trace 文件用于可视化分析。
 
-#### 2.2.1 执行 LLM 文本生成仿真
+#### 2.3.1 执行 LLM 文本生成仿真
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B \
@@ -71,7 +141,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
     --device TEST_DEVICE
 ```
 
-#### 2.2.2 查看仿真结果
+#### 2.3.2 查看仿真结果
 
 命令执行成功后，终端会输出类似以下内容：
 
@@ -102,7 +172,7 @@ Total device memory: 64.000 GB
 - 输出 `Total time for analytic` 或 `[analytic] TPS/Device`。
 - 输出显存估算结果，例如 `Total device memory`。
 
-#### 2.2.3 生成 Chrome Trace（可选）
+#### 2.3.3 生成 Chrome Trace（可选）
 
 如需查看更细粒度的时间线，可增加 `--chrome-trace` 参数：
 
@@ -116,14 +186,14 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 
 生成后，可通过 `chrome://tracing` 或 MindStudio Insight 打开 trace 文件。
 
-### 2.3 服务化性能仿真
+### 2.4 服务化性能仿真
 
 Throughput Optimizer（服务化性能仿真）可在 TTFT、TPOT 等 SLO 约束下，自动搜索最优并行策略和 batch 配置，帮助评估给定模型在目标硬件上的最大服务吞吐。
 
 > [!NOTE]知识点：PD 混部
 > PD 混部表示 Prefill 与 Decode 运行在同一实例中，适合快速评估整体服务吞吐。若需要分别评估 Prefill 与 Decode，可继续阅读《[服务化性能仿真使用指南](../user_guide/msmodeling_throughput_optimizer_user_guide.md)》。
 
-#### 2.3.1 执行服务化性能仿真
+#### 2.4.1 执行服务化性能仿真
 
 以下命令用于快速体验 PD 混部场景。首次体验时不额外指定搜索维度，工具会使用默认 TP 搜索范围；如果运行耗时较长，可减少 `--num-devices` 或在进阶使用时显式指定 `--tp-sizes` 缩小搜索范围。
 
@@ -138,7 +208,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-#### 2.3.2 查看优化结果
+#### 2.4.2 查看优化结果
 
 命令执行成功后，终端会先打印输入配置和最优配置摘要，随后展示候选并行配置表。例如：
 
@@ -155,7 +225,7 @@ Overall Best Configuration:
 
 Top 4 PD Aggregated Configurations:
 | Top | Throughput (token/s) | TTFT (ms) | TPOT (ms) | concurrency | num_devices | parallel           | batch_size |
-|  1  | 2161.56              | 13848.08  | 49.98     | 128         | 8           | TP=4 \| PP=1 \| DP=2 | 64         |
+|  1  | 2161.56              | 13848.08  | 49.98     | 128         | 8           | TP=4 | PP=1 | DP=2 | 64         |
 ```
 
 重点关注以下字段：

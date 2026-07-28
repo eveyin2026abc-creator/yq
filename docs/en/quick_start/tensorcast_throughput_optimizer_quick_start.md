@@ -55,14 +55,84 @@ python -m cli.inference.throughput_optimizer --help
 
 If the commands do not print help information, check that the virtual environment is activated, dependencies are installed, and `PYTHONPATH` points to the msModeling repository root.
 
-### 2.2 Run TensorCast Text Generation
+### 2.2 Enable Tab Completion (Optional)
+
+On Linux Bash, you can enable static Tab completion for common msModeling module names, long options, and selected enum option values under `python`, `python3`, and `msmodeling`. Completion only performs shell string matching; it does not start Python or load model dependencies.
+
+If the current project has been installed with `pip install -e .`, `pip install .`, or `uv sync`, run:
+
+```bash
+msmodeling -tab
+```
+
+`msmodeling -tab` is a short alias for `msmodeling --enable-tab-completion`. This command writes the static completion script to `$HOME/.local/share/msmodeling/completion.bash` and adds a msModeling-managed source block to `~/.bashrc`. After Bash is reloaded, completion is available in both the current terminal and new terminals.
+
+You can also use the full command:
+
+```bash
+msmodeling --enable-tab-completion
+```
+
+If you do not want to install the `msmodeling` entry point, run the module entry from the repository root with `PYTHONPATH`:
+
+```bash
+cd /path/to/msmodeling
+export PYTHONPATH=/path/to/msmodeling:$PYTHONPATH
+python -m cli.main -tab
+```
+
+New command-line options:
+
+| Command or option | Purpose | Notes |
+| --- | --- | --- |
+| `msmodeling -tab` | Enable static Tab completion | Recommended short command. Equivalent to `msmodeling --enable-tab-completion`. |
+| `msmodeling --enable-tab-completion` | Enable static Tab completion | Generates the completion script and writes a msModeling-managed source block to `~/.bashrc`. |
+| `python -m cli.main -tab` | Enable completion without installing the entry point | Use this when `msmodeling` is not installed but `PYTHONPATH` points to the repository source. |
+| `msmodeling --disable-tab-completion` | Disable Tab completion | Removes only the msModeling-managed completion block from `~/.bashrc`; other shell settings are not changed. |
+| `--delete-completion-file` | Delete the static completion script | Use with `--disable-tab-completion` to also delete `$HOME/.local/share/msmodeling/completion.bash`. |
+
+After enabling completion, verify module name, long option, and option value completion with:
+
+```bash
+python -m cli.inference.te<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device AT<Tab>
+python -m cli.inference.text_generate Qwen/Qwen3-32B --quantize-linear-action W8A8_<Tab>
+msmodeling inference text-generate Qwen/Qwen3-32B --remote-source <Tab>
+```
+
+Value completion is currently supported for:
+
+| Option | Completion examples | Description |
+| --- | --- | --- |
+| `--device` | `TEST_DEVICE`, `ATLAS_800_A2_376T_64G` | Target hardware device profile. |
+| `--log-level` | `debug`, `info`, `warning`, `error`, `critical` | Log level. |
+| `--remote-source` | `huggingface`, `modelscope` | Remote model configuration source. |
+| `--performance-model` | `analytic`, `profiling` | Performance model source. |
+| `--quantize-linear-action` | `DISABLED`, `W8A8_STATIC`, `W8A8_DYNAMIC`, `FP8`, `MXFP4` | Linear layer quantization strategy. |
+| `--quantize-non-expert-linear-action` | `DISABLED`, `W8A8_STATIC`, `W8A8_DYNAMIC`, `FP8`, `MXFP4` | Non-expert linear layer quantization strategy. |
+| `--quantize-attention-action` | `DISABLED`, `INT8`, `FP8` | Attention quantization strategy. |
+
+To disable Tab completion, run:
+
+```bash
+msmodeling --disable-tab-completion
+```
+
+To disable completion and also delete the static completion script, run:
+
+```bash
+msmodeling --disable-tab-completion --delete-completion-file
+```
+
+### 2.3 Run TensorCast Text Generation
 
 TensorCast performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
 
 > [!NOTE]
 > TensorCast prints operator-level performance summaries, total execution time, TPS/Device, and memory usage by default. If `--chrome-trace` is specified, it can also generate a Chrome Trace file for timeline analysis.
 
-#### 2.2.1 Run LLM Text-Generation Simulation
+#### 2.3.1 Run LLM Text-Generation Simulation
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B \
@@ -71,7 +141,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
     --device TEST_DEVICE
 ```
 
-#### 2.2.2 Check Simulation Results
+#### 2.3.2 Check Simulation Results
 
 If the command succeeds, the terminal prints output similar to:
 
@@ -102,7 +172,7 @@ Success criteria:
 - The output includes `Total time for analytic` or `[analytic] TPS/Device`.
 - The output includes memory estimation, such as `Total device memory`.
 
-#### 2.2.3 Generate Chrome Trace (Optional)
+#### 2.3.3 Generate Chrome Trace (Optional)
 
 To inspect a more fine-grained timeline, add `--chrome-trace`:
 
@@ -116,14 +186,14 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 
 After generation, open the trace file with `chrome://tracing` or MindStudio Insight.
 
-### 2.3 Run Throughput Optimizer
+### 2.4 Run Throughput Optimizer
 
 The ServingCast throughput optimizer searches for the best parallel strategy and batch configuration under SLO constraints such as TTFT and TPOT. It helps estimate the maximum serving throughput of a target model on target hardware.
 
 > [!NOTE]
 > PD colocated means Prefill and Decode run in the same instance. It is suitable for quickly evaluating overall service throughput. To evaluate Prefill and Decode separately, see the [Throughput Optimizer Guide](../user_guide/msmodeling_throughput_optimizer_user_guide.md).
 
-#### 2.3.1 Run Service-Level Performance Simulation
+#### 2.4.1 Run Service-Level Performance Simulation
 
 The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tp-sizes` in advanced usage to narrow the search space.
 
@@ -138,7 +208,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --tpot-limits 50
 ```
 
-#### 2.3.2 Check Optimization Results
+#### 2.4.2 Check Optimization Results
 
 If the command succeeds, the terminal first prints the input configuration and best configuration summary, followed by a candidate parallel configuration table. For example:
 
