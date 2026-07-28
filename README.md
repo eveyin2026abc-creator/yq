@@ -1,5 +1,5 @@
 <h1 align="center">MindStudio Modeling</h1>
-
+https://cmc-szv.clouddragon.huawei.com/cmcversion/index/releaseView?deltaId=15003838548215040&isSelect=Inner
 <div align="center">
 <p><b><span style="font-size:24px;">昇腾 AI 模型性能建模与仿真工具</span></b></p>
 
