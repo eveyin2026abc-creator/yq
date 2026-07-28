@@ -133,20 +133,4 @@ def test_main_disables_tab_completion() -> None:
         result = run_cli_main(main, ["--disable-tab-completion"], prog="msmodeling")
 
     assert result.returncode == 0
-    disable_completion.assert_called_once_with(
-        delete_completion_file=False,
-    )
-
-
-def test_main_disables_tab_completion_and_deletes_static_file() -> None:
-    with patch("cli.completion.disable_tab_completion", return_value=0) as disable_completion:
-        result = run_cli_main(
-            main,
-            ["--disable-tab-completion", "--delete-completion-file"],
-            prog="msmodeling",
-        )
-
-    assert result.returncode == 0
-    disable_completion.assert_called_once_with(
-        delete_completion_file=True,
-    )
+    disable_completion.assert_called_once_with()

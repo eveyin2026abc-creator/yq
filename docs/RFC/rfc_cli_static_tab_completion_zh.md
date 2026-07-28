@@ -371,12 +371,6 @@ python -m cli.main -tab
 msmodeling --disable-tab-completion
 ```
 
-如需同时删除静态补全脚本：
-
-```bash
-msmodeling --disable-tab-completion --delete-completion-file
-```
-
 ### 示例补全
 
 ```bash

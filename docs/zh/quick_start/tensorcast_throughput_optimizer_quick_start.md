@@ -88,8 +88,7 @@ python -m cli.main -tab
 | `msmodeling -tab` | 启用静态 Tab 补全 | 推荐使用的短命令，等价于 `msmodeling --enable-tab-completion`。 |
 | `msmodeling --enable-tab-completion` | 启用静态 Tab 补全 | 生成补全脚本并写入 `~/.bashrc` 中由 msModeling 管理的加载块。 |
 | `python -m cli.main -tab` | 免安装 entry point 启用补全 | 适用于未安装 `msmodeling` 命令、但已通过 `PYTHONPATH` 指向仓库源码的场景。 |
-| `msmodeling --disable-tab-completion` | 禁用 Tab 补全 | 只移除 `~/.bashrc` 中由 msModeling 管理的加载块，不影响其他 shell 配置。 |
-| `--delete-completion-file` | 删除静态补全脚本 | 需要与 `--disable-tab-completion` 一起使用，同时删除 `$HOME/.local/share/msmodeling/completion.bash`。 |
+| `msmodeling --disable-tab-completion` | 禁用 Tab 补全 | 移除 `~/.bashrc` 中由 msModeling 管理的加载块，并删除由 `msmodeling -tab` 生成的 `$HOME/.local/share/msmodeling/completion.bash`。 |
 
 启用后可通过以下方式验证模块名、长选项和参数值补全：
 
@@ -117,12 +116,6 @@ msmodeling inference text-generate Qwen/Qwen3-32B --remote-source <Tab>
 
 ```bash
 msmodeling --disable-tab-completion
-```
-
-如需取消补全并同时删除静态补全脚本，可执行：
-
-```bash
-msmodeling --disable-tab-completion --delete-completion-file
 ```
 
 ### 2.3 模型推理性能仿真

@@ -71,17 +71,12 @@ def main() -> int:
     completion_group.add_argument(
         "--disable-tab-completion",
         action="store_true",
-        help="Remove the managed bash tab completion block",
+        help="Remove the managed bash tab completion block and static completion file",
     )
     parser.add_argument(
         "--reload-shell",
         action="store_true",
         help="Start a fresh bash shell after enabling tab completion",
-    )
-    parser.add_argument(
-        "--delete-completion-file",
-        action="store_true",
-        help="Delete the static completion file after disabling tab completion",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -106,9 +101,7 @@ def main() -> int:
     if args.disable_tab_completion:
         from cli.completion import disable_tab_completion
 
-        return disable_tab_completion(
-            delete_completion_file=args.delete_completion_file,
-        )
+        return disable_tab_completion()
 
     if args.command == "optix":
         from optix.optimizer.optimizer import main as optix_main
