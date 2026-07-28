@@ -382,8 +382,7 @@ def test_render_powershell_completion_registers_python_and_msmodeling() -> None:
     assert 'Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeling")' in script
     assert 'if ($commandName -eq "msmodeling")' in script
     assert (
-        '@("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", '
-        '"--reload-shell", "--help")'
+        '@("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", "--reload-shell", "--help")'
     ) in script
     assert '@("text-generate", "throughput-optimizer", "model-adapter", "video-generate", "--help")' in script
     assert '@("doctor", "verify", "export-evidence", "--help")' in script
