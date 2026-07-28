@@ -433,7 +433,9 @@ def test_build_parser_accepts_completion_subcommands() -> None:
 def test_completion_main_dispatches_install() -> None:
     with patch("cli.completion.install_completion_files", return_value=7) as install:
         result = run_cli_main(
-            completion_main, ["install", "--prefix", "/tmp/msmodeling", "--user"], prog="msmodeling-tab"
+            completion_main,
+            ["install", "--prefix", "/tmp/msmodeling", "--user"],
+            prog="python -m cli.completion",
         )
 
     assert result.returncode == 7
@@ -442,7 +444,11 @@ def test_completion_main_dispatches_install() -> None:
 
 def test_completion_main_dispatches_enable() -> None:
     with patch("cli.completion.enable_tab_completion", return_value=3) as enable:
-        result = run_cli_main(completion_main, ["--shell", "bash", "enable"], prog="msmodeling-tab")
+        result = run_cli_main(
+            completion_main,
+            ["--shell", "bash", "enable"],
+            prog="python -m cli.completion",
+        )
 
     assert result.returncode == 3
     enable.assert_called_once_with("bash")
@@ -450,7 +456,11 @@ def test_completion_main_dispatches_enable() -> None:
 
 def test_completion_main_defaults_to_print() -> None:
     with patch("cli.completion.print_completion", return_value=5) as printer:
-        result = run_cli_main(completion_main, ["--shell", "zsh"], prog="msmodeling-tab")
+        result = run_cli_main(
+            completion_main,
+            ["--shell", "zsh"],
+            prog="python -m cli.completion",
+        )
 
     assert result.returncode == 5
     printer.assert_called_once_with("zsh")

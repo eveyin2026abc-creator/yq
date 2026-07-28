@@ -48,8 +48,6 @@ dependencies = [
 
 [project.scripts]
 msmodeling = "cli.main:main"
-msmodeling-tab = "cli.completion:main"
-msmodeling-completion = "cli.completion:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tensor_cast", "serving_cast", "cli", "optix", "web_ui"]

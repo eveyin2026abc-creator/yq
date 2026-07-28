@@ -96,7 +96,7 @@ flowchart LR
 
 - `cli/completion.py`：静态补全脚本渲染、Bash rc 管理、补全文件安装。
 - `cli/main.py`：新增 `-tab` / `--enable-tab-completion` 入口参数。
-- `pyproject.toml`：保留 `msmodeling` 主入口，并新增 `msmodeling-tab`、`msmodeling-completion` 兼容命令。
+- `pyproject.toml`：保留 `msmodeling` 主入口。
 - `tests/regression/cli/test_completion.py`：验证补全脚本渲染、rc 块写入和幂等性。
 - `tests/regression/cli/test_main.py`：验证 `msmodeling` 主入口能正确分发启用逻辑。
 
@@ -184,7 +184,7 @@ fi
 兼容性：
 
 - 保留原有 `msmodeling = "cli.main:main"` 主入口。
-- 新增 `msmodeling-tab` 和 `msmodeling-completion` 兼容入口，用于打印或安装补全脚本。
+- 日常补全管理统一通过 `msmodeling -tab`、`msmodeling --enable-tab-completion` 和 `msmodeling --disable-tab-completion` 入口完成。
 - 日常业务命令形态不变，仍支持 `python -m cli.inference.text_generate ...`。
 
 可维护性：
@@ -332,7 +332,7 @@ CLI 参数新增或删除后，需要同步维护 `cli/completion.py` 中的 `OP
 
 缓解方式：
 
-- 保留 `msmodeling-tab print --shell zsh` 和 `msmodeling-tab print --shell powershell` 输出能力。
+- 保留 `python -m cli.completion print --shell zsh` 和 `python -m cli.completion print --shell powershell` 输出能力，供调试和手动集成使用。
 - 后续可单独扩展 Zsh/PowerShell profile 自动写入。
 
 ## 8. 后续优化

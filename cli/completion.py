@@ -837,7 +837,7 @@ def enable_tab_completion(
     resolved_shell = _resolve_shell(shell)
     if resolved_shell != "bash":
         print("Only bash startup-file enablement is currently supported.", file=sys.stderr)
-        print("For zsh use: . <(msmodeling-tab print --shell zsh)", file=sys.stderr)
+        print("For zsh use: . <(python -m cli.completion print --shell zsh)", file=sys.stderr)
         return 1
 
     completion_path = Path(completion_file) if completion_file is not None else BASH_COMPLETION_FILE
