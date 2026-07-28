@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -70,7 +71,7 @@ def test_render_bash_completion_registers_python_and_msmodeling() -> None:
     assert "--enable-tab-completion" in script
     assert "--disable-tab-completion" in script
     assert "--reload-shell" in script
-    assert "--delete-completion-file" in script
+    assert "--delete-completion-file" not in script
     assert "ATLAS_800_A2_376T_64G" in script
     assert "W8A8_STATIC" in script
 
@@ -102,6 +103,30 @@ def test_enable_tab_completion_shell_quotes_rc_completion_path(tmp_path: Path) -
     assert f"    . {quoted_path}" in contents
     assert f'if [ -r "{completion_file}" ]; then' not in contents
     assert f'    . "{completion_file}"' not in contents
+
+
+def test_enable_tab_completion_removes_others_read_write_from_existing_rc_file(tmp_path: Path) -> None:
+    rc_file = tmp_path / ".bashrc"
+    completion_file = tmp_path / "completion.bash"
+    rc_file.write_text("# existing\n", encoding="utf-8")
+    rc_file.chmod(0o666)
+
+    assert enable_tab_completion(shell="bash", rc_file=rc_file, completion_file=completion_file) == 0
+
+    mode = stat.S_IMODE(rc_file.stat().st_mode)
+    assert not mode & stat.S_IROTH
+    assert not mode & stat.S_IWOTH
+
+
+def test_enable_tab_completion_creates_rc_file_without_others_read_write(tmp_path: Path) -> None:
+    rc_file = tmp_path / ".bashrc"
+    completion_file = tmp_path / "completion.bash"
+
+    assert enable_tab_completion(shell="bash", rc_file=rc_file, completion_file=completion_file) == 0
+
+    mode = stat.S_IMODE(rc_file.stat().st_mode)
+    assert not mode & stat.S_IROTH
+    assert not mode & stat.S_IWOTH
 
 
 def test_enable_tab_completion_is_idempotent(tmp_path: Path) -> None:
@@ -146,7 +171,7 @@ def test_enable_tab_completion_preserves_tail_when_managed_block_end_is_missing(
     assert contents.count(BLOCK_END) == 1
 
 
-def test_disable_tab_completion_removes_managed_block(tmp_path: Path) -> None:
+def test_disable_tab_completion_removes_managed_block_and_static_file(tmp_path: Path) -> None:
     rc_file = tmp_path / ".bashrc"
     completion_file = tmp_path / "completion.bash"
 
@@ -156,7 +181,7 @@ def test_disable_tab_completion_removes_managed_block(tmp_path: Path) -> None:
     contents = rc_file.read_text(encoding="utf-8")
     assert BLOCK_BEGIN not in contents
     assert BLOCK_END not in contents
-    assert completion_file.exists()
+    assert not completion_file.exists()
 
 
 def test_disable_tab_completion_preserves_tail_when_managed_block_end_is_missing(tmp_path: Path) -> None:
@@ -184,7 +209,7 @@ def test_disable_tab_completion_preserves_tail_when_managed_block_end_is_missing
     assert BLOCK_BEGIN in contents
 
 
-def test_disable_tab_completion_can_delete_static_file(tmp_path: Path) -> None:
+def test_disable_tab_completion_can_keep_static_file_for_internal_callers(tmp_path: Path) -> None:
     rc_file = tmp_path / ".bashrc"
     completion_file = tmp_path / "completion.bash"
 
@@ -194,12 +219,12 @@ def test_disable_tab_completion_can_delete_static_file(tmp_path: Path) -> None:
             shell="bash",
             rc_file=rc_file,
             completion_file=completion_file,
-            delete_completion_file=True,
+            delete_completion_file=False,
         )
         == 0
     )
 
-    assert not completion_file.exists()
+    assert completion_file.exists()
 
 
 def test_bash_completion_supports_model_adapter_subcommands() -> None:
@@ -358,7 +383,7 @@ def test_render_powershell_completion_registers_python_and_msmodeling() -> None:
     assert 'if ($commandName -eq "msmodeling")' in script
     assert (
         '@("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", '
-        '"--reload-shell", "--delete-completion-file", "--help")'
+        '"--reload-shell", "--help")'
     ) in script
     assert '@("text-generate", "throughput-optimizer", "model-adapter", "video-generate", "--help")' in script
     assert '@("doctor", "verify", "export-evidence", "--help")' in script

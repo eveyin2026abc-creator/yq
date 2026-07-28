@@ -12,6 +12,7 @@ from pathlib import Path
 import shlex
 import shutil
 import site
+import stat
 import sys
 
 
@@ -47,7 +48,6 @@ TOP_LEVEL_OPTIONS = (
     "--enable-tab-completion",
     "--disable-tab-completion",
     "--reload-shell",
-    "--delete-completion-file",
     "--help",
 )
 
@@ -636,7 +636,7 @@ Register-ArgumentCompleter -Native -CommandName @("python", "python3", "msmodeli
         }}
 
         if ($words.Count -le 2) {{
-            @("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", "--reload-shell", "--delete-completion-file", "--help") |
+            @("inference", "optix", "--enable-tab-completion", "--disable-tab-completion", "--reload-shell", "--help") |
                 Where-Object {{ $_ -like "$wordToComplete*" }} |
                 ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, "ParameterValue", $_) }}
             return
@@ -761,6 +761,10 @@ def _bash_rc_file() -> Path:
     return Path.home() / ".bashrc"
 
 
+def _remove_others_read_write(path: Path) -> None:
+    path.chmod(path.stat().st_mode & ~(stat.S_IROTH | stat.S_IWOTH))
+
+
 def _managed_block(completion_path: Path) -> str:
     quoted_path = shlex.quote(str(completion_path))
     return f"{BLOCK_BEGIN}\nif [ -r {quoted_path} ]; then\n    . {quoted_path}\nfi\n{BLOCK_END}\n"
@@ -846,6 +850,7 @@ def enable_tab_completion(
     target_rc = Path(rc_file) if rc_file is not None else _bash_rc_file()
     original = target_rc.read_text(encoding="utf-8") if target_rc.exists() else ""
     target_rc.write_text(_replace_managed_block(original, _managed_block(completion_path)), encoding="utf-8")
+    _remove_others_read_write(target_rc)
 
     print(f"Enabled msmodeling tab completion in {target_rc}")
     print(f"Wrote static completion script to {completion_path}")
@@ -864,7 +869,7 @@ def disable_tab_completion(
     shell: str = "auto",
     rc_file: str | Path | None = None,
     completion_file: str | Path | None = None,
-    delete_completion_file: bool = False,
+    delete_completion_file: bool = True,
 ) -> int:
     resolved_shell = _resolve_shell(shell)
     if resolved_shell != "bash":
