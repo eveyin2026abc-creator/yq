@@ -73,7 +73,8 @@
 - 支持 LLM / VL 前向仿真与视频生成仿真的可视化配置。
 - 支持吞吐寻优实验（PD 混部 / 分离 / 配比）的命令预览与任务缓存。
 - 支持结果展示与导出（曲线、表格、显存/算子明细、Excel）。
-
+"绘制的点会与legend图例部分重叠，绘图部分的xaxis，yaxis的设置需要调整
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --compile --quantize-linear-action W8A8_DYNAMIC --quantize-attention-action DISABLED --tpot-limits 50 --ttft-limits 1300 "
 ## 五、说明与限制
 
 - 本 release note 中"模型支持新增"章节仅列出了在仓库 README 版本动态中标注时间落在 2026 Q1（2026-01-01 ~ 2026-03-31）区间内的条目；同期还有若干模型支持更新（如 Qwen3 MoE 等）落在 2025 Q4，未计入本版本范围。
