@@ -79,10 +79,51 @@ def _padded_axis_limits(values: list[float]) -> tuple[float, float] | None:
     return (max(0.0, padded_lower) if lower >= 0 else padded_lower, upper + padding)
 
 
-def _compact_scatter_legend(buf: str, labels: list[str]) -> str:
-    def _visible_len(text: str) -> int:
-        return len(_ANSI_RE.sub("", text))
+def _visible_text_len(text: str) -> int:
+    return len(_ANSI_RE.sub("", text))
 
+
+def _ansi_rgb(color: tuple[int, int, int]) -> str:
+    r, g, b = color
+    return f"\x1b[38;2;{r};{g};{b}m"
+
+
+def _format_external_legend(parallels: list[str]) -> str:
+    """Render a vertical legend for placement to the right of the canvas.
+
+    plotext hardcodes its in-canvas legend at the upper-left; there is no API to
+    relocate it. Drawing series without ``label`` keeps markers readable.
+    """
+    if not parallels:
+        return ""
+
+    entries = [
+        f"{_ansi_rgb(_PALETTE[idx % len(_PALETTE)])}{_TERMINAL_MARKER}\x1b[0m {_parallel_label(parallel)}"
+        for idx, parallel in enumerate(parallels)
+    ]
+    return "\n".join(["Legend:", *entries])
+
+
+def _append_external_legend(buf: str, parallels: list[str]) -> str:
+    """Append a legend outside the right edge of a plotext canvas."""
+    chart_lines = buf.splitlines()
+    legend_lines = _format_external_legend(parallels).splitlines()
+    if not chart_lines or not legend_lines:
+        return buf
+
+    chart_width = max(_visible_text_len(line) for line in chart_lines)
+    legend_start = 2 if len(chart_lines) > len(legend_lines) + 2 else 0
+    output = []
+    for row, chart_line in enumerate(chart_lines):
+        legend_row = row - legend_start
+        if 0 <= legend_row < len(legend_lines):
+            padding = " " * (chart_width - _visible_text_len(chart_line) + 3)
+            chart_line += padding + legend_lines[legend_row]
+        output.append(chart_line)
+    return "\n".join(output)
+
+
+def _compact_scatter_legend(buf: str, labels: list[str]) -> str:
     def _pad_right_border(line: str, width_delta: int) -> str:
         if width_delta <= 0:
             return line
@@ -103,7 +144,7 @@ def _compact_scatter_legend(buf: str, labels: list[str]) -> str:
                 f"{_TERMINAL_MARKER}{_TERMINAL_MARKER}\x1b[0m {label}",
                 f"{_TERMINAL_MARKER}\x1b[0m{label}",
             )
-        lines.append(_pad_right_border(line, _visible_len(original) - _visible_len(line)))
+        lines.append(_pad_right_border(line, _visible_text_len(original) - _visible_text_len(line)))
     return "\n".join(lines)
 
 
@@ -209,10 +250,11 @@ def _emit_terminal_optimizer_curve_ascii(
             jy = [y for _, y in jittered]
             jittered_x_all.extend(jx)
             jittered_y_all.extend(jy)
+            # Omit plotext ``label`` so it does not draw an in-canvas legend
+            # (hardcoded upper-left and can overlap data). Legend is added outside.
             plx.scatter(
                 jx,
                 jy,
-                label=_parallel_label(parallel),
                 color=_PALETTE[idx % len(_PALETTE)],
                 marker=_TERMINAL_MARKER,
             )
@@ -234,7 +276,7 @@ def _emit_terminal_optimizer_curve_ascii(
         finally:
             plx.clear_data()
         if buf:
-            buf = _compact_scatter_legend(buf, [_parallel_label(p) for p in parallels])
+            buf = _append_external_legend(buf, [p for _, p, _, _ in series])
             print("\n" + buf + "\n")
 
     try:

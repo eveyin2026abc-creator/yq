@@ -22,6 +22,8 @@ from serving_cast.service.optimizer_summary import (
     _get_pd_ratio_table_buf,
     _positive_float,
     _sorted_rows,
+    _with_agg_request_qps,
+    _with_disagg_request_qps,
     render_cross_device_comparison,
     render_cross_hardware_disagg_decode,
     render_cross_hardware_disagg_prefill,
@@ -70,6 +72,27 @@ class TestComputeDisaggRequestQps(TestCase):
     def test_returns_none_when_concurrency_invalid(self):
         row = pd.Series({"concurrency": 0.0, "ttft": 50.0, "tpot": None})
         self.assertIsNone(_compute_disagg_request_qps(row, 8))
+
+    def test_adds_qps_column_without_mutating_source(self):
+        source = pd.DataFrame(
+            [
+                {"concurrency": 10.0, "ttft": 50.0, "tpot": None},
+                {"concurrency": 8.0, "ttft": None, "tpot": 2.0},
+            ]
+        )
+        result = _with_disagg_request_qps(source, output_length=4)
+        self.assertNotIn("qps_req_s", source.columns)
+        self.assertAlmostEqual(result.loc[0, "qps_req_s"], 200.0)
+        self.assertAlmostEqual(result.loc[1, "qps_req_s"], 1000.0)
+
+    def test_adds_aggregated_qps_from_output_throughput(self):
+        source = pd.DataFrame({"token/s": [1024.0]})
+        result = _with_agg_request_qps(source, output_length=512)
+        self.assertNotIn("qps_req_s", source.columns)
+        self.assertAlmostEqual(result.loc[0, "qps_req_s"], 2.0)
+
+        missing_length = _with_agg_request_qps(source, output_length=None)
+        self.assertIsNone(missing_length.loc[0, "qps_req_s"])
 
 
 class TestDisaggPdRatioTableBuf(TestCase):
@@ -529,9 +552,11 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
                 _baseline_agg_row({"token/s": 5.5, "ttft": 20.0, "tpot": 1.1, "parallel": "py"}),
             ]
         )
-        buf = _get_agg_table_buf(df)
+        buf = _get_agg_table_buf(df, output_length=2)
         self.assertIn("Aggregated Configurations", buf)
         self.assertIn("777.77", buf)
+        self.assertIn("QPS (req/s)", buf)
+        self.assertIn("388.88", buf)
 
     def test_report_final_agg_dump_original_and_normal(self):
         cfg = SimpleNamespace(ttft_limits=500.0, tpot_limits=40.0, output_length=8)
@@ -550,6 +575,9 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
         with patch("builtins.print") as pr:
             s.report_final_result(dump_args, silent=False)
             self.assertGreaterEqual(pr.call_count, 1)
+            dumped = pr.call_args.args[0]
+            self.assertIn("qps_req_s", dumped)
+            self.assertIn("1.5425", dumped)
 
         norm_args = SimpleNamespace(
             disagg=False,
@@ -565,6 +593,31 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
             s.report_final_result(norm_args, silent=False)
             merged = "".join(call.args[0] for call in pr2.call_args_list if call.args)
             self.assertIn("Overall Best", merged)
+
+    def test_report_disagg_dump_original_includes_qps(self):
+        cfg = SimpleNamespace(ttft_limits=500.0, tpot_limits=None, output_length=8)
+        summary = OptimizerSummary(cfg)
+        summary.set_summary_df(
+            pd.DataFrame(
+                [
+                    _baseline_agg_row(
+                        {
+                            "concurrency": 10.0,
+                            "ttft": 50.0,
+                            "tpot": None,
+                        }
+                    )
+                ]
+            )
+        )
+        args = SimpleNamespace(disagg=True, dump_original_results=True)
+
+        with patch("builtins.print") as printed:
+            summary.report_final_result(args, silent=False)
+
+        dumped = printed.call_args.args[0]
+        self.assertIn("qps_req_s", dumped)
+        self.assertIn("200.0", dumped)
 
     def test_report_pd_ratio_dump_empty_filtered_infos(self):
         cfg = SimpleNamespace(

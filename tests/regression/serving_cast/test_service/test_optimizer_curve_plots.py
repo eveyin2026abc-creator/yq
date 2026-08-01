@@ -38,6 +38,23 @@ class TestCurvePlotHelpers(TestCase):
         self.assertIsNotNone(lim2)
         self.assertGreaterEqual(lim2[0], 0.0)
 
+    def test_format_external_legend_includes_marker_and_labels(self):
+        legend = ocp._format_external_legend(["tp1", "tp2"])
+        self.assertIn("Legend:", legend)
+        self.assertIn(ocp._TERMINAL_MARKER, legend)
+        self.assertIn("tp1", legend)
+        self.assertIn("tp2", legend)
+        self.assertEqual(ocp._format_external_legend([]), "")
+
+    def test_append_external_legend_places_it_to_the_right(self):
+        chart = "title\n┌──┐\n│  │\n└──┘"
+        rendered = ocp._append_external_legend(chart, ["tp1"])
+        lines = rendered.splitlines()
+        self.assertEqual(len(lines), len(chart.splitlines()))
+        self.assertIn("Legend:", lines[0])
+        self.assertIn("tp1", lines[1])
+        self.assertNotIn("Legend:", lines[2])
+
     def test_compact_scatter_legend_collapses_double_marker(self):
         label = "parallel_a"
         marker = ocp._TERMINAL_MARKER
@@ -650,7 +667,7 @@ class TestOptimizerCurvePlotsHighCoverage(TestCase):
             }
         )
         # Do not patch builtins.print: logger.exception/traceback formatting also calls print.
-        with patch.object(ocp, "_compact_scatter_legend", side_effect=RuntimeError("legend boom")):
+        with patch.object(ocp, "_format_external_legend", side_effect=RuntimeError("legend boom")):
             with self.assertLogs(ocp.logger, level="ERROR") as log_ctx:
                 ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="boom")
         self.assertTrue(any("optimizer curves failed" in m.lower() for m in log_ctx.output))

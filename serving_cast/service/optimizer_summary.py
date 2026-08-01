@@ -60,6 +60,28 @@ def _compute_disagg_request_qps(row: pd.Series, output_length: Optional[int]) ->
     return None
 
 
+def _with_disagg_request_qps(df: pd.DataFrame, output_length: Optional[int]) -> pd.DataFrame:
+    """Return a copy with the per-phase request QPS derived for every row."""
+    result = df.copy()
+    result["qps_req_s"] = result.apply(
+        lambda row: _compute_disagg_request_qps(row, output_length),
+        axis=1,
+    )
+    return result
+
+
+def _with_agg_request_qps(df: pd.DataFrame, output_length: Optional[int]) -> pd.DataFrame:
+    """Return a copy with aggregated request QPS derived from output throughput."""
+    result = df.copy()
+    valid_output_length = _positive_float(output_length)
+    if valid_output_length is None:
+        result["qps_req_s"] = None
+        return result
+
+    result["qps_req_s"] = pd.to_numeric(result["token/s"], errors="coerce") / valid_output_length
+    return result
+
+
 TTFT_COLUMN = "TTFT (ms)"
 TPOT_COLUMN = "TPOT (ms)"
 SHOW_COLUMNS = [
@@ -172,7 +194,13 @@ class OptimizerSummary:
                 final_out = self._get_pd_ratio_final_out(args, filtered_df)
                 print("\n" + "\n".join(final_out))
         elif args.dump_original_results:
-            print("\n" + self._summary_df.to_string(index=False) + "\n")
+            output_length = getattr(self.data_config, "output_length", None)
+            dump_df = (
+                _with_disagg_request_qps(self._summary_df, output_length)
+                if getattr(args, "disagg", False)
+                else _with_agg_request_qps(self._summary_df, output_length)
+            )
+            print("\n" + dump_df.to_string(index=False) + "\n")
         else:
             final_out = self._get_agg_disagg_final_out(args)
             print("\n" + "\n".join(final_out))
@@ -239,7 +267,7 @@ class OptimizerSummary:
         table_buf = (
             _get_disagg_table_buf(sorted_summary_df, self.data_config.output_length)
             if args.disagg
-            else _get_agg_table_buf(sorted_summary_df)
+            else _get_agg_table_buf(sorted_summary_df, self.data_config.output_length)
         )
         final_out.append(table_buf)
         final_out.append("*" * 80)
@@ -548,17 +576,22 @@ def _add_table_row(table: PrettyTable, row_data: list, columns: list[str]):
     table.add_row(row_data)
 
 
-def _get_agg_table_buf(df: pd.DataFrame):
+def _get_agg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None):
+    df = _with_agg_request_qps(df, output_length)
+    local_columns = SHOW_COLUMNS.copy()
+    local_columns.insert(2, "QPS (req/s)")
     show_len = len(df)
     table_buf = []
     table_buf.append(f"Top {show_len} PD Aggregated Configurations: ")
     table = PrettyTable()
-    table.field_names = SHOW_COLUMNS
+    table.field_names = local_columns
     for i in range(show_len):
         row = df.loc[i]
+        qps = row["qps_req_s"]
         row_data = [
             i + 1,
             f"\033[1m{row['token/s']:.2f}\033[0m",
+            f"{qps:.2f}" if qps is not None and not pd.isna(qps) else "-",
             f"{row['ttft']:.2f}",
             f"{row['tpot']:.2f}",
             row["concurrency"],
@@ -570,12 +603,13 @@ def _get_agg_table_buf(df: pd.DataFrame):
             _fmt_memory(row, "activation_GB"),
             _fmt_memory(row, "avail_GB"),
         ]
-        _add_table_row(table, row_data, SHOW_COLUMNS)
+        _add_table_row(table, row_data, local_columns)
     table_buf.append(table.get_string())
     return "\n".join(table_buf)
 
 
 def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None):
+    df = _with_disagg_request_qps(df, output_length)
     local_column = SHOW_COLUMNS.copy()
     ttft0 = df.iloc[0]["ttft"] if len(df) and "ttft" in df.columns else None
     is_decode = ttft0 is None or pd.isna(ttft0)
@@ -594,7 +628,7 @@ def _get_disagg_table_buf(df: pd.DataFrame, output_length: Optional[int] = None)
     table.field_names = local_column
     for i in range(show_len):
         row = df.loc[i]
-        qps = _compute_disagg_request_qps(row, output_length)
+        qps = row["qps_req_s"]
         qps_cell = f"{qps:.2f}" if qps is not None else "-"
         row_data = [
             i + 1,
