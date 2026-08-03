@@ -46,6 +46,10 @@ _TERMINAL_PLOT_COLS = 128
 _TERMINAL_PLOT_ROWS = 38
 _TERMINAL_MARKER = "●"
 _AXIS_PADDING_RATIO = 0.08
+# Start the external legend below the chart title when space permits.
+_LEGEND_VERTICAL_OFFSET = 2
+# Separate the chart canvas and its external legend by this many spaces.
+_LEGEND_HORIZONTAL_PADDING = 3
 _BASE_CURVE_COLUMNS = ("concurrency", "token/s")
 _PD_TPS_RENAME = {
     "parallel_d": "parallel",
@@ -84,11 +88,12 @@ def _visible_text_len(text: str) -> int:
 
 
 def _ansi_rgb(color: tuple[int, int, int]) -> str:
+    """Return an ANSI 24-bit escape sequence for a terminal foreground color."""
     r, g, b = color
     return f"\x1b[38;2;{r};{g};{b}m"
 
 
-def _format_external_legend(parallels: list[str]) -> str:
+def _format_external_legend(parallels: list[str], palette_indices: list[int] | None = None) -> str:
     """Render a vertical legend for placement to the right of the canvas.
 
     plotext hardcodes its in-canvas legend at the upper-left; there is no API to
@@ -96,28 +101,37 @@ def _format_external_legend(parallels: list[str]) -> str:
     """
     if not parallels:
         return ""
+    if palette_indices is not None and len(palette_indices) != len(parallels):
+        raise ValueError("palette_indices must match parallels length")
 
     entries = [
-        f"{_ansi_rgb(_PALETTE[idx % len(_PALETTE)])}{_TERMINAL_MARKER}\x1b[0m {_parallel_label(parallel)}"
+        f"{_ansi_rgb(_PALETTE[(palette_indices[idx] if palette_indices is not None else idx) % len(_PALETTE)])}"
+        f"{_TERMINAL_MARKER}\x1b[0m {_parallel_label(parallel)}"
         for idx, parallel in enumerate(parallels)
     ]
     return "\n".join(["Legend:", *entries])
 
 
-def _append_external_legend(buf: str, parallels: list[str]) -> str:
+def _append_external_legend(
+    buf: str,
+    parallels: list[str],
+    palette_indices: list[int] | None = None,
+) -> str:
     """Append a legend outside the right edge of a plotext canvas."""
     chart_lines = buf.splitlines()
-    legend_lines = _format_external_legend(parallels).splitlines()
+    legend_lines = _format_external_legend(parallels, palette_indices).splitlines()
     if not chart_lines or not legend_lines:
         return buf
 
     chart_width = max(_visible_text_len(line) for line in chart_lines)
-    legend_start = 2 if len(chart_lines) > len(legend_lines) + 2 else 0
+    legend_start = (
+        _LEGEND_VERTICAL_OFFSET if len(chart_lines) > len(legend_lines) + _LEGEND_VERTICAL_OFFSET else 0
+    )
     output = []
     for row, chart_line in enumerate(chart_lines):
         legend_row = row - legend_start
         if 0 <= legend_row < len(legend_lines):
-            padding = " " * (chart_width - _visible_text_len(chart_line) + 3)
+            padding = " " * (chart_width - _visible_text_len(chart_line) + _LEGEND_HORIZONTAL_PADDING)
             chart_line += padding + legend_lines[legend_row]
         output.append(chart_line)
     return "\n".join(output)
@@ -276,7 +290,11 @@ def _emit_terminal_optimizer_curve_ascii(
         finally:
             plx.clear_data()
         if buf:
-            buf = _append_external_legend(buf, [p for _, p, _, _ in series])
+            buf = _append_external_legend(
+                buf,
+                [p for _, p, _, _ in series],
+                [idx for idx, _, _, _ in series],
+            )
             print("\n" + buf + "\n")
 
     try:

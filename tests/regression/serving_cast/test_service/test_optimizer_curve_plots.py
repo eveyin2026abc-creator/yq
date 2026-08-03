@@ -46,6 +46,13 @@ class TestCurvePlotHelpers(TestCase):
         self.assertIn("tp2", legend)
         self.assertEqual(ocp._format_external_legend([]), "")
 
+    def test_format_external_legend_preserves_palette_indices(self):
+        legend = ocp._format_external_legend(["tp1", "tp3"], [0, 2])
+        tp3_entry = legend.splitlines()[2]
+        self.assertIn(ocp._ansi_rgb(ocp._PALETTE[2]), tp3_entry)
+        with self.assertRaisesRegex(ValueError, "must match"):
+            ocp._format_external_legend(["tp1"], [0, 1])
+
     def test_append_external_legend_places_it_to_the_right(self):
         chart = "title\n┌──┐\n│  │\n└──┘"
         rendered = ocp._append_external_legend(chart, ["tp1"])
