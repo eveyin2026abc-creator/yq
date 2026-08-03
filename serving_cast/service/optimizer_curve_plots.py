@@ -124,9 +124,7 @@ def _append_external_legend(
         return buf
 
     chart_width = max(_visible_text_len(line) for line in chart_lines)
-    legend_start = (
-        _LEGEND_VERTICAL_OFFSET if len(chart_lines) > len(legend_lines) + _LEGEND_VERTICAL_OFFSET else 0
-    )
+    legend_start = _LEGEND_VERTICAL_OFFSET if len(chart_lines) > len(legend_lines) + _LEGEND_VERTICAL_OFFSET else 0
     output = []
     for row, chart_line in enumerate(chart_lines):
         legend_row = row - legend_start
@@ -134,6 +132,10 @@ def _append_external_legend(
             padding = " " * (chart_width - _visible_text_len(chart_line) + _LEGEND_HORIZONTAL_PADDING)
             chart_line += padding + legend_lines[legend_row]
         output.append(chart_line)
+
+    rendered_count = max(0, len(chart_lines) - legend_start)
+    overflow_indent = " " * (chart_width + _LEGEND_HORIZONTAL_PADDING)
+    output.extend(overflow_indent + line for line in legend_lines[rendered_count:])
     return "\n".join(output)
 
 

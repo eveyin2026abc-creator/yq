@@ -62,6 +62,15 @@ class TestCurvePlotHelpers(TestCase):
         self.assertIn("tp1", lines[1])
         self.assertNotIn("Legend:", lines[2])
 
+    def test_append_external_legend_keeps_entries_beyond_chart_height(self):
+        chart = "title\nplot"
+        rendered = ocp._append_external_legend(chart, ["tp1", "tp2", "tp3"])
+        lines = rendered.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertIn("tp1", lines[1])
+        self.assertIn("tp2", lines[2])
+        self.assertIn("tp3", lines[3])
+
     def test_compact_scatter_legend_collapses_double_marker(self):
         label = "parallel_a"
         marker = ocp._TERMINAL_MARKER
