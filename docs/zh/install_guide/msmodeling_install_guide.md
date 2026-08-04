@@ -10,11 +10,21 @@ msModeling 是面向大模型推理性能仿真、服务化吞吐优化和 OptiX
 - 运行环境可访问 GitCode 与 Python 包源。
 - 若需要直接拉取 Hugging Face 模型配置，运行环境可访问 Hugging Face；否则请按本文配置镜像或使用本地模型路径。
 
-msModeling 当前仅支持源码安装。本文不涉及在线安装包、离线安装包或 run 包安装方式。
+## 2. 安装方式
 
-## 2. 源码安装
+### 2.1 在线安装
 
-### 2.1 克隆源码
+若您的设备具备互联网访问能力，可通过一条命令自动完成工具的下载与安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择“推理开发”使用场景，对应的CANN版本以及对应的工具，并在安装方式中选择"在线安装"，系统将引导您完成后续操作。
+
+### 2.2 离线安装
+
+对处于企业内网等无外网环境的设备，请先在可联网的机器上下载完整的离线安装包，再将其传输至目标设备进行安装。请参见昇腾社区MindStudio[下载](https://www.hiascend.com/developer/software/mindstudio/download)页面，选择“推理开发”使用场景，对应的CANN版本以及对应的工具，并在安装方式中选择"离线安装"，获取对应的安装包及操作指引。
+
+### 2.3 源码安装
+
+如需使用最新代码的功能，或对源码进行修改以增强功能，可下载本仓库代码，自行编译、打包工具并完成安装。
+
+#### 2.3.1 克隆源码
 
 执行如下命令下载源码：
 
@@ -23,20 +33,40 @@ git clone https://gitcode.com/Ascend/msmodeling.git
 cd msmodeling
 ```
 
-### 2.2 推荐方式：uv
+#### 2.3.2 推荐方式：uv
 
 项目推荐使用 `uv` 管理虚拟环境和依赖。仓库包含 `pyproject.toml` 时，`scripts/` 下的脚本也会自动识别并使用 `uv`。
+
+国内网络环境建议先配置阿里云 PyPI 镜像，再执行 `uv sync`（其他镜像与用法见[附录：切换 PyPI 镜像源](#63-切换-pypi-镜像源)）：
 
 ```bash
 pip install uv
 cd msmodeling
+
+# 国内网络建议：使用阿里云镜像加速依赖下载
+export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+
 uv sync
 
 # 可选：指定 Python 版本（默认使用本机可用版本）
 # UV_PYTHON=3.13 uv sync
+```
 
-# 可选：安装 lint 或 CI 相关依赖
+`uv sync` 默认只安装运行与仿真所需依赖，按使用场景再决定是否安装可选依赖组：
+
+| 依赖组 | 何时需要 | 安装命令 | 典型用途 |
+| -------- | -------- | -------- | -------- |
+| （默认） | 安装后运行仿真、Throughput Optimizer、Web UI、OptiX 等 | `uv sync` | 日常使用与体验 |
+| `lint` | 参与代码贡献，需要本地 pre-commit 风格/提交检查时 | `uv sync --group lint` | `uv run pre-commit install`、`uv run pre-commit run --all-files` |
+| `ci` | 本地运行 pytest、对齐 CI Gate / `scripts/run_*.sh` 测试环境时 | `uv sync --group ci` | `uv run pytest ...`、`./scripts/run_ci_gate.sh` |
+
+仅体验工具时执行 `uv sync` 即可，无需安装 `lint` 或 `ci`。需要时再按上表补充：
+
+```bash
+# 开发贡献：安装 pre-commit 等 lint 依赖
 uv sync --group lint
+
+# 本地测试：安装 pytest 等 CI 依赖
 uv sync --group ci
 ```
 
@@ -45,7 +75,7 @@ uv sync --group ci
 > [!NOTE]
 > 如果使用 `uv` 创建或管理虚拟环境，后续查看、升级、卸载也建议使用 `uv pip ...` 或 `uv run ...`。不要仅通过 `which pip` 判断当前环境，部分场景下 `pip` 可能指向非预期的 Python 环境。
 
-### 2.3 备选方式：pip + requirements.txt
+#### 2.3.3 备选方式：pip + requirements.txt
 
 如果不使用 `uv`，也可以通过 Python 原生虚拟环境和 `requirements.txt` 安装依赖。CPU 环境建议先从 PyTorch CPU 源安装 `torch` 与 `torchvision`，再安装其余依赖。
 
@@ -66,25 +96,12 @@ pip install -e .
 > [!NOTE]
 > `pip install -e .` 会以源码可编辑模式安装 msModeling，并注册 `msmodeling` CLI。源码更新后无需重新复制文件，必要时重新执行安装命令即可。
 
-如果依赖下载失败或速度较慢，可临时切换 PyPI 镜像源后重试：
-
-```bash
-# 临时使用清华源
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# 或临时使用阿里云源
-pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
-
-# 或临时使用华为云源
-pip install -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple
-```
-
-如某个镜像源同步不及时导致版本找不到，请更换其他镜像源或临时回退到官方源 `https://pypi.org/simple` 后重试。
+如果依赖下载失败或速度较慢，可切换 PyPI 镜像源后重试，详见[附录：切换 PyPI 镜像源](#63-切换-pypi-镜像源)。
 
 > [!WARNING]
 > Windows 上 PyTorch 2.10 可能运行不正常。如遇问题，建议使用 PyTorch 2.8 或更早版本。
 
-### 2.4 配置环境变量
+#### 2.3.4 配置环境变量
 
 msModeling 常用环境变量如下：
 
@@ -169,23 +186,37 @@ uv pip show msmodeling
 pip show msmodeling
 ```
 
-进入 msModeling 仓库根目录，拉取目标版本源码后升级：
+### 5.1 方式一：覆盖升级
 
-```bash
-cd msmodeling
-git fetch
-git checkout 26.1.0
-git pull
+升级即“先卸后装”。若选择覆盖升级，直接通过[2.1 在线安装](#21-在线安装)和[2.2 离线安装](#22-离线安装)内容执行安装操作，工具将自动卸载旧版本，并引导您完成覆盖安装。
 
-# uv 环境
-uv pip install --upgrade -e .
+### 5.2 方式二：源码升级
 
-# uv 环境临时指定镜像源
-uv pip install --upgrade -e . -i https://mirrors.aliyun.com/pypi/simple
+若选择源码升级，请按照如下操作完成升级：
 
-# pip 环境
-pip install --upgrade -e .
-```
+1. 进入 msModeling 仓库根目录，拉取目标版本源码。
+
+    ```bash
+    cd msmodeling
+    git fetch
+    git checkout 26.1.0
+    git pull
+    ```
+
+2. 选择对应的环境升级到目标版本。
+
+    ```bash
+    # uv 环境
+    uv pip install --upgrade -e .
+
+    # uv 环境临时指定镜像源
+    uv pip install --upgrade -e . -i https://mirrors.aliyun.com/pypi/simple
+
+    # pip 环境
+    pip install --upgrade -e .
+    ```
+
+升级时如遇依赖下载较慢，可按[附录：切换 PyPI 镜像源](#63-切换-pypi-镜像源)临时指定镜像。
 
 升级版本时需要关注版本配套关系，请参见《[版本说明](https://gitcode.com/Ascend/release-management/blob/master/MindStudio/26.1.0/release_notes.md)》。
 
@@ -206,4 +237,38 @@ OptiX 子进程会自动剥离 msModeling 虚拟环境，使用系统 `PATH`；�
 - 若 `--help` 无法显示帮助信息，请优先排查虚拟环境、`PYTHONPATH` 与依赖安装。
 - 如果提示无法找到 `cli` 或 `tensor_cast` 模块，请确认当前目录为仓库根目录，或已正确设置 `PYTHONPATH`。
 - 如果模型配置下载失败，请确认网络可访问 Hugging Face；若 `HF_ENDPOINT` 镜像仍不可用，请改用本地模型路径。
-- 如果依赖安装失败，请先确认虚拟环境已激活。若使用 `uv`，请重新执行 `uv sync`；若使用 pip 方式，请升级 `pip` 后依次重新执行 `pip install -r requirements.txt` 和 `pip install -e .`，必要时切换 PyPI 镜像源。
+- 如果依赖安装失败，请先确认虚拟环境已激活。若使用 `uv`，请重新执行 `uv sync`；若使用 pip 方式，请升级 `pip` 后依次重新执行 `pip install -r requirements.txt` 和 `pip install -e .`，必要时按[附录：切换 PyPI 镜像源](#63-切换-pypi-镜像源)切换镜像。
+- 仅体验仿真工具时无需安装 `lint` / `ci` 依赖组；需要本地 pre-commit 或 pytest 时再分别执行 `uv sync --group lint`、`uv sync --group ci`。
+
+### 6.3 切换 PyPI 镜像源<a name="63-切换-pypi-镜像源"></a>
+
+国内网络环境下，依赖下载失败或速度较慢时，可临时切换 PyPI 镜像源。推荐优先使用阿里云镜像；若已有公司内网源或其他镜像配置，可继续沿用，不必强制更换。
+
+**uv（推荐用于 `uv sync`）**
+
+```bash
+# 当前终端会话生效（推荐）
+export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+uv sync
+
+# 或仅对单次命令生效
+UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple uv sync
+
+# uv pip 安装/升级时临时指定镜像
+uv pip install --upgrade -e . -i https://mirrors.aliyun.com/pypi/simple
+```
+
+**pip**
+
+```bash
+# 临时使用阿里云源（推荐）
+pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
+
+# 临时使用清华源
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 临时使用华为云源
+pip install -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple
+```
+
+如某个镜像源同步不及时导致版本找不到，请更换其他镜像源或临时回退到官方源 `https://pypi.org/simple` 后重试。
