@@ -296,9 +296,11 @@ def test_patch_mla_validates_glm5_indexer_types_before_indexing():
             self.layer_idx = 2
 
     class FakeGlm5SparseAttention(Glm5SparseAttention):
-        def __init__(self, _config, module, _tp_group):
+        def __init__(self, _config, module, _tp_group, parallel_group_manager=None):
+            # Accept parallel_group_manager for compatibility with DCP-enabled patch_mla.
             torch.nn.Module.__init__(self)
             self.layer_idx = module.layer_idx
+            self.parallel_group_manager = parallel_group_manager
 
     model = SimpleNamespace(
         model_config=SimpleNamespace(
