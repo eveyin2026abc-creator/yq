@@ -82,6 +82,16 @@ def _with_agg_request_qps(df: pd.DataFrame, output_length: Optional[int]) -> pd.
     return result
 
 
+def _with_pd_ratio_request_qps(df: pd.DataFrame) -> pd.DataFrame:
+    """Expose PD-ratio balanced request QPS as ``qps_req_s`` for dump consistency."""
+    result = df.copy()
+    if "balanced_qps" not in result.columns:
+        result["qps_req_s"] = None
+        return result
+    result["qps_req_s"] = pd.to_numeric(result["balanced_qps"], errors="coerce")
+    return result
+
+
 TTFT_COLUMN = "TTFT (ms)"
 TPOT_COLUMN = "TPOT (ms)"
 SHOW_COLUMNS = [
@@ -189,7 +199,8 @@ class OptimizerSummary:
                 if filtered_df.empty:
                     logger.info("No results after PD ratio filtering.")
                 else:
-                    print("\n" + filtered_df.to_string(index=False) + "\n")
+                    dump_df = _with_pd_ratio_request_qps(filtered_df)
+                    print("\n" + dump_df.to_string(index=False) + "\n")
             else:
                 final_out = self._get_pd_ratio_final_out(args, filtered_df)
                 print("\n" + "\n".join(final_out))

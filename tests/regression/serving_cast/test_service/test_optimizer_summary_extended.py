@@ -24,6 +24,7 @@ from serving_cast.service.optimizer_summary import (
     _sorted_rows,
     _with_agg_request_qps,
     _with_disagg_request_qps,
+    _with_pd_ratio_request_qps,
     render_cross_device_comparison,
     render_cross_hardware_disagg_decode,
     render_cross_hardware_disagg_prefill,
@@ -93,6 +94,15 @@ class TestComputeDisaggRequestQps(TestCase):
 
         missing_length = _with_agg_request_qps(source, output_length=None)
         self.assertIsNone(missing_length.loc[0, "qps_req_s"])
+
+    def test_adds_pd_ratio_qps_from_balanced_qps(self):
+        source = pd.DataFrame({"balanced_qps": [12.5], "p_qps": [20.0], "d_qps": [12.5]})
+        result = _with_pd_ratio_request_qps(source)
+        self.assertNotIn("qps_req_s", source.columns)
+        self.assertAlmostEqual(result.loc[0, "qps_req_s"], 12.5)
+
+        missing = _with_pd_ratio_request_qps(pd.DataFrame({"p_qps": [1.0]}))
+        self.assertIsNone(missing.loc[0, "qps_req_s"])
 
 
 class TestDisaggPdRatioTableBuf(TestCase):
@@ -676,6 +686,8 @@ class TestOptimizerSummaryReportAndCollect(TestCase):
         with patch("builtins.print", side_effect=_capture):
             s.report_final_result(args_dump, silent=False)
         self.assertIn("balanced_qps", captured)
+        self.assertIn("qps_req_s", captured)
+        self.assertIn(f"{row['balanced_qps']}", captured)
 
     def test_report_pd_ratio_pretty_best_with_instances(self):
         cfg = SimpleNamespace(
