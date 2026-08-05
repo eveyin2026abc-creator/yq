@@ -3,6 +3,7 @@ import unittest
 import torch
 from tensor_cast import ops  # noqa: F401
 from tensor_cast.compilation.compile_backend import CompilerBackend
+from tensor_cast.patch_torch import patch_torch
 from tensor_cast.utils import DTYPE_FP8
 from torch._inductor.compile_fx import fake_tensor_prop
 
@@ -32,9 +33,11 @@ class _CaptureBackend:
 
 
 def _compile_and_capture(model, inputs, track_cat_counts: bool = False):
+    # int4/mxfp4 compile paths need torch dtype patches (dtype_to_type / dtype_abbrs).
     backend = _CaptureBackend(track_cat_counts=track_cat_counts)
-    compiled = torch.compile(model, backend=backend, fullgraph=True)
-    compiled(*inputs)
+    with patch_torch():
+        compiled = torch.compile(model, backend=backend, fullgraph=True)
+        compiled(*inputs)
     return backend
 
 
