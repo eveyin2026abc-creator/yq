@@ -302,7 +302,6 @@ def test_patch_mla_validates_glm5_indexer_types_before_indexing():
         def __init__(self, _config, module, _tp_group):
             torch.nn.Module.__init__(self)
             self.layer_idx = module.layer_idx
-            self.parallel_group_manager = parallel_group_manager
 
     model = SimpleNamespace(
         model_config=SimpleNamespace(
