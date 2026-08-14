@@ -217,3 +217,18 @@ def configure_logger() -> None:
         diagnose=level == "DEBUG",
         backtrace=level == "DEBUG",
     )
+
+
+def set_log_level(level: str) -> None:
+    """Replace the optix stderr handler after CLI log options are parsed."""
+    level = level.upper()
+    logger.remove()
+    logger.configure(extra=DEFAULT_LOG_EXTRA.copy())
+    logger.add(
+        sys.stderr,
+        level=level,
+        format=resolve_log_format(level),
+        enqueue=True,
+        diagnose=level == "DEBUG",
+        backtrace=level == "DEBUG",
+    )

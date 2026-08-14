@@ -2,6 +2,14 @@ import argparse
 import logging
 import re
 
+from cli.spec_cli import (
+    METAVAR_FLOAT,
+    METAVAR_N,
+    METAVAR_NAME,
+    add_log_options,
+    add_option,
+    add_version_option,
+)
 from tensor_cast.device import DeviceProfile
 
 LOG_LEVELS = {
@@ -63,7 +71,9 @@ def check_positive_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value <= 0:
-        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is out of range; expected a positive integer"
+        )
 
     return value
 
@@ -74,7 +84,9 @@ def check_non_negative_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value < 0:
-        raise argparse.ArgumentTypeError(f"{value!r} is not a non-negative integer")
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is out of range; expected a non-negative integer"
+        )
 
     return value
 
@@ -131,15 +143,15 @@ def check_string_valid(string: str, max_len=256):
 
 
 def get_common_argparser(reserved_memory_gb_default: float = 0.0):
-    common_parser = argparse.ArgumentParser(
-        add_help=False,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+    common_parser = argparse.ArgumentParser(add_help=False)
+    add_version_option(common_parser)
 
     general_group = common_parser.add_argument_group("General Options")
 
     general_group.add_argument(
         "model_id",
+        nargs="?",
+        metavar=METAVAR_NAME,
         type=check_string_valid,
         help=(
             "Model source. Recommended safe mode: a reviewed absolute local model path. "
@@ -147,48 +159,47 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
             "trust_remote_code=True and is not security-guaranteed."
         ),
     )
+    add_option(
+        general_group,
+        "--model-path",
+        "--model-id",
+        dest="model_id",
+        metavar=METAVAR_NAME,
+        type=check_string_valid,
+        help="Model path or Hub id. Equivalent to the positional model_id.",
+        aliases=("--model_id",),
+    )
 
     general_group.add_argument(
         "--device",
         type=str,
         choices=list(DeviceProfile.all_device_profiles.keys()),
         default="TEST_DEVICE",
-        help=(
-            "Specifies the target device profile to use for benchmarking and simulation. "
-            "Must be a valid device name as defined in DeviceProfile. "
-            "The default device 'TEST_DEVICE' is used for standard simulation runs."
-        ),
+        metavar=METAVAR_NAME,
+        help="Target device profile name used for simulation [default: TEST_DEVICE]",
     )
 
     general_group.add_argument(
         "--num-devices",
         type=check_positive_integer,
         default=1,
-        help=(
-            "Specifies the total number of devices/processes to use. "
-            "Must be a positive integer. "
-            "A value of 1 indicates single-device execution."
-        ),
+        metavar=METAVAR_N,
+        help="Total number of devices. Must be a positive integer [default: 1]",
     )
 
     general_group.add_argument(
         "--reserved-memory-gb",
         type=float,
         default=reserved_memory_gb_default,
-        help=(
-            "Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. "
-            "Set to 0 to disable memory reservation."
-        ),
+        metavar=METAVAR_FLOAT,
+        help="Device memory in GB reserved for the system and unavailable to the app [default: "
+        f"{reserved_memory_gb_default}]",
     )
 
-    general_group.add_argument(
-        "--log-level",
-        choices=LOG_LEVELS,
-        default="error",
-        help=(
-            "Specifies the verbosity level for log output. "
-            "Available levels: 'debug' (most verbose), 'info', 'warning', 'error', 'critical' (least verbose)."
-        ),
-    )
-
+    add_log_options(general_group)
     return common_parser
+
+
+def require_model_id(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if not getattr(args, "model_id", None):
+        parser.error("model_id is required; pass a positional model id or --model-path / --model-id.")

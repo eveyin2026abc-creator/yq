@@ -34,7 +34,7 @@ from ..config.base_config import (
     reuse_simulator_in_fine_tune_flag,
 )
 from ..config.config import DecodeContext, field_to_param, map_param_with_value
-from ..logging import LogStage, format_evaluation_failure
+from ..logging import LogStage, format_evaluation_failure, set_log_level
 from ..optimizer.errors import (
     BaselineRunError,
     ConfigFileNotFoundError,
@@ -45,7 +45,17 @@ from ..optimizer.errors import (
 from ..optimizer.outcome import RunStatus
 from ..optimizer.performance_tunner import PerformanceTuner
 from ..optimizer.register import benchmarks, simulates
-from ..optimizer.utils import get_required_field_from_json, is_root
+from cli.spec_cli import (
+    METAVAR_FILE,
+    SpecArgumentParser,
+    add_log_options,
+    add_option,
+    add_version_option,
+    make_token_type,
+    parse_args as spec_parse_args,
+    resolve_log_level,
+    to_kebab,
+)
 
 MAX_ITER_NUM = 200
 
@@ -699,47 +709,71 @@ def _run_optimizer() -> None:
     register_ori_functions()
     load_general_plugins()
 
-    parser = argparse.ArgumentParser(
-        description="optix - Service Parameter Optimizer for LLM inference performance tuning.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    parser = SpecArgumentParser(
+        prog="msmodeling optix",
+        description="Service parameter optimizer for LLM inference performance tuning.",
+        examples=(
+            "# Run with the default vLLM engine and AISBench\n"
+            "msmodeling optix -e vllm -b ais_bench\n"
+            "# Resume a previous search\n"
+            "msmodeling optix --load-breakpoint --config ./config.toml"
+        ),
     )
-    parser.add_argument(
-        "-lb",
-        "--load_breakpoint",
+    add_version_option(parser)
+    add_log_options(parser)
+    parse_engine, engine_meta = make_token_type(list(_simulates.keys()), "--engine", store_canonical="snake")
+    parse_bench, bench_meta = make_token_type(
+        list(_benchmarks.keys()), "--benchmark-policy", store_canonical="snake"
+    )
+    add_option(
+        parser,
+        "--load-breakpoint",
+        dest="load_breakpoint",
         default=False,
         action="store_true",
         help="Continue from where the last optimization was aborted.",
+        aliases=("--load_breakpoint", "-lb"),
     )
     parser.add_argument(
         "--backup",
         default=False,
         action="store_true",
-        help="Whether to back up data.",
+        help="Back up optimizer data.",
     )
-    parser.add_argument(
+    add_option(
+        parser,
         "-b",
-        "--benchmark_policy",
+        "--benchmark-policy",
+        dest="benchmark_policy",
         default=DEFAULT_BENCHMARK_POLICY,
-        choices=list(_benchmarks.keys()),
-        help="Whether to use custom performance indicators.",
+        type=parse_bench,
+        metavar=bench_meta,
+        help=(
+            "Benchmark used for custom performance indicators. "
+            f"[default: {to_kebab(DEFAULT_BENCHMARK_POLICY)}]"
+        ),
+        aliases=("--benchmark_policy",),
     )
     parser.add_argument(
         "-e",
         "--engine",
         default="vllm",
-        choices=list(_simulates.keys()),
-        help="The engine used for model evaluation.",
+        type=parse_engine,
+        metavar=engine_meta,
+        help="Engine used for model evaluation.",
     )
     parser.add_argument(
         "-c",
         "--config",
         default=None,
         type=str,
-        help="Path to custom configuration file (TOML format). "
-        "Supports absolute path, relative path, or filename in current directory.",
+        metavar=METAVAR_FILE,
+        help="Custom configuration file (TOML). Absolute path, relative path, or filename in the current directory.",
     )
 
-    args = parser.parse_args()
+    args = spec_parse_args(parser)
+    resolve_log_level(args)
+    set_log_level(args.log_level)
     from cli.logo import print_logo
 
     print_logo()

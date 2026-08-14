@@ -79,6 +79,7 @@ def test_main_prints_top_level_help_without_subcommand() -> None:
 
 
 def test_main_dispatches_optix_subcommand() -> None:
+    pytest.importorskip("pydantic_settings")
     with patch("optix.optimizer.optimizer.main", return_value=0) as optix_main:
         result = run_cli_main(main, ["optix", "--help"], prog="msmodeling")
 
