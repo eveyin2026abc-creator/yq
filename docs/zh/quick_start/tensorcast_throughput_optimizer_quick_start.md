@@ -60,7 +60,7 @@ python -m cli.inference.throughput_optimizer --help
 TensorCast（模型推理性能仿真）面向 PyTorch 程序进行性能建模。它不会在真实加速器上执行模型，而是拦截计算图，并基于目标设备画像估算算子耗时、显存占用和整体推理性能。
 
 > [!NOTE]知识点：模型推理性能仿真输出
-> TensorCast 默认输出算子级性能汇总、总执行时间、TPS/Device 与显存占用。若指定 `--chrome-trace`，还可以生成 Chrome Trace 文件用于可视化分析。
+> TensorCast 默认输出算子级性能汇总、总执行时间、TPS/Device 与显存占用。若指定 `--chrome-trace-file`，还可以生成 Chrome Trace 文件用于可视化分析。
 
 #### 2.2.1 执行 LLM 文本生成仿真
 
@@ -104,14 +104,14 @@ Total device memory: 64.000 GB
 
 #### 2.2.3 生成 Chrome Trace（可选）
 
-如需查看更细粒度的时间线，可增加 `--chrome-trace` 参数：
+如需查看更细粒度的时间线，可增加 `--chrome-trace-file` 参数：
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B \
     --num-queries 2 \
     --query-length 3500 \
     --device TEST_DEVICE \
-    --chrome-trace ./tensorcast_trace.json
+    --chrome-trace-file ./tensorcast_trace.json
 ```
 
 生成后，可通过 `chrome://tracing` 或 MindStudio Insight 打开 trace 文件。
@@ -125,7 +125,7 @@ Throughput Optimizer（服务化性能仿真）可在 TTFT、TPOT 等 SLO 约束
 
 #### 2.3.1 执行服务化性能仿真
 
-以下命令用于快速体验 PD 混部场景。首次体验时不额外指定搜索维度，工具会使用默认 TP 搜索范围；如果运行耗时较长，可减少 `--num-devices` 或在进阶使用时显式指定 `--tp-sizes` 缩小搜索范围。
+以下命令用于快速体验 PD 混部场景。首次体验时不额外指定搜索维度，工具会使用默认 TP 搜索范围；如果运行耗时较长，可减少 `--num-devices` 或在进阶使用时显式指定 `--tensor-parallel-sizes` 缩小搜索范围。
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -133,9 +133,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --num-devices 8 \
     --input-length 3500 \
     --output-length 1500 \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --tpot-limits 50
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --tpot-limit 50
 ```
 
 #### 2.3.2 查看优化结果
@@ -183,7 +183,7 @@ Top 4 PD Aggregated Configurations:
 
 - 如果提示无法下载模型配置，请确认网络可访问 Hugging Face，或设置 `HF_ENDPOINT` 镜像。
 - 如果提示无法找到 `cli` 或 `tensor_cast` 模块，请确认当前目录为仓库根目录，或已正确设置 `PYTHONPATH`。
-- 如果服务化性能仿真运行耗时较长，可先减小搜索范围，例如减少 `--num-devices` 或显式指定 `--tp-sizes`。
+- 如果服务化性能仿真运行耗时较长，可先减小搜索范围，例如减少 `--num-devices` 或显式指定 `--tensor-parallel-sizes`。
 
 更多用法请继续阅读：
 

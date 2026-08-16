@@ -49,7 +49,7 @@ Prefill 模式下不添加 `--decode`；`--query-length` 表示新输入长度�
 也可使用多种量化方案对线性层进行量化，例如 W8A8 动态量化，并以 4500 token 的 context 作为前缀：
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_DYNAMIC --compile
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action w8a8-dynamic --compile
 ```
 
 #### Decode 场景
@@ -57,10 +57,10 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 Decode 场景的运行方式类似，仅需调整输入长度 `--query-length` 和请求的 context 长度 `--context-length`。未启用 MTP 时，`--query-length` 通常为 `1`；启用 `--num-mtp-tokens` 时，`--query-length` 应设置为 `1 + --num-mtp-tokens`。
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --decode --device TEST_DEVICE --quantize-linear-action W8A8_STATIC --compile
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --decode --device TEST_DEVICE --quantize-linear-action w8a8-static --compile
 ```
 
-**输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
+**输出：** 性能汇总表；若设置了 `--chrome-trace-file`，还可选输出 Chrome trace 文件。
 
 ### 2.2 结果（文本生成）
 
@@ -115,7 +115,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --frame-num 81 \
   --sample-step 50 \
   --dtype float16 \
-  --quantize-linear-action W8A8_DYNAMIC
+  --quantize-linear-action w8a8-dynamic
 ```
 
 如需使用block sparse attention（BSA）后端，可在上面的 dense 示例基础上增加 BSA 专用选项：
@@ -130,9 +130,9 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --attention-sparsity 0.5
 ```
 
-**关键参数：** `model_id`、`--device`、`--batch-size`、`--seq-len`、`--height`、`--width`、`--frame-num`、`--sample-step`、`--dtype`、`--quantize-linear-action`、`--chrome-trace`、`--attention-backend`、`--attention-block-size`、`--attention-sparsity`
+**关键参数：** `model_id`、`--device`、`--batch-size`、`--seq-len`、`--height`、`--width`、`--frame-num`、`--sample-step`、`--dtype`、`--quantize-linear-action`、`--chrome-trace-file`、`--attention-backend`、`--attention-block-size`、`--attention-sparsity`
 
-**输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
+**输出：** 性能汇总表；若设置了 `--chrome-trace-file`，还可选输出 Chrome trace 文件。
 
 ### 2.4 结果（视频生成）
 
@@ -207,27 +207,27 @@ Python 代码，msmodeling 不对远端代码安全性做保证；运行时会�
 usage: text_generate.py [-h]
                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
                         [--num-devices NUM_DEVICES] [--reserved-memory-gb RESERVED_MEMORY_GB]
-                        [--log-level {debug,info,warning,error,critical}] --num-queries NUM_QUERIES
+                        [--log-level {debug,info,warning,error}] --num-queries NUM_QUERIES
                         --query-length QUERY_LENGTH [--context-length CONTEXT_LENGTH] [--decode]
                         [--prefix-cache-hit-rate PREFIX_CACHE_HIT_RATE] [--num-mtp-tokens NUM_MTP_TOKENS]
-                        [--disable-repetition] [--compile] [--compile-allow-graph-break]
+                        [--no-repetition] [--compile] [--compile-allow-graph-break]
                         [--compilation-config [{enable_multistream,enable_sequence_parallel,enable_matmul_allreduce,enable_dispatch_ffn_combine} ...]]
-                        [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
-                        [--quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
-                        [--quantize-lmhead] [--mxfp4-group-size MXFP4_GROUP_SIZE]
-                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-url GRAPH_LOG_URL]
-                        [--dump-input-shapes] [--dump-op-bound-results] [--chrome-trace CHROME_TRACE]
-                        [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tp-size TP_SIZE]
-                        [--dp-size DP_SIZE] [--ep-size EP_SIZE] [--o-proj-tp-size O_PROJ_TP_SIZE]
-                        [--o-proj-dp-size O_PROJ_DP_SIZE] [--mlp-tp-size MLP_TP_SIZE] [--mlp-dp-size MLP_DP_SIZE]
-                        [--lmhead-tp-size LMHEAD_TP_SIZE] [--lmhead-dp-size LMHEAD_DP_SIZE]
-                        [--moe-tp-size MOE_TP_SIZE] [--moe-dp-size MOE_DP_SIZE] [--word-embedding-tp {col,row}]
+                        [--quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
+                        [--quantize-non-expert-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
+                        [--quantize-lmhead] [--mxfp4-group-size mxfp4_GROUP_SIZE]
+                        [--quantize-attention-action {disabled,int8,fp8}] [--graph-log-file GRAPH_LOG_URL]
+                        [--dump-input-shapes] [--dump-op-bound-results] [--chrome-trace-file CHROME_TRACE]
+                        [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tensor-parallel-size TP_SIZE]
+                        [--data-parallel-size DP_SIZE] [--expert-parallel-size EP_SIZE] [--o-proj-tensor-parallel-size O_PROJ_TP_SIZE]
+                        [--o-proj-data-parallel-size O_PROJ_DP_SIZE] [--mlp-tensor-parallel-size MLP_TP_SIZE] [--mlp-data-parallel-size MLP_DP_SIZE]
+                        [--lmhead-tensor-parallel-size LMHEAD_TP_SIZE] [--lmhead-data-parallel-size LMHEAD_DP_SIZE]
+                        [--moe-tensor-parallel-size MOE_TP_SIZE] [--moe-data-parallel-size MOE_DP_SIZE] [--word-embedding-tensor-parallel {col,row}]
                         [--enable-redundant-experts] [--enable-shared-expert-tp] [--enable-external-shared-experts]
-                        [--host-external-shared-experts] [--vision-tp-size VISION_TP_SIZE]
+                        [--host-external-shared-experts] [--vision-tensor-parallel-size VISION_TP_SIZE]
                         [--image-batch-size IMAGE_BATCH_SIZE] [--image-height IMAGE_HEIGHT]
                         [--image-width IMAGE_WIDTH]
                         [--remote-source {huggingface,modelscope}] [--performance-model {analytic,profiling}]
-                        [--profiling-database PROFILING_DATABASE]
+                        [--profiling-database-path PROFILING_DATABASE]
                         [--export-empirical-metrics EXPORT_EMPIRICAL_METRICS]
                         model_id
 
@@ -242,50 +242,50 @@ Run a simulated LLM inference pass and dump the perf result.
 | `--device` | General Options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--reserved-memory-gb` | General Options | 可选 | 指定每张设备预留给系统使用的显存大小，单位为 GB。<br>1. 类型：Float。<br>2. 取值范围：非负数；设置为 `0` 表示不预留系统显存。<br>3. 默认值：`0.0`。 |
-| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
+| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
 | `--num-queries` | LLM Options | 必选 | 本次仿真的 query 数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--query-length` | LLM Options | 必选 | 每个 query 的新输入 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--context-length` | LLM Options | 可选 | 每个 query 的已有上下文 token 长度。<br>1. 类型：Int。<br>2. 取值范围：非负整数。<br>3. 默认值：`0`。 |
 | `--decode` | LLM Options | 可选 | 启用自回归 decode 模式；不设置时按 prefill 模式运行。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--prefix-cache-hit-rate` | LLM Options | 可选 | 指定 prefix cache 命中率，用于 prefill token 复用近似。<br>1. 类型：Float。<br>2. 取值范围：`[0, 1)`。<br>3. 默认值：`0.0`。 |
 | `--num-mtp-tokens` | LLM Options | 可选 | 指定 Multi-Token Prediction（MTP）token 数量，`0` 表示不启用。<br>1. 类型：Int。<br>2. 取值范围：非负整数。<br>3. 默认值：`0`。<br>4. 仅支持具备 MTP 能力的模型，例如 DeepSeek。 |
-| `--disable-repetition` | LLM Options | 可选 | 禁用 transformer 重复模式优化，保留原始模型行为。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
+| `--no-repetition` | LLM Options | 可选 | 禁用 transformer 重复模式优化，保留原始模型行为。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile` | Optimization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Optimization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compilation-config` | Optimization Options | 可选 | 动态启用指定的编译特性，可一次指定多个选项。<br>1. 类型：List[Str]（`nargs="*"`）。<br>2. 可选值：`enable_multistream`（启用多 stream 调度）、`enable_sequence_parallel`（启用 sequence parallel 图改写 pass）、`enable_matmul_allreduce`（启用 matmul-allreduce 融合）、`enable_dispatch_ffn_combine`（启用 dispatch_ffn_combine 融合）。<br>3. 默认值：不指定时所有编译特性均保持关闭（`False`）。<br>4. 示例：`--compilation-config enable_multistream enable_sequence_parallel`。 |
-| `--quantize-linear-action` | Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-non-expert-linear-action` | Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`DISABLED`。 |
+| `--quantize-linear-action` | Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`w8a16-static`、`w8a8-static`、`w4a8-static`、`w8a16-dynamic`、`w8a8-dynamic`、`w4a8-dynamic`、`fp8`、`mxfp4`。<br>3. 默认值：`w8a8-dynamic`。 |
+| `--quantize-non-expert-linear-action` | Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`w8a16-static`、`w8a8-static`、`w4a8-static`、`w8a16-dynamic`、`w8a8-dynamic`、`w4a8-dynamic`、`fp8`、`mxfp4`。<br>3. 默认值：`disabled`。 |
 | `--quantize-lmhead` | Quantization Options | 可选 | 对 lm head 启用量化。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
-| `--mxfp4-group-size` | Quantization Options | 可选 | 指定 MXFP4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
-| `--quantize-attention-action` | Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
-| `--graph-log-url` | Debugging Options | 可选 | 指定编译图日志输出路径，仅在 compile 路径调试时使用。<br>1. 类型：Str。<br>2. 取值范围：文件或目录路径。<br>3. 默认值：`None`。 |
+| `--mxfp4-group-size` | Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
+| `--quantize-attention-action` | Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
+| `--graph-log-file` | Debugging Options | 可选 | 指定编译图日志输出路径，仅在 compile 路径调试时使用。<br>1. 类型：Str。<br>2. 取值范围：文件或目录路径。<br>3. 默认值：`None`。 |
 | `--dump-input-shapes` | Debugging Options | 可选 | 输出输入 shape 信息，便于排查模型输入配置。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--dump-op-bound-results` | Debugging Options | 可选 | 在结果表中输出算子级 memory、communication、MMA、GP bound 比例。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
-| `--chrome-trace` | Debugging Options | 可选 | 指定 Chrome trace 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |
+| `--chrome-trace-file` | Debugging Options | 可选 | 指定 Chrome trace 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |
 | `--num-hidden-layers-override` | Debugging Options | 可选 | 覆盖模型 hidden layers 数量，仅用于调试。<br>1. 类型：Int。<br>2. 取值范围：非负整数。<br>3. 默认值：`0`。 |
-| `--tp-size` | Parallelism Options | 可选 | 指定全模型 tensor parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--dp-size` | Parallelism Options | 可选 | 指定全模型 data parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--ep-size` | Parallelism Options | 可选 | 指定 experts 的 expert parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--o-proj-tp-size` | Parallelism Options | 可选 | 指定 attention `o_proj` 层的 TP 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--o-proj-dp-size` | Parallelism Options | 可选 | 指定 attention `o_proj` 层的 DP 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--mlp-tp-size` | Parallelism Options | 可选 | 指定 MLP 层的 TP 并行规模，可覆盖 `--tp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--mlp-dp-size` | Parallelism Options | 可选 | 指定 MLP 层的 DP 并行规模，可覆盖 `--dp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--lmhead-tp-size` | Parallelism Options | 可选 | 指定 lm head 的 TP 并行规模，可覆盖 `--tp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--lmhead-dp-size` | Parallelism Options | 可选 | 指定 lm head 的 DP 并行规模，可覆盖 `--dp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--moe-tp-size` | Parallelism Options | 可选 | 指定 experts 的 TP 并行规模，可覆盖 `--tp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
-| `--moe-dp-size` | Parallelism Options | 可选 | 指定 experts 的 DP 并行规模，可覆盖 `--dp-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--word-embedding-tp` | Parallelism Options | 可选 | 启用 word embedding 张量并行并指定并行模式。<br>1. 类型：Str。<br>2. 参考值：`col`、`row`。<br>3. 默认值：`None`，表示不启用 embedding TP。 |
+| `--tensor-parallel-size` | Parallelism Options | 可选 | 指定全模型 tensor parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
+| `--data-parallel-size` | Parallelism Options | 可选 | 指定全模型 data parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--expert-parallel-size` | Parallelism Options | 可选 | 指定 experts 的 expert parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
+| `--o-proj-tensor-parallel-size` | Parallelism Options | 可选 | 指定 attention `o_proj` 层的 TP 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--o-proj-data-parallel-size` | Parallelism Options | 可选 | 指定 attention `o_proj` 层的 DP 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--mlp-tensor-parallel-size` | Parallelism Options | 可选 | 指定 MLP 层的 TP 并行规模，可覆盖 `--tensor-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--mlp-data-parallel-size` | Parallelism Options | 可选 | 指定 MLP 层的 DP 并行规模，可覆盖 `--data-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--lmhead-tensor-parallel-size` | Parallelism Options | 可选 | 指定 lm head 的 TP 并行规模，可覆盖 `--tensor-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--lmhead-data-parallel-size` | Parallelism Options | 可选 | 指定 lm head 的 DP 并行规模，可覆盖 `--data-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--moe-tensor-parallel-size` | Parallelism Options | 可选 | 指定 experts 的 TP 并行规模，可覆盖 `--tensor-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
+| `--moe-data-parallel-size` | Parallelism Options | 可选 | 指定 experts 的 DP 并行规模，可覆盖 `--data-parallel-size`。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
+| `--word-embedding-tensor-parallel` | Parallelism Options | 可选 | 启用 word embedding 张量并行并指定并行模式。<br>1. 类型：Str。<br>2. 参考值：`col`、`row`。<br>3. 默认值：`None`，表示不启用 embedding TP。 |
 | `--enable-redundant-experts` | Parallelism Options | 可选 | 启用冗余 expert 配置。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 单独启用时，每张设备会额外托管 1 个 redundant expert。<br>5. 与 `--enable-external-shared-experts` 同时启用时，分配逻辑与外置 shared experts 相同；若 routing experts 已在各设备间均匀分布、无需 redundant experts 填充，则每个托管 routing experts 的设备会额外托管 1 个 redundant expert。 |
 | `--enable-shared-expert-tp` | Parallelism Options | 可选 | 启用 vLLM 风格的 shared experts 张量并行。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. shared experts 使用 dense MLP TP，并延迟执行 `down_proj` 规约。 |
 | `--enable-external-shared-experts` | Parallelism Options | 可选 | 启用外置 shared experts。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 启用后，设备按 `1:top_k` 的比例分配给 external shared experts 与 routing experts；如有需要，会使用 redundant experts 对 routing experts 进行填充。<br>5. 例如 `world_size=64`、`top_k=8`、routing experts 数量为 256 时，8 个设备托管 external shared experts，其余 56 个设备分布 256 个 routing experts：32 个设备各托管 5 个 routing experts，24 个设备各托管 4 个 routing experts 和 1 个 redundant expert。 |
 | `--host-external-shared-experts` | Parallelism Options | 可选 | 指定当前设备承载外置 shared experts。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
-| `--vision-tp-size` | Parallelism Options | 可选 | 指定 vision 模块的 tensor parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`，表示 vision 模块不切分。 |
+| `--vision-tensor-parallel-size` | Parallelism Options | 可选 | 指定 vision 模块的 tensor parallel 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`，表示 vision 模块不切分。 |
 | `--image-batch-size` | MultiModal Options | 可选 | 指定图像处理 batch size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--image-height` | MultiModal Options | 可选 | 指定输入图像高度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--image-width` | MultiModal Options | 可选 | 指定输入图像宽度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--remote-source` | Options | 可选 | 指定远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
-| `--performance-model` | Options | 可选 | 指定性能模型，可重复指定一个或多个模型。<br>1. 类型：List[Str]。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：未指定时使用 `analytic`。<br>4. `analytic` 为 Roofline 模型，无需 profiling 数据；`profiling` 为基于 profiling CSV 数据库的经验性能模型，需配合 `--profiling-database` 使用。 |
-| `--profiling-database` | Options | 可选 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。<br>1. 类型：Str。<br>2. 取值范围：包含 `op_mapping.yaml` 和各 kernel 类型 CSV 文件的目录路径。<br>3. 默认值：`None`。 |
+| `--performance-model` | Options | 可选 | 指定性能模型，可重复指定一个或多个模型。<br>1. 类型：List[Str]。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：未指定时使用 `analytic`。<br>4. `analytic` 为 Roofline 模型，无需 profiling 数据；`profiling` 为基于 profiling CSV 数据库的经验性能模型，需配合 `--profiling-database-path` 使用。 |
+| `--profiling-database-path` | Options | 可选 | 使用 `profiling` 性能模型时指定 profiling 数据库路径。<br>1. 类型：Str。<br>2. 取值范围：包含 `op_mapping.yaml` 和各 kernel 类型 CSV 文件的目录路径。<br>3. 默认值：`None`。 |
 | `--export-empirical-metrics` | Options | 可选 | 导出 M1-M5 metrics JSON，用于离线 M6 计算。<br>1. 类型：Str。<br>2. 取值范围：JSON 文件路径。<br>3. 默认值：`None`。<br>4. 仅开发调试使用，需配合 `--performance-model profiling` 使用。 |
 
 对于 VL 模型，可同时设置 `--image-batch-size`、`--image-height` 和 `--image-width` 来描述输入图像数量与分辨率；纯文本模型可省略这些参数。
@@ -301,15 +301,15 @@ Run a simulated LLM inference pass and dump the perf result.
 ```text
 usage: video_generate.py [-h]
                          [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
-                         --batch-size BATCH_SIZE --seq-len SEQ_LEN [--chrome-trace CHROME_TRACE]
+                         --batch-size BATCH_SIZE --seq-len SEQ_LEN [--chrome-trace-file CHROME_TRACE]
                          [--height HEIGHT] [--width WIDTH] [--frame-num FRAME_NUM] [--sample-step SAMPLE_STEP]
-                         [--log-level {debug,info,warning,error,critical}] [--dtype {float16,float32,bfloat16}]
+                         [--log-level {debug,info,warning,error}] [--dtype {float16,float32,bfloat16}]
                          [--remote-source {huggingface,modelscope}]
-                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
-                         [--quantize-attention-action {DISABLED,INT8,FP8}] [--use-cfg]
+                         [--quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
+                         [--quantize-attention-action {disabled,int8,fp8}] [--use-cfg]
                          [--attention-backend {dense,block_sparse_attention}] [--attention-block-size ATTENTION_BLOCK_SIZE]
-                         [--attention-sparsity ATTENTION_SPARSITY] [--world-size WORLD_SIZE]
-                         [--ulysses-size ULYSSES_SIZE] [--cfg-parallel] [--compile]
+                         [--attention-sparsity ATTENTION_SPARSITY] [--num-devices WORLD_SIZE]
+                         [--ulysses-parallel-size ULYSSES_SIZE] [--cfg-parallel] [--compile]
                          [--compile-allow-graph-break] [--dit-cache]
                          [--cache-step-range CACHE_STEP_RANGE] [--cache-step-interval CACHE_STEP_INTERVAL]
                          [--cache-block-range CACHE_BLOCK_RANGE]
@@ -326,22 +326,22 @@ Run a simulated diffusion transformer forward and dump perf stats.
 | `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--batch-size` | options | 必选 | 指定输入 batch 大小。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--seq-len` | options | 必选 | 指定文本序列长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
-| `--chrome-trace` | options | 可选 | 指定 Chrome trace JSON 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |
+| `--chrome-trace-file` | options | 可选 | 指定 Chrome trace JSON 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |
 | `--height` | options | 可选 | 指定输入视频或图像帧高度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`400`。 |
 | `--width` | options | 可选 | 指定输入视频或图像帧宽度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`832`。 |
 | `--frame-num` | options | 可选 | 指定视频帧数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`81`。 |
 | `--sample-step` | options | 可选 | 指定 diffusion 采样步数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--log-level` | options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`info`。 |
+| `--log-level` | options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
 | `--dtype` | options | 可选 | 指定模型计算数据类型。<br>1. 类型：Str。<br>2. 参考值：`float16`、`float32`、`bfloat16`。<br>3. 默认值：`float16`。 |
 | `--remote-source` | options | 可选 | 指定非本地 Diffusers repo ID 的远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
-| `--quantize-linear-action` | options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-attention-action` | options | 可选 | 指定 attention 计算量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
+| `--quantize-linear-action` | options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`w8a16-static`、`w8a8-static`、`w4a8-static`、`w8a16-dynamic`、`w8a8-dynamic`、`w4a8-dynamic`、`fp8`、`mxfp4`。<br>3. 默认值：`w8a8-dynamic`。 |
+| `--quantize-attention-action` | options | 可选 | 指定 attention 计算量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
 | `--use-cfg` | options | 可选 | 启用 classifier-free guidance 相关仿真路径。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--attention-backend` | Attention Options | 可选 | 选择 attention 后端。<br>1. 类型：Str。<br>2. 参考值：`dense`、`block_sparse_attention`。<br>3. 默认值：`dense`。 |
 | `--attention-block-size` | Attention Options | 可选 | 设置 BSA block size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`128`。 |
 | `--attention-sparsity` | Attention Options | 可选 | 设置 BSA 跳过的 KV block 比例。<br>1. 类型：Float。<br>2. 取值范围：`[0.0, 1.0)`。<br>3. 默认值：`0.0`。 |
-| `--world-size` | Parallel Options | 可选 | 指定参与分布式仿真的总设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--ulysses-size` | Parallel Options | 可选 | 指定 Ulysses 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
+| `--num-devices` | Parallel Options | 可选 | 指定参与分布式仿真的总设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
+| `--ulysses-parallel-size` | Parallel Options | 可选 | 指定 Ulysses 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--cfg-parallel` | Parallel Options | 可选 | 启用 CFG 并行策略。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile` | Optimization Options | 可选 | 在仿真前编译主 transformer。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 使用 `dynamic=False, fullgraph=True`；启用 DiT cache 时，cache transformer 使用相同策略。 |
 | `--compile-allow-graph-break` | Optimization Options | 可选 | 允许编译期间发生 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 会将主 transformer 和 DiT cache transformer 的编译方式改为 `fullgraph=False`。 |
@@ -357,7 +357,7 @@ BSA 行为与限制：
 - BSA 不能与 attention quantization 同时使用。以下完整命令是非法命令，会在执行前报错：
 
   ```bash
-  python -m cli.inference.video_generate example-model --batch-size 1 --seq-len 128 --attention-backend block_sparse_attention --quantize-attention-action INT8
+  python -m cli.inference.video_generate example-model --batch-size 1 --seq-len 128 --attention-backend block_sparse_attention --quantize-attention-action int8
   ```
 
   linear quantization 不受此规则禁止，仍可独立使用。

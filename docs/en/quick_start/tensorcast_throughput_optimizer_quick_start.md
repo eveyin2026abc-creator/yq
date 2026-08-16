@@ -60,7 +60,7 @@ If the commands do not print help information, check that the virtual environmen
 TensorCast performs performance modeling for PyTorch programs. It does not execute the model on a real accelerator. Instead, it intercepts the computation graph and estimates operator latency, memory usage, and overall inference performance based on the target device profile.
 
 > [!NOTE]
-> TensorCast prints operator-level performance summaries, total execution time, TPS/Device, and memory usage by default. If `--chrome-trace` is specified, it can also generate a Chrome Trace file for timeline analysis.
+> TensorCast prints operator-level performance summaries, total execution time, TPS/Device, and memory usage by default. If `--chrome-trace-file` is specified, it can also generate a Chrome Trace file for timeline analysis.
 
 #### 2.2.1 Run LLM Text-Generation Simulation
 
@@ -104,14 +104,14 @@ Success criteria:
 
 #### 2.2.3 Generate Chrome Trace (Optional)
 
-To inspect a more fine-grained timeline, add `--chrome-trace`:
+To inspect a more fine-grained timeline, add `--chrome-trace-file`:
 
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B \
     --num-queries 2 \
     --query-length 3500 \
     --device TEST_DEVICE \
-    --chrome-trace ./tensorcast_trace.json
+    --chrome-trace-file ./tensorcast_trace.json
 ```
 
 After generation, open the trace file with `chrome://tracing` or MindStudio Insight.
@@ -125,7 +125,7 @@ The ServingCast throughput optimizer searches for the best parallel strategy and
 
 #### 2.3.1 Run Service-Level Performance Simulation
 
-The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tp-sizes` in advanced usage to narrow the search space.
+The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tensor-parallel-sizes` in advanced usage to narrow the search space.
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -133,9 +133,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --num-devices 8 \
     --input-length 3500 \
     --output-length 1500 \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --tpot-limits 50
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --tpot-limit 50
 ```
 
 #### 2.3.2 Check Optimization Results
@@ -183,7 +183,7 @@ Common issues:
 
 - If model configuration cannot be downloaded, check network access to Hugging Face or set the `HF_ENDPOINT` mirror.
 - If `cli` or `tensor_cast` cannot be imported, confirm that you are in the repository root or that `PYTHONPATH` is set correctly.
-- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
+- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tensor-parallel-sizes`.
 
 Continue with:
 

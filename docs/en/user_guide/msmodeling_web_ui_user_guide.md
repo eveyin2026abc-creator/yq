@@ -177,9 +177,9 @@ where VL adds image input parameters on top of the LLM simulation.
 | `ep-size` | Expert Parallel size, commonly used for MoE models |
 | `num-mtp-tokens` | Number of MTP tokens, available for models that support MTP such as DeepSeek |
 | `prefix-cache-hit-rate` | Prefix Cache hit rate, value range `[0,1)`, used to estimate the benefit of prefill token reuse |
-| `quantize-linear-action` | Linear layer quantization method, such as `W8A8_DYNAMIC`, `FP8`, `MXFP4` |
+| `quantize-linear-action` | Linear layer quantization method, such as `w8a8-dynamic`, `fp8`, `mxfp4` |
 | `quantize-non-expert-linear-action` | Non-expert Linear layer quantization override, mainly used for DeepSeek V4; applies to attention projections, dense MLP, and shared experts; routed MoE experts still use `quantize-linear-action` |
-| `quantize-attention-action` | KV Cache / Attention quantization method, such as `DISABLED`, `INT8`, `FP8` |
+| `quantize-attention-action` | KV Cache / Attention quantization method, such as `disabled`, `int8`, `fp8` |
 | `image-height/image-width` | VL image dimensions |
 
 ### 4.2 Minimal LLM Example: Single-Chip Decode
@@ -192,8 +192,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 1 \
   --context-length 4500 \
   --decode \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled
 ```
 
 Suitable for quickly observing single-device inference time, TPS/Device, memory usage, and operator breakdown for a given chip under a typical decode scenario.
@@ -208,9 +208,9 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 3500 \
   --context-length 0 \
   --compile \
-  --tp-size 8 \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --tensor-parallel-size 8 \
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 This scenario focuses on the cost of processing the first input segment, suitable for comparing:
@@ -241,9 +241,9 @@ for nq in 16 32 64; do
     --query-length 8 \
     --context-length 4500 \
     --decode \
-    --tp-size 1 \
-    --quantize-linear-action MXFP4 \
-    --quantize-attention-action DISABLED
+    --tensor-parallel-size 1 \
+    --quantize-linear-action mxfp4 \
+    --quantize-attention-action disabled
 done
 ```
 
@@ -297,9 +297,9 @@ python -m cli.inference.text_generate deepseek-ai/DeepSeek-R1 \
   --context-length 3500 \
   --decode \
   --num-mtp-tokens 2 \
-  --tp-size 8 \
-  --ep-size 8 \
-  --quantize-linear-action W8A8_DYNAMIC \
+  --tensor-parallel-size 8 \
+  --expert-parallel-size 8 \
+  --quantize-linear-action w8a8-dynamic \
   --compile
 ```
 
@@ -315,8 +315,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 512 \
   --context-length 4096 \
   --prefix-cache-hit-rate 0.5 \
-  --tp-size 4 \
-  --quantize-linear-action W8A8_DYNAMIC
+  --tensor-parallel-size 4 \
+  --quantize-linear-action w8a8-dynamic
 ```
 
 `prefix-cache-hit-rate=0.5` means estimating a 50% prefix hit at the token level. The higher the hit rate, the shorter the effective prefill length, and typically the lower the TTFT and prefill-side memory pressure.
@@ -331,12 +331,12 @@ python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct \
   --query-length 16 \
   --context-length 200 \
   --decode \
-  --tp-size 8 \
+  --tensor-parallel-size 8 \
   --image-batch-size 1 \
   --image-height 720 \
   --image-width 1080 \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 For VL scenarios, it is recommended to focus on:
@@ -369,8 +369,8 @@ This tool simulates the Diffusion Transformer forward process, commonly used for
 | `--frame-num` | Number of frames |
 | `--sample-step` | Number of denoise steps |
 | `--dtype` | `float16`, `float32`, `bfloat16` |
-| `--world-size` | Total number of devices |
-| `--ulysses-size` | Ulysses sequence parallel size, must evenly divide `world-size` |
+| `--num-devices` | Total number of devices |
+| `--ulysses-parallel-size` | Ulysses sequence parallel size, must evenly divide `world-size` |
 | `--use-cfg` | Enable CFG |
 | `--cfg-parallel` | Use CFG parallel |
 | `--dit-cache` | Enable DiT block cache |
@@ -390,7 +390,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --frame-num 81 \
   --sample-step 50 \
   --dtype float16 \
-  --quantize-linear-action W8A8_DYNAMIC
+  --quantize-linear-action w8a8-dynamic
 ```
 
 ### 5.3 Ulysses Parallel Example
@@ -404,8 +404,8 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --width 1280 \
   --frame-num 129 \
   --sample-step 50 \
-  --world-size 8 \
-  --ulysses-size 4 \
+  --num-devices 8 \
+  --ulysses-parallel-size 4 \
   --dtype float16
 ```
 
@@ -428,8 +428,8 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --width 1280 \
   --frame-num 81 \
   --sample-step 30 \
-  --world-size 8 \
-  --ulysses-size 4 \
+  --num-devices 8 \
+  --ulysses-parallel-size 4 \
   --use-cfg \
   --cfg-parallel
 ```
@@ -466,7 +466,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --device ATLAS_800_A2_280T_32G_PCIE \
   --batch-size 1 \
   --seq-len 128 \
-  --chrome-trace trace/video.json
+  --chrome-trace-file trace/video.json
 ```
 
 After generation, you can open it in the Chrome browser:
@@ -495,8 +495,8 @@ The deployment mode names in the Web UI are:
 
 | Web UI Name | CLI Parameter | Applicable Scenario |
 |---|---|---|
-| `PD Aggregated` | Default, without `--disagg`, without `--enable-optimize-prefill-decode-ratio` | Prefill and Decode are co-deployed in the same instance type; suitable for baselines and cross-chip comparisons |
-| `PD Disaggregated` | Add `--disagg` | Prefill and Decode disaggregated analysis; separately evaluating capacity under TTFT or TPOT constraints |
+| `PD Aggregated` | Default, without `--disaggregation`, without `--enable-optimize-prefill-decode-ratio` | Prefill and Decode are co-deployed in the same instance type; suitable for baselines and cross-chip comparisons |
+| `PD Disaggregated` | Add `--disaggregation` | Prefill and Decode disaggregated analysis; separately evaluating capacity under TTFT or TPOT constraints |
 | `PD Ratio` | Add `--enable-optimize-prefill-decode-ratio`, and specify the number of devices per P/D instance | Under a PD disaggregated architecture, finding the optimal Prefill-to-Decode instance ratio |
 
 ### 6.2 PD Aggregated: Offline Throughput Tuning
@@ -510,8 +510,8 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 Suitable for answering:
@@ -531,10 +531,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8 \
-  --ttft-limits 2000 \
-  --tpot-limits 50
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8 \
+  --ttft-limit 2000 \
+  --tpot-limit 50
 ```
 
 Suitable for online service capacity evaluation:
@@ -553,7 +553,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --num-devices 8 \
   --input-length 3500 \
   --output-length 1500 \
-  --tp-sizes 1 2 4 8 \
+  --tensor-parallel-sizes 1 2 4 8 \
   --batch-range 1 256 \
   --jobs 8
 ```
@@ -580,10 +580,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
-  --disagg \
-  --ttft-limits 2000
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
+  --disaggregation \
+  --ttft-limit 2000
 ```
 
 This mode focuses on how many requests the Prefill stage can handle under TTFT constraints.
@@ -597,10 +597,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
-  --disagg \
-  --tpot-limits 50
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
+  --disaggregation \
+  --tpot-limit 50
 ```
 
 This mode focuses on the sustained output capability of the Decode stage under TPOT constraints.
@@ -614,13 +614,13 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
   --enable-optimize-prefill-decode-ratio \
   --prefill-devices-per-instance 4 \
   --decode-devices-per-instance 2 \
-  --ttft-limits 2000 \
-  --tpot-limits 50 \
+  --ttft-limit 2000 \
+  --tpot-limit 50 \
   --log-level info
 ```
 
@@ -678,7 +678,7 @@ The result pane displays the following from top to bottom:
 4. **Memory distribution chart**: visual breakdown of total_device / model_weight / kv_cache / peak_usage / available.
 5. **Operator bottleneck distribution (OpBound)**: compact text showing memory bound / communication bound / compute bound proportions.
 6. **Operator timing table**: Name / total / avg / # of Calls, sorted by total latency descending, with expandable input shapes and bound analysis.
-7. **Chrome Trace downloads**: JSON download links per case / seq index (requires `--chrome-trace`).
+7. **Chrome Trace downloads**: JSON download links per case / seq index (requires `--chrome-trace-file`).
 
 If multi-value fields are configured (multiple devices, multiple quantization methods, concurrency lists, etc.), the result automatically switches to the **multi-case view**: a Summary table lists core metrics for each case; click to drill down to the full single-case result.
 
@@ -761,8 +761,8 @@ query-length: 1
 context-length: 4500
 decode: true
 tp-size: 8
-quantize-linear-action: W8A8_DYNAMIC
-quantize-attention-action: DISABLED
+quantize-linear-action: w8a8-dynamic
+quantize-attention-action: disabled
 ```
 
 LLM prefill initial values:
@@ -774,8 +774,8 @@ query-length: 3500
 context-length: 0
 decode: false
 tp-size: 8
-quantize-linear-action: W8A8_DYNAMIC
-quantize-attention-action: INT8
+quantize-linear-action: w8a8-dynamic
+quantize-attention-action: int8
 ```
 
 Optimizer online service initial values:
@@ -815,10 +815,10 @@ It is recommended to use `[16,32,64,128]` for the first round, then perform a fi
 
 | Scenario | Recommendation |
 |---|---|
-| Quick baseline | `W8A8_DYNAMIC` |
-| Do not want to introduce quantization effects | `DISABLED` |
-| Significant memory pressure | Try `INT8` attention or `FP8` |
-| MXFP4 solution evaluation | Use `MXFP4`, adjust `mxfp4-group-size` if necessary |
+| Quick baseline | `w8a8-dynamic` |
+| Do not want to introduce quantization effects | `disabled` |
+| Significant memory pressure | Try `int8` attention or `fp8` |
+| mxfp4 solution evaluation | Use `mxfp4`, adjust `mxfp4-group-size` if necessary |
 
 Note: The simulation tool focuses on performance and resource estimation, and does not replace real accuracy evaluation. Model quality after quantization must still be verified through accuracy testing.
 
@@ -923,13 +923,13 @@ Open `http://127.0.0.1:5173` in your browser.
 LLM decode:
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 32 --query-length 1 --context-length 4500 --decode --tp-size 8
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 32 --query-length 1 --context-length 4500 --decode --tensor-parallel-size 8
 ```
 
 VL:
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 4 --query-length 16 --context-length 200 --decode --tp-size 8 --image-batch-size 1 --image-height 720 --image-width 1080
+python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 4 --query-length 16 --context-length 200 --decode --tensor-parallel-size 8 --image-batch-size 1 --image-height 720 --image-width 1080
 ```
 
 Video:
@@ -941,5 +941,5 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers --device
 Optimizer:
 
 ```bash
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --input-length 3500 --output-length 1500 --tp-sizes 1 2 4 8 --batch-range 1 256 --ttft-limits 2000 --tpot-limits 50
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --input-length 3500 --output-length 1500 --tensor-parallel-sizes 1 2 4 8 --batch-range 1 256 --ttft-limit 2000 --tpot-limit 50
 ```

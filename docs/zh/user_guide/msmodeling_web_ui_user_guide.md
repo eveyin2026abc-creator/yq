@@ -179,9 +179,9 @@ python -m cli.inference.text_generate <model_id> [options]
 | `ep-size` | Expert Parallel 数量，MoE 模型常用 |
 | `num-mtp-tokens` | MTP token 数，DeepSeek 等支持 MTP 的模型可用 |
 | `prefix-cache-hit-rate` | Prefix Cache 命中率，取值 `[0,1)`，用于估计 prefill token 复用收益 |
-| `quantize-linear-action` | Linear 层量化方式，如 `W8A8_DYNAMIC`、`FP8`、`MXFP4` |
+| `quantize-linear-action` | Linear 层量化方式，如 `w8a8-dynamic`、`fp8`、`mxfp4` |
 | `quantize-non-expert-linear-action` | 非专家 Linear 层量化覆盖项，主要用于 DeepSeek V4；作用于 attention projections、dense MLP 和 shared experts；routed MoE experts 仍使用 `quantize-linear-action` |
-| `quantize-attention-action` | KV Cache / Attention 量化方式，如 `DISABLED`、`INT8`、`FP8` |
+| `quantize-attention-action` | KV Cache / Attention 量化方式，如 `disabled`、`int8`、`fp8` |
 | `image-height/image-width` | VL 图像尺寸 |
 
 ### 4.2 最小 LLM 示例：单芯片 decode
@@ -194,8 +194,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 1 \
   --context-length 4500 \
   --decode \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled
 ```
 
 适合快速观察某芯片在典型 decode 场景下的单设备推理时间、TPS/Device、显存和算子占比。
@@ -210,9 +210,9 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 3500 \
   --context-length 0 \
   --compile \
-  --tp-size 8 \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --tensor-parallel-size 8 \
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 此场景关注首段输入处理成本，适合比较：
@@ -243,9 +243,9 @@ for nq in 16 32 64; do
     --query-length 8 \
     --context-length 4500 \
     --decode \
-    --tp-size 1 \
-    --quantize-linear-action MXFP4 \
-    --quantize-attention-action DISABLED
+    --tensor-parallel-size 1 \
+    --quantize-linear-action mxfp4 \
+    --quantize-attention-action disabled
 done
 ```
 
@@ -299,9 +299,9 @@ python -m cli.inference.text_generate deepseek-ai/DeepSeek-R1 \
   --context-length 3500 \
   --decode \
   --num-mtp-tokens 2 \
-  --tp-size 8 \
-  --ep-size 8 \
-  --quantize-linear-action W8A8_DYNAMIC \
+  --tensor-parallel-size 8 \
+  --expert-parallel-size 8 \
+  --quantize-linear-action w8a8-dynamic \
   --compile
 ```
 
@@ -317,8 +317,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --query-length 512 \
   --context-length 4096 \
   --prefix-cache-hit-rate 0.5 \
-  --tp-size 4 \
-  --quantize-linear-action W8A8_DYNAMIC
+  --tensor-parallel-size 4 \
+  --quantize-linear-action w8a8-dynamic
 ```
 
 `prefix-cache-hit-rate=0.5` 表示按 token 级近似估算 50% prefix 命中。命中率越高，有效 prefill 长度越短，TTFT 和 prefill 侧显存压力通常会降低。
@@ -333,12 +333,12 @@ python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct \
   --query-length 16 \
   --context-length 200 \
   --decode \
-  --tp-size 8 \
+  --tensor-parallel-size 8 \
   --image-batch-size 1 \
   --image-height 720 \
   --image-width 1080 \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 VL 场景建议重点关注：
@@ -371,8 +371,8 @@ python -m cli.inference.video_generate <model_id> [options]
 | `--frame-num` | 帧数 |
 | `--sample-step` | denoise step 数 |
 | `--dtype` | `float16`、`float32`、`bfloat16` |
-| `--world-size` | 总卡数 |
-| `--ulysses-size` | Ulysses sequence parallel 大小，必须整除 `world-size` |
+| `--num-devices` | 总卡数 |
+| `--ulysses-parallel-size` | Ulysses sequence parallel 大小，必须整除 `world-size` |
 | `--use-cfg` | 启用 CFG |
 | `--cfg-parallel` | 使用 CFG 并行 |
 | `--dit-cache` | 启用 DiT block cache |
@@ -392,7 +392,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --frame-num 81 \
   --sample-step 50 \
   --dtype float16 \
-  --quantize-linear-action W8A8_DYNAMIC
+  --quantize-linear-action w8a8-dynamic
 ```
 
 ### 5.3 Ulysses 并行示例
@@ -406,8 +406,8 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --width 1280 \
   --frame-num 129 \
   --sample-step 50 \
-  --world-size 8 \
-  --ulysses-size 4 \
+  --num-devices 8 \
+  --ulysses-parallel-size 4 \
   --dtype float16
 ```
 
@@ -430,8 +430,8 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --width 1280 \
   --frame-num 81 \
   --sample-step 30 \
-  --world-size 8 \
-  --ulysses-size 4 \
+  --num-devices 8 \
+  --ulysses-parallel-size 4 \
   --use-cfg \
   --cfg-parallel
 ```
@@ -468,7 +468,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --device ATLAS_800_A2_280T_32G_PCIE \
   --batch-size 1 \
   --seq-len 128 \
-  --chrome-trace trace/video.json
+  --chrome-trace-file trace/video.json
 ```
 
 生成后可在 Chrome 浏览器打开：
@@ -497,8 +497,8 @@ Web UI 中部署模式名称为：
 
 | Web UI 名称 | CLI 参数 | 适用场景 |
 |---|---|---|
-| `PD 混部` | 默认，不加 `--disagg`，不加 `--enable-optimize-prefill-decode-ratio` | Prefill 和 Decode 在同一类实例中混合部署，先做基线和多芯片横向对比 |
-| `PD 分离` | 加 `--disagg` | Prefill 和 Decode 分离分析，分别评估 TTFT 或 TPOT 约束下的能力 |
+| `PD 混部` | 默认，不加 `--disaggregation`，不加 `--enable-optimize-prefill-decode-ratio` | Prefill 和 Decode 在同一类实例中混合部署，先做基线和多芯片横向对比 |
+| `PD 分离` | 加 `--disaggregation` | Prefill 和 Decode 分离分析，分别评估 TTFT 或 TPOT 约束下的能力 |
 | `PD 配比` | 加 `--enable-optimize-prefill-decode-ratio`，并指定 P/D 单实例卡数 | 在 PD 分离架构下，寻找 Prefill 与 Decode 实例配比 |
 
 ### 6.2 PD 混部：离线吞吐寻优
@@ -512,8 +512,8 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8
 ```
 
 适合回答：
@@ -533,10 +533,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action INT8 \
-  --ttft-limits 2000 \
-  --tpot-limits 50
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action int8 \
+  --ttft-limit 2000 \
+  --tpot-limit 50
 ```
 
 适合在线服务容量评估：
@@ -555,7 +555,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --num-devices 8 \
   --input-length 3500 \
   --output-length 1500 \
-  --tp-sizes 1 2 4 8 \
+  --tensor-parallel-sizes 1 2 4 8 \
   --batch-range 1 256 \
   --jobs 8
 ```
@@ -582,10 +582,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
-  --disagg \
-  --ttft-limits 2000
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
+  --disaggregation \
+  --ttft-limit 2000
 ```
 
 该模式关注 Prefill 阶段在 TTFT 约束下能承载多少请求。
@@ -599,10 +599,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
-  --disagg \
-  --tpot-limits 50
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
+  --disaggregation \
+  --tpot-limit 50
 ```
 
 该模式关注 Decode 阶段在 TPOT 约束下的持续输出能力。
@@ -616,13 +616,13 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
   --input-length 3500 \
   --output-length 1500 \
   --compile \
-  --quantize-linear-action W8A8_DYNAMIC \
-  --quantize-attention-action DISABLED \
+  --quantize-linear-action w8a8-dynamic \
+  --quantize-attention-action disabled \
   --enable-optimize-prefill-decode-ratio \
   --prefill-devices-per-instance 4 \
   --decode-devices-per-instance 2 \
-  --ttft-limits 2000 \
-  --tpot-limits 50 \
+  --ttft-limit 2000 \
+  --tpot-limit 50 \
   --log-level info
 ```
 
@@ -680,7 +680,7 @@ Web UI 的结果展示采用模块化组件，不同模块有独立的结果视�
 4. **显存分布图**：total_device / model_weight / kv_cache / peak_usage / available 的可视化分解。
 5. **算子瓶颈分布（OpBound）**：紧凑文本显示 memory bound / communication bound / compute bound 占比。
 6. **算子耗时表**：Name / total / avg / # of Calls，按耗时降序排列，可展开 input shapes 和 bound 分析。
-7. **Chrome Trace 下载**：按 case / seq 索引提供 JSON 下载链接（需启用 `--chrome-trace`）。
+7. **Chrome Trace 下载**：按 case / seq 索引提供 JSON 下载链接（需启用 `--chrome-trace-file`）。
 
 如果配置了多值字段（多设备、多量化、并发列表等），结果自动切换为 **多用例视图**：Summary 表格列出每个 case 的核心指标，点击可 drill-down 到单 case 完整结果。
 
@@ -768,8 +768,8 @@ query-length: 1
 context-length: 4500
 decode: true
 tp-size: 8
-quantize-linear-action: W8A8_DYNAMIC
-quantize-attention-action: DISABLED
+quantize-linear-action: w8a8-dynamic
+quantize-attention-action: disabled
 ```
 
 LLM prefill 初始值：
@@ -781,8 +781,8 @@ query-length: 3500
 context-length: 0
 decode: false
 tp-size: 8
-quantize-linear-action: W8A8_DYNAMIC
-quantize-attention-action: INT8
+quantize-linear-action: w8a8-dynamic
+quantize-attention-action: int8
 ```
 
 Optimizer 在线服务初始值：
@@ -822,10 +822,10 @@ jobs: 8
 
 | 场景 | 建议 |
 |---|---|
-| 快速基线 | `W8A8_DYNAMIC` |
-| 不希望引入量化影响 | `DISABLED` |
-| 显存压力明显 | 尝试 `INT8` attention 或 `FP8` |
-| MXFP4 方案评估 | 使用 `MXFP4`，必要时调整 `mxfp4-group-size` |
+| 快速基线 | `w8a8-dynamic` |
+| 不希望引入量化影响 | `disabled` |
+| 显存压力明显 | 尝试 `int8` attention 或 `fp8` |
+| mxfp4 方案评估 | 使用 `mxfp4`，必要时调整 `mxfp4-group-size` |
 
 注意：仿真工具关注性能和资源估计，不替代真实精度评估。量化后的模型质量仍需通过精度测试验证。
 
@@ -930,13 +930,13 @@ python web_ui/main.py
 LLM decode：
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 32 --query-length 1 --context-length 4500 --decode --tp-size 8
+python -m cli.inference.text_generate Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 32 --query-length 1 --context-length 4500 --decode --tensor-parallel-size 8
 ```
 
 VL：
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 4 --query-length 16 --context-length 200 --decode --tp-size 8 --image-batch-size 1 --image-height 720 --image-width 1080
+python -m cli.inference.text_generate Qwen/Qwen3-VL-235B-A22B-Instruct --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --num-queries 4 --query-length 16 --context-length 200 --decode --tensor-parallel-size 8 --image-batch-size 1 --image-height 720 --image-width 1080
 ```
 
 Video：
@@ -948,5 +948,5 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers --device
 Optimizer：
 
 ```bash
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --input-length 3500 --output-length 1500 --tp-sizes 1 2 4 8 --batch-range 1 256 --ttft-limits 2000 --tpot-limits 50
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B --device ATLAS_800_A2_280T_32G_PCIE --num-devices 8 --input-length 3500 --output-length 1500 --tensor-parallel-sizes 1 2 4 8 --batch-range 1 256 --ttft-limit 2000 --tpot-limit 50
 ```

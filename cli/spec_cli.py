@@ -300,26 +300,38 @@ def make_enum_type(enum_cls: type[Enum], option_name: str):
     return parser, kebab_choice_metavar(member.value for member in members)
 
 
-def make_token_type(canonical_values: Sequence[str], option_name: str, *, store_canonical: str = "kebab"):
-    """Parse kebab-case tokens and accept snake_case aliases.
+def make_token_type(
+    canonical_values: Sequence[str],
+    option_name: str,
+    *,
+    store_canonical: str = "kebab",
+    registered_names: bool = False,
+):
+    """Parse token values.
 
+    By default, help shows kebab-case and snake_case is a deprecated alias.
+    ``registered_names=True`` keeps the registered tokens as the official
+    values (for example ``ais_bench`` / ``vllm_benchmark``).
     ``store_canonical`` is ``kebab`` or ``snake`` (the form returned to dest).
     """
     kebab_values = [to_kebab(value) for value in canonical_values]
     snake_map = {to_kebab(value): value.replace("-", "_") for value in canonical_values}
+    display_values = list(canonical_values) if registered_names else kebab_values
 
     def parser(value: str) -> str:
         kebab = to_kebab(value)
         if kebab not in kebab_values:
-            allowed = ", ".join(kebab_values)
+            allowed = ", ".join(display_values)
             raise argparse.ArgumentTypeError(f"invalid choice {value!r} for {option_name} (choose from {allowed})")
-        if "_" in value:
+        if not registered_names and "_" in value:
             warn_deprecated(f"{option_name} {value}", f"{option_name} {kebab}")
         if store_canonical == "snake":
             return snake_map[kebab]
         return kebab
 
     parser.__name__ = f"parse_{option_name.strip('-').replace('-', '_')}"
+    if registered_names:
+        return parser, "{" + ",".join(display_values) + "}"
     return parser, kebab_choice_metavar(kebab_values)
 
 

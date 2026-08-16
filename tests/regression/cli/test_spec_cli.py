@@ -179,6 +179,10 @@ def test_optix_help_hides_snake_case_and_multichar_short() -> None:
     help_text = result.stdout
     assert "--load-breakpoint" in help_text
     assert "--benchmark-policy" in help_text
+    assert "ais_bench" in help_text
+    assert "vllm_benchmark" in help_text
+    assert "ais-bench" not in help_text
+    assert "vllm-benchmark" not in help_text
     assert "--load_breakpoint" not in help_text
     assert "-lb" not in help_text
     assert "--version" in help_text

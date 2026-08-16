@@ -11,8 +11,8 @@
 
 | 模式 | 适用场景 | 关键参数 |
 | --- | --- | --- |
-| PD 混部 | Prefill 与 Decode 运行在同一实例中，适合快速评估整体吞吐 | `--tpot-limits`、`--ttft-limits`|
-| PD 分离 | Prefill 与 Decode 分开部署，需要分别评估阶段能力 | `--disagg`、`--ttft-limits` 或 `--tpot-limits` |
+| PD 混部 | Prefill 与 Decode 运行在同一实例中，适合快速评估整体吞吐 | `--tpot-limit`、`--ttft-limit`|
+| PD 分离 | Prefill 与 Decode 分开部署，需要分别评估阶段能力 | `--disaggregation`、`--ttft-limit` 或 `--tpot-limit` |
 | PD 配比 | 需要规划 Prefill 与 Decode 实例数量比例 | `--enable-optimize-prefill-decode-ratio`、`--prefill-devices-per-instance`、`--decode-devices-per-instance` |
 
 ### 2.1 PD 混部场景
@@ -28,9 +28,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --tpot-limits 50
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --tpot-limit 50
 ```
 
 #### 使用 Prefix Cache
@@ -44,9 +44,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --tpot-limits 50 \
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --tpot-limit 50 \
     --prefix-cache-hit-rate 0.5
 ```
 
@@ -62,11 +62,11 @@ PD 分离将 Prefill 与 Decode 阶段拆分为独立的优化运行，适用于
 
 启用 PD 分离需提供：
 
-- `--disagg`：启用 PD 分离
+- `--disaggregation`：启用 PD 分离
 
 #### Prefill 模式
 
-在 TTFT（Time-to-First-Token，首 token 时间）约束下优化 Prefill 阶段吞吐量。此模式下应设置 `--disagg` 与 `--ttft-limits`。
+在 TTFT（Time-to-First-Token，首 token 时间）约束下优化 Prefill 阶段吞吐量。此模式下应设置 `--disaggregation` 与 `--ttft-limit`。
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -75,15 +75,15 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --disagg \
-    --ttft-limits 2000
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --disaggregation \
+    --ttft-limit 2000
 ```
 
 #### Decode 模式
 
-在 TPOT（Time-per-Output-Token，每输出 token 时间）约束下优化 Decode 阶段吞吐量。此模式下应设置 `--disagg` 与 `--tpot-limits`。
+在 TPOT（Time-per-Output-Token，每输出 token 时间）约束下优化 Decode 阶段吞吐量。此模式下应设置 `--disaggregation` 与 `--tpot-limit`。
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -92,10 +92,10 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --disagg \
-    --tpot-limits 50
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --disaggregation \
+    --tpot-limit 50
 ```
 
 ### 2.3 PD 配比场景
@@ -118,8 +118,8 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
     --enable-optimize-prefill-decode-ratio \
     --prefill-devices-per-instance 16 \
     --decode-devices-per-instance 16 \
@@ -128,7 +128,7 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
 
 #### 约束
 
-- `--enable-optimize-prefill-decode-ratio` 不能与 `--disagg` 同时使用
+- `--enable-optimize-prefill-decode-ratio` 不能与 `--disaggregation` 同时使用
 - 启用 PD 配比时，必须同时指定 `--prefill-devices-per-instance` 与 `--decode-devices-per-instance`
 
 ## 3 结果说明
@@ -140,8 +140,8 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
   ----------------------------------------------------------------------------
   Input Configuration:
     Model: Qwen/Qwen3-32B
-    Quantize Linear action: W8A8_DYNAMIC
-    Quantize Attention action: DISABLED
+    Quantize Linear action: w8a8-dynamic
+    Quantize Attention action: disabled
     Devices: 8 TEST_DEVICE
     TTFT Limits: None ms
     TPOT Limits: 50.0 ms
@@ -188,9 +188,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action W8A8_DYNAMIC \
-    --quantize-attention-action DISABLED \
-    --tpot-limits 50
+    --quantize-linear-action w8a8-dynamic \
+    --quantize-attention-action disabled \
+    --tpot-limit 50
 ```
 
 行为说明：
@@ -270,7 +270,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --num-devices 8 \
     --input-length 3500 \
     --output-length 1500 \
-    --tpot-limits 50 \
+    --tpot-limit 50 \
     --batch-range 1 256
 ```
 
@@ -282,7 +282,7 @@ Options:
                         The input length of the prompt. (default: None)
   --output-length OUTPUT_LENGTH
                         The expected output length. (default: None)
-  --mtp-acceptance-rate MTP_ACCEPTANCE_RATE [MTP_ACCEPTANCE_RATE ...]
+  --mtp-acceptance-rates MTP_ACCEPTANCE_RATE [MTP_ACCEPTANCE_RATE ...]
                         Acceptance rate list for MTP (default: [0.9, 0.6, 0.4, 0.2])
   --dump-original-results
                         If set, dump the original results for analysis. (default: False)
@@ -305,9 +305,8 @@ General Options:
   --reserved-memory-gb RESERVED_MEMORY_GB
                         Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. Set to 0 to disable
                         memory reservation. (default: 10.0)
-  --log-level {debug,info,warning,error,critical}
-                        Specifies the verbosity level for log output. Available levels: 'debug' (most verbose), 'info', 'warning', 'error',
-                        'critical' (least verbose). (default: error)
+  --log-level {debug,info,warning,error}
+                        Specifies the verbosity level for log output. Available levels: 'debug', 'info', 'warning', 'error'. --verbose/--debug equal debug; --quiet equals error. [default: info]
 
 Model & Quantization Options:
   --compile             If set, invoke torch.compile() on the model before inference. (default: False)
@@ -318,19 +317,19 @@ Model & Quantization Options:
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
                         TP x EP x MOE-DP x MTP. (default: None)
-  --quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
-                        Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: W8A8_DYNAMIC)
-  --quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
-                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: DISABLED)
-  --mxfp4-group-size MXFP4_GROUP_SIZE
-                        Group size for MXFP4 quantization (default: 32)
-  --quantize-attention-action {DISABLED,INT8,FP8}
-                        Quantize the KV cache with the given action (default: DISABLED)
-  --tp-sizes [TP_SIZES ...]
+  --quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}
+                        Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: w8a8-dynamic)
+  --quantize-non-expert-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}
+                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: disabled)
+  --mxfp4-group-size mxfp4_GROUP_SIZE
+                        Group size for mxfp4 quantization (default: 32)
+  --quantize-attention-action {disabled,int8,fp8}
+                        Quantize the KV cache with the given action (default: disabled)
+  --tensor-parallel-sizes [TP_SIZES ...]
                         Enable TP search. Optional explicit TP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
-  --ep-sizes [EP_SIZES ...]
+  --expert-parallel-sizes [EP_SIZES ...]
                         Enable EP search. Optional explicit EP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
-  --moe-dp-sizes [MOE_DP_SIZES ...]
+  --moe-data-parallel-sizes [MOE_DP_SIZES ...]
                         Enable MOE-DP search. Optional explicit MOE-DP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
   --enable-shared-expert-tp
                         Enable vLLM-style tensor parallel for shared experts. (default: False)
@@ -338,23 +337,23 @@ Model & Quantization Options:
                         按需启用指定的编译特性。多个特性以空格分隔，例如
                         `--compilation-config enable_sequence_parallel enable_dispatch_ffn_combine`。
                         不指定时所有编译特性保持关闭。(default: None)
-  --word-embedding-tp {col,row}
+  --word-embedding-tensor-parallel {col,row}
                         Enable word embedding tensor parallel with mode {'col','row'}. If omitted, embedding TP is disabled. (default: None)
 
 Debug Options:
-  --chrome-trace CHROME_TRACE
+  --chrome-trace-file CHROME_TRACE
                         Generate chrome trace file for visualization, for example trace.json. (default: None)
 
 Performance Model Options:
   --performance-model {analytic,profiling}
-                        Performance model type. 'analytic': Roofline model (default). 'profiling': empirical model backed by measured CSV data (requires --profiling-database). (default: analytic)
-  --profiling-database PROFILING_DATABASE
+                        Performance model type. 'analytic': Roofline model (default). 'profiling': empirical model backed by measured CSV data (requires --profiling-database-path). (default: analytic)
+  --profiling-database-path PROFILING_DATABASE
                         Path to the profiling CSV database directory for 'profiling' mode. e.g. tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/ (default: None)
 
 Service Options:
-  --ttft-limits TTFT_LIMITS
+  --ttft-limit TTFT_LIMITS
                         TTFT constraints under which to search for the best throughput. None means no constraint. (default: None)
-  --tpot-limits TPOT_LIMITS
+  --tpot-limit TPOT_LIMITS
                         TPOT constraints under which to search for the best throughput. None means no constraint. (default: None)
   --max-batched-tokens MAX_BATCHED_TOKENS
                         Max batched tokens per data-parallel replica for one prefill or mixed prefill/decode step. If omitted, starts from 4 * input_length and falls back on Prefill OOM. (default: None)
@@ -364,7 +363,7 @@ Service Options:
                         Batch size range: [min max] or [max] (default: 1 for min, no limit for max) (default: None)
   --serving-cost SERVING_COST
                         Serving cost represents the cost of service delivery (default: 0)
-  --disagg              If set, run disaggregation mode. disagg means disaggregation mode. (default: False)
+  --disaggregation              If set, run disaggregation mode. disagg means disaggregation mode. (default: False)
   --jobs JOBS           Number of parallel jobs. (default: 8)
   --max-search-combinations MAX_SEARCH_COMBINATIONS
                         Warn when TP/EP/MOE-DP/MTP search combinations exceed this value. Set 0 to disable the warning. (default: 100)
@@ -383,7 +382,7 @@ PD Ratio Optimization Options:
   --enable-optimize-prefill-decode-ratio
                         Enable PD (Prefill-Decode) ratio optimization mode. This mode independently
                         optimizes Prefill and Decode phases, then combines results to find the optimal
-                        P/D instance ratio. Cannot be used together with --disagg. (default: False)
+                        P/D instance ratio. Cannot be used together with --disaggregation. (default: False)
   --prefill-devices-per-instance PREFILL_DEVICES_PER_INSTANCE
                         Number of devices per Prefill instance. Required when --enable-optimize-prefill-decode-ratio
                         is set. Determines the parallelism configuration search space for Prefill phase.
@@ -399,35 +398,35 @@ PD Ratio Optimization Options:
 | `--device` | Options | 可选 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。<br>1. 类型：Str 或 List[Str]。<br>2. 参考值：`TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：未指定时使用 `TEST_DEVICE`。<br>4. 支持一次传入多个已注册 `DeviceProfile` 名称，重复名称会去重并保留输入顺序。 |
 | `--input-length` | Options | 必选 | 输入 prompt 的 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--output-length` | Options | 必选 | 期望生成的输出 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
-| `--mtp-acceptance-rate` | Options | 可选 | 指定 MTP token 的接受率列表。<br>1. 类型：List[Float]。<br>2. 取值范围：浮点数列表。<br>3. 默认值：`[0.9, 0.6, 0.4, 0.2]`。 |
+| `--mtp-acceptance-rates` | Options | 可选 | 指定 MTP token 的接受率列表。<br>1. 类型：List[Float]。<br>2. 取值范围：浮点数列表。<br>3. 默认值：`[0.9, 0.6, 0.4, 0.2]`。 |
 | `--prefix-cache-hit-rate` | Options | 可选 | 指定 prefix cache 命中率。<br>1. 类型：Float。<br>2. 取值范围：`[0, 1)`。<br>3. 默认值：`0.0`。 |
 | `--dump-original-results` | Options | 可选 | 输出原始搜索结果，便于进一步分析。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `model_id` | General Options | 必选 | 模型 ID 或已审核的本地模型绝对路径。<br>1. 类型：Str。<br>2. 参考值：Hugging Face ID、ModelScope ID 或本地绝对路径。<br>3. 默认值：无。<br>4. 使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备总数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--reserved-memory-gb` | General Options | 可选 | 指定每张设备预留给系统使用的显存，单位为 GB。<br>1. 类型：Float。<br>2. 取值范围：非负数；设置为 `0` 表示不预留系统显存。<br>3. 默认值：`10.0`。 |
-| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
+| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
 | `--compile` | Model & Quantization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Model & Quantization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
-| `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rate) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。 |
-| `--quantize-linear-action` | Model & Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-non-expert-linear-action` | Model & Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`DISABLED`。<br>4. 主要用于 DeepSeek V4 风格 MoE 模型；路由 MoE experts 仍使用 `--quantize-linear-action`。 |
-| `--mxfp4-group-size` | Model & Quantization Options | 可选 | 指定 MXFP4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
-| `--quantize-attention-action` | Model & Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
-| `--tp-sizes` | Model & Quantization Options | 可选 | 启用 TP 搜索，并可显式指定 TP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
-| `--ep-sizes` | Model & Quantization Options | 可选 | 启用 EP 搜索，并可显式指定 EP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
-| `--moe-dp-sizes` | Model & Quantization Options | 可选 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
+| `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rates) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。 |
+| `--quantize-linear-action` | Model & Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`w8a16-static`、`w8a8-static`、`w4a8-static`、`w8a16-dynamic`、`w8a8-dynamic`、`w4a8-dynamic`、`fp8`、`mxfp4`。<br>3. 默认值：`w8a8-dynamic`。 |
+| `--quantize-non-expert-linear-action` | Model & Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`w8a16-static`、`w8a8-static`、`w4a8-static`、`w8a16-dynamic`、`w8a8-dynamic`、`w4a8-dynamic`、`fp8`、`mxfp4`。<br>3. 默认值：`disabled`。<br>4. 主要用于 DeepSeek V4 风格 MoE 模型；路由 MoE experts 仍使用 `--quantize-linear-action`。 |
+| `--mxfp4-group-size` | Model & Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
+| `--quantize-attention-action` | Model & Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
+| `--tensor-parallel-sizes` | Model & Quantization Options | 可选 | 启用 TP 搜索，并可显式指定 TP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
+| `--expert-parallel-sizes` | Model & Quantization Options | 可选 | 启用 EP 搜索，并可显式指定 EP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
+| `--moe-data-parallel-sizes` | Model & Quantization Options | 可选 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
 | `--enable-shared-expert-tp` | Model & Quantization Options | 可选 | 启用 vLLM 风格的 shared experts 张量并行。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. shared experts 使用 dense MLP TP，并延迟执行 `down_proj` 规约。 |
 | `--compilation-config` | Model & Quantization Options | 可选 | 按需启用指定的编译特性。<br>1. 类型：List[Str]。<br>2. 取值范围：`enable_multistream`、`enable_sequence_parallel`、`enable_matmul_allreduce`、`enable_dispatch_ffn_combine`，可同时传入多个，以空格分隔，例如 `--compilation-config enable_sequence_parallel enable_dispatch_ffn_combine`。<br>3. 默认值：`None`，未指定时所有编译特性保持关闭。<br>4. 该参数自 PR #573 起统一替代原 `--enable-sequence-parallel` / `--enable-dispatch-ffn-combine` 等分散开关。 |
-| `--word-embedding-tp` | Model & Quantization Options | 可选 | 启用 word embedding 张量并行并指定并行模式。<br>1. 类型：Str。<br>2. 参考值：`col`、`row`。<br>3. 默认值：`None`，表示不启用 embedding TP。 |
-| `--performance-model` | Performance Model Options | 可选 | 指定性能模型类型。<br>1. 类型：Str。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：`analytic`。<br>4. `profiling` 模式需配合 `--profiling-database` 使用。 |
-| `--profiling-database` | Performance Model Options | 条件必选 | 指定 profiling 模式使用的实测算子 CSV 数据库目录。<br>1. 类型：Str。<br>2. 取值范围：数据库目录路径，例如 `tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/`。<br>3. 默认值：`None`；使用 `--performance-model profiling` 时必填。 |
-| `--chrome-trace` | Debug Options | 可选 | 生成 Chrome Trace 文件，用于可视化分析算子级性能。<br>1. 类型：Str。<br>2. 参考值：Trace 文件路径，例如 `trace.json`。<br>3. 默认值：`None`，表示不生成 Chrome Trace 文件。 |
-| `--ttft-limits` | Service Options | 可选 | 指定 TTFT 约束，用于在约束内搜索最优吞吐。<br>1. 类型：Float。<br>2. 取值范围：正数，单位 ms。<br>3. 默认值：`None`，表示不限制 TTFT。 |
-| `--tpot-limits` | Service Options | 可选 | 指定 TPOT 约束，用于在约束内搜索最优吞吐。<br>1. 类型：Float。<br>2. 取值范围：正数，单位 ms。<br>3. 默认值：`None`，表示不限制 TPOT。 |
+| `--word-embedding-tensor-parallel` | Model & Quantization Options | 可选 | 启用 word embedding 张量并行并指定并行模式。<br>1. 类型：Str。<br>2. 参考值：`col`、`row`。<br>3. 默认值：`None`，表示不启用 embedding TP。 |
+| `--performance-model` | Performance Model Options | 可选 | 指定性能模型类型。<br>1. 类型：Str。<br>2. 参考值：`analytic`、`profiling`。<br>3. 默认值：`analytic`。<br>4. `profiling` 模式需配合 `--profiling-database-path` 使用。 |
+| `--profiling-database-path` | Performance Model Options | 条件必选 | 指定 profiling 模式使用的实测算子 CSV 数据库目录。<br>1. 类型：Str。<br>2. 取值范围：数据库目录路径，例如 `tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/`。<br>3. 默认值：`None`；使用 `--performance-model profiling` 时必填。 |
+| `--chrome-trace-file` | Debug Options | 可选 | 生成 Chrome Trace 文件，用于可视化分析算子级性能。<br>1. 类型：Str。<br>2. 参考值：Trace 文件路径，例如 `trace.json`。<br>3. 默认值：`None`，表示不生成 Chrome Trace 文件。 |
+| `--ttft-limit` | Service Options | 可选 | 指定 TTFT 约束，用于在约束内搜索最优吞吐。<br>1. 类型：Float。<br>2. 取值范围：正数，单位 ms。<br>3. 默认值：`None`，表示不限制 TTFT。 |
+| `--tpot-limit` | Service Options | 可选 | 指定 TPOT 约束，用于在约束内搜索最优吞吐。<br>1. 类型：Float。<br>2. 取值范围：正数，单位 ms。<br>3. 默认值：`None`，表示不限制 TPOT。 |
 | `--max-batched-tokens` | Service Options | 可选 | 指定单个数据并行（DP）副本在一次 prefill 或混合 prefill/decode step 的最大 batched tokens。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`；自动模式先使用 `4 * input_length`，并在 Prefill OOM 时依次降级为 `2 * input_length`、`1 * input_length`。 |
 | `--batch-range` | Service Options | 可选 | 指定 batch size 搜索范围。<br>1. 类型：List[Int]。<br>2. 格式：`[min max]` 或 `[max]`。<br>3. 默认值：`None`；未指定 `min` 时默认从 `1` 开始搜索，未指定 `max` 时不设置上限。 |
 | `--serving-cost` | Service Options | 可选 | 指定服务成本，用于成本相关指标计算。<br>1. 类型：Float。<br>2. 取值范围：非负数。<br>3. 默认值：`0`。 |
-| `--disagg` | Service Options | 可选 | 启用 PD 分离模式。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
+| `--disaggregation` | Service Options | 可选 | 启用 PD 分离模式。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--jobs` | Service Options | 可选 | 指定并行搜索任务数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`8`。 |
 | `--max-search-combinations` | Service Options | 可选 | 当 TP / EP / MOE-DP / MTP 搜索组合数超过该值时输出警告。<br>1. 类型：Int。<br>2. 取值范围：非负整数；设置为 `0` 表示关闭该警告。<br>3. 默认值：`100`。 |
 | `--concurrency-search-strategy` | Service Options | 可选 | 指定并发度搜索策略。<br>1. 类型：Str。<br>2. 参考值：`exponential`、`linear_exponential`。<br>3. 默认值：`exponential`。 |
@@ -436,15 +435,15 @@ PD Ratio Optimization Options:
 | `--image-width` | MultiModal Options | 可选 | 指定输入图像宽度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`None`。 |
 | `--prefill-devices-per-instance` | PD Ratio Optimization Options | 条件必选 | 启用 PD 配比优化时必填，指定每个 Prefill 实例的设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。<br>4. 用于确定 Prefill 阶段的并行配置搜索空间。 |
 | `--decode-devices-per-instance` | PD Ratio Optimization Options | 条件必选 | 启用 PD 配比优化时必填，指定每个 Decode 实例的设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。<br>4. 用于确定 Decode 阶段的并行配置搜索空间。 |
-| `--enable-optimize-prefill-decode-ratio` | PD Ratio Optimization Options | 可选 | 启用 Prefill/Decode 实例配比优化模式。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 不能与 `--disagg` 同时使用。 |
+| `--enable-optimize-prefill-decode-ratio` | PD Ratio Optimization Options | 可选 | 启用 Prefill/Decode 实例配比优化模式。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 不能与 `--disaggregation` 同时使用。 |
 
 ### 搜索维度与范围
 
 `throughput_optimizer` 根据提供的搜索参数决定搜索维度：
 
-- `--tp-sizes`：启用 TP 搜索
-- `--ep-sizes`：启用 EP 搜索
-- `--moe-dp-sizes`：启用 MOE-DP 搜索
+- `--tensor-parallel-sizes`：启用 TP 搜索
+- `--expert-parallel-sizes`：启用 EP 搜索
+- `--moe-data-parallel-sizes`：启用 MOE-DP 搜索
 
 规则：
 
@@ -461,16 +460,16 @@ PD Ratio Optimization Options:
 
 ```bash
 # 仅搜索 TP（显式范围）
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --tp-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8
 
 # 搜索 TP/EP（MOE-DP 固定为 1）
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --tp-sizes 1 2 4 8 --ep-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8 --expert-parallel-sizes 1 2 4 8
 
 # 搜索 TP/EP/MOE-DP
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --tp-sizes 1 2 4 8 --ep-sizes 1 2 4 8 --moe-dp-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8 --expert-parallel-sizes 1 2 4 8 --moe-data-parallel-sizes 1 2 4 8
 
 # 仅搜索 EP（显式范围）
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 --ep-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --expert-parallel-sizes 1 2 4 8
 ```
 
 ### 性能模型选择
@@ -478,14 +477,14 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DE
 `throughput_optimizer` 默认使用解析（Roofline）模型估算算子延迟。通过 `--performance-model` 可切换为基于实测算子 CSV 数据的 profiling 模型：
 
 - `--performance-model analytic`（默认）：纯解析 Roofline 模型，无需额外数据。
-- `--performance-model profiling`：使用实测算子数据建模，**必须同时指定 `--profiling-database <目录>`**，否则启动时报错。当某算子 shape 在 CSV 中缺失时，先尝试插值，仍无法命中时回退到解析模型。
+- `--performance-model profiling`：使用实测算子数据建模，**必须同时指定 `--profiling-database-path <目录>`**，否则启动时报错。当某算子 shape 在 CSV 中缺失时，先尝试插值，仍无法命中时回退到解析模型。
 
 示例：
 
 ```bash
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device ATLAS_800_A3_752T_128G_DIE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limits 50 \
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device ATLAS_800_A3_752T_128G_DIE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 \
     --performance-model profiling \
-    --profiling-database tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/
+    --profiling-database-path tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/
 ```
 
 ## 5 补充说明

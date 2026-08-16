@@ -54,7 +54,6 @@ from cli.spec_cli import (
     make_token_type,
     parse_args as spec_parse_args,
     resolve_log_level,
-    to_kebab,
 )
 
 MAX_ITER_NUM = 200
@@ -721,9 +720,14 @@ def _run_optimizer() -> None:
     )
     add_version_option(parser)
     add_log_options(parser)
-    parse_engine, engine_meta = make_token_type(list(_simulates.keys()), "--engine", store_canonical="snake")
+    parse_engine, engine_meta = make_token_type(
+        list(_simulates.keys()), "--engine", store_canonical="snake", registered_names=True
+    )
     parse_bench, bench_meta = make_token_type(
-        list(_benchmarks.keys()), "--benchmark-policy", store_canonical="snake"
+        list(_benchmarks.keys()),
+        "--benchmark-policy",
+        store_canonical="snake",
+        registered_names=True,
     )
     add_option(
         parser,
@@ -750,7 +754,7 @@ def _run_optimizer() -> None:
         metavar=bench_meta,
         help=(
             "Benchmark used for custom performance indicators. "
-            f"[default: {to_kebab(DEFAULT_BENCHMARK_POLICY)}]"
+            f"[default: {DEFAULT_BENCHMARK_POLICY}]"
         ),
         aliases=("--benchmark_policy",),
     )
