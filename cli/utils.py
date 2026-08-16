@@ -71,9 +71,7 @@ def check_positive_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value <= 0:
-        raise argparse.ArgumentTypeError(
-            f"{value!r} is out of range; expected a positive integer"
-        )
+        raise argparse.ArgumentTypeError(f"{value!r} is out of range; expected a positive integer")
 
     return value
 
@@ -84,9 +82,7 @@ def check_non_negative_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value < 0:
-        raise argparse.ArgumentTypeError(
-            f"{value!r} is out of range; expected a non-negative integer"
-        )
+        raise argparse.ArgumentTypeError(f"{value!r} is out of range; expected a non-negative integer")
 
     return value
 

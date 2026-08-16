@@ -61,9 +61,7 @@ def main():
     inherit_deprecated(parser, common_parser)
     parse_linear, linear_meta = make_enum_type(QuantizeLinearAction, "--quantize-linear-action")
     parse_attn, attn_meta = make_enum_type(QuantizeAttentionAction, "--quantize-attention-action")
-    parse_cc, cc_meta = make_token_type(
-        COMPILATION_CONFIG_OPTIONS, "--compilation-config", store_canonical="snake"
-    )
+    parse_cc, cc_meta = make_token_type(COMPILATION_CONFIG_OPTIONS, "--compilation-config", store_canonical="snake")
 
     llm_group = parser.add_argument_group("LLM Options")
     llm_group.add_argument(
@@ -158,8 +156,7 @@ def main():
         default=QuantizeLinearAction.DISABLED,
         metavar=linear_meta,
         help=(
-            "Separate quantization type for non-expert linear layers. Routed MoE experts keep "
-            "--quantize-linear-action."
+            "Separate quantization type for non-expert linear layers. Routed MoE experts keep --quantize-linear-action."
         ),
     )
     quant_group.add_argument(

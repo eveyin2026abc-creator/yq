@@ -13,7 +13,6 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
-import argparse
 import os
 from contextlib import contextmanager
 from copy import deepcopy
@@ -45,6 +44,7 @@ from ..optimizer.errors import (
 from ..optimizer.outcome import RunStatus
 from ..optimizer.performance_tunner import PerformanceTuner
 from ..optimizer.register import benchmarks, simulates
+from ..optimizer.utils import get_required_field_from_json, is_root
 from cli.spec_cli import (
     METAVAR_FILE,
     SpecArgumentParser,
@@ -752,10 +752,7 @@ def _run_optimizer() -> None:
         default=DEFAULT_BENCHMARK_POLICY,
         type=parse_bench,
         metavar=bench_meta,
-        help=(
-            "Benchmark used for custom performance indicators. "
-            f"[default: {DEFAULT_BENCHMARK_POLICY}]"
-        ),
+        help=(f"Benchmark used for custom performance indicators. [default: {DEFAULT_BENCHMARK_POLICY}]"),
         aliases=("--benchmark_policy",),
     )
     parser.add_argument(

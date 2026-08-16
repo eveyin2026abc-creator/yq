@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
@@ -52,8 +53,7 @@ def warn_deprecated(old: str, new: str) -> None:
         return
     _WARNED_ALIASES.add(key)
     print(
-        f"WARNING: {old} is deprecated; use {new} instead. "
-        "The old form remains accepted for compatibility.",
+        f"WARNING: {old} is deprecated; use {new} instead. The old form remains accepted for compatibility.",
         file=sys.stderr,
     )
 
@@ -152,9 +152,12 @@ def parse_args(parser: argparse.ArgumentParser, args: Sequence[str] | None = Non
 
 
 def _git_hash() -> str:
+    git = shutil.which("git")
+    if not git:
+        return "unknown"
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
+            [git, "rev-parse", "--short=7", "HEAD"],
             check=False,
             capture_output=True,
             text=True,
@@ -348,7 +351,9 @@ def _is_required(action: argparse.Action) -> bool:
 
 
 def _format_option_name(action: argparse.Action) -> str:
-    shorts = [opt for opt in action.option_strings if len(opt) == 2 and opt.startswith("-") and not opt.startswith("--")]
+    shorts = [
+        opt for opt in action.option_strings if len(opt) == 2 and opt.startswith("-") and not opt.startswith("--")
+    ]
     longs = [opt for opt in action.option_strings if opt.startswith("--")]
     metavar = _metavar_for(action)
     name_parts: list[str] = []
@@ -470,9 +475,7 @@ class SpecArgumentParser(argparse.ArgumentParser):
         actions = _public_actions(self)
         subparsers = [action for action in actions if isinstance(action, argparse._SubParsersAction)]
         required = [
-            action
-            for action in actions
-            if _is_required(action) and not isinstance(action, argparse._SubParsersAction)
+            action for action in actions if _is_required(action) and not isinstance(action, argparse._SubParsersAction)
         ]
         optional = [
             action
@@ -500,8 +503,7 @@ class SpecArgumentParser(argparse.ArgumentParser):
             cmd_width = min(max(cmd_width, 12), 32)
             for action in subparsers:
                 help_by_name = {
-                    choice.dest: (choice.help or "").strip()
-                    for choice in getattr(action, "_choices_actions", [])
+                    choice.dest: (choice.help or "").strip() for choice in getattr(action, "_choices_actions", [])
                 }
                 for name, subparser in action.choices.items():
                     help_text = help_by_name.get(name) or (subparser.description or "").strip()

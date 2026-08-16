@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 import sys
 import time
@@ -91,9 +90,7 @@ def arg_parse():
     inherit_deprecated(parser, common_parser)
     parse_linear, linear_meta = make_enum_type(QuantizeLinearAction, "--quantize-linear-action")
     parse_attn, attn_meta = make_enum_type(QuantizeAttentionAction, "--quantize-attention-action")
-    parse_cc, cc_meta = make_token_type(
-        COMPILATION_CONFIG_OPTIONS, "--compilation-config", store_canonical="snake"
-    )
+    parse_cc, cc_meta = make_token_type(COMPILATION_CONFIG_OPTIONS, "--compilation-config", store_canonical="snake")
     parse_strategy, strategy_meta = make_token_type(
         ("exponential", "linear-exponential"),
         "--concurrency-search-strategy",

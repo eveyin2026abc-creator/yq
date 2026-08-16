@@ -1,6 +1,5 @@
 import argparse
 import json
-import logging
 
 from cli.logo import print_logo
 from cli.spec_cli import (
