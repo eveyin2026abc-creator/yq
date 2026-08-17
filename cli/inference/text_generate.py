@@ -182,11 +182,14 @@ def main():
     debug_group = parser.add_argument_group("Debugging Options")
     add_option(
         debug_group,
-        "--graph-log-file",
+        "--graph-log-path",
         dest="graph_log_url",
-        metavar=METAVAR_FILE,
-        help="Path for dumping compiled graphs when --compile is on.",
-        aliases=("--graph-log-url",),
+        metavar=METAVAR_DIR,
+        help=(
+            "Directory for dumping compiled graphs when --compile is on. "
+            "Each compile pass writes files under this directory."
+        ),
+        aliases=("--graph-log-url", "--graph-log-file"),
     )
     debug_group.add_argument(
         "--dump-input-shapes",

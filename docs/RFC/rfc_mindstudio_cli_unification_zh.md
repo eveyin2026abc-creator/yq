@@ -34,7 +34,7 @@
 **目标**
 
 - 公开入口 `msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix` 满足规范 §4.7 中适用于本工具的条款。
-- 提供公共词表中语义命中的标准写法：`--model-path`、`--log-level`、`--log-file`、`--verbose/-v`、`--quiet/-q`、`--debug`、`--version/-V`、`--jobs/-j`、`--config/-c`、`--output-file/-o`。
+- 提供公共词表中语义命中的标准写法：`--log-level`、`--log-file`、`--verbose/-v`、`--quiet/-q`、`--debug`、`--version/-V`、`--jobs/-j`、`--config/-c`、`--output-file/-o`。模型来源保持 `--model-id`（Hugging Face 可下载 id），不改成词表 `--model-path`。
 - `--help` 固定输出 `Description` / `Usage` / `Commands`（有子命令时）/ `Required arguments` / `Optional arguments` / `Examples`，有落盘产物时附加 `Output`。
 - 带值参数打印语义化 metavar；枚举在 help 中展示小写 kebab-case，默认值同样 kebab-case。
 - 旧参数全部可解析；使用旧名时 stderr 一次性告警。
@@ -71,7 +71,7 @@
 | 正式接口 | 隐藏别名 | dest | 范围 | 具体改动 |
 |:---|:---|:---|:---|:---|
 | `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` | text-generate、throughput-optimizer、video-generate | 写出 Chrome trace JSON，metavar `<FILE>` |
-| `--graph-log-file` | `--graph-log-url` | `graph_log_url` | text-generate | 编译图 dump 路径，`<FILE>` |
+| `--graph-log-path` | `--graph-log-url`、`--graph-log-file` | `graph_log_url` | text-generate | 编译图 dump **目录**。内部交给 PyTorch `GraphTransformObserver(log_url=...)`，各 pass 在该目录下写多个文件，因此用 `-path` / `<DIR>`，不是单个 `-file` |
 | `--profiling-database-path` | `--profiling-database` | `profiling_database` | text-generate、throughput-optimizer、model-adapter verify | profiling CSV 目录，`<DIR>` |
 | `--export-empirical-metrics-file` | `--export-empirical-metrics` | `export_empirical_metrics` | text-generate | M1–M5 JSON，须搭配 profiling |
 | `-o, --output-file` | `--output` | `output` | model-adapter doctor / verify / export-evidence | JSON 或 evidence YAML；`-o` 为词表标准短选项 |
@@ -83,7 +83,7 @@
 
 | 正式接口 | 隐藏别名 | dest | 范围 | 具体改动 |
 |:---|:---|:---|:---|:---|
-| `--model-path` / `--model-id` | `--model_id` | `model_id` | 公共 parser、video-generate、model-adapter | 与位置参数 `model_id` 等价；缺一则 `require_model_id` 报错。词表标准名是 `--model-path` |
+| `--model-id` | `--model_id`、`--model-path` | `model_id` | 公共 parser、video-generate、model-adapter | Hugging Face 可下载 id（如 `Qwen/Qwen3-32B`），与位置参数 `model_id` 等价。本工具暂不把正式名改成词表 `--model-path` |
 | `--num-devices` | `--world-size` | `world_size` | video-generate | 与其它入口 `--num-devices` 对齐 |
 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` | throughput-optimizer | 单个 TTFT 约束，`<FLOAT>`。旧名是复数但只收一个值，按 4.3.3 改为单数 |
 | `--tpot-limit` | `--tpot-limits` | `tpot_limits` | throughput-optimizer | 单个 TPOT 约束，同上 |
@@ -158,7 +158,7 @@ optix 在解析后再调用 `set_log_level`，接到 loguru。
 | 调节日志 | `--log-level {debug,info,warning,error,critical}` 默认 info；`--verbose/-v` 与 `--debug` 等价 debug，`--quiet/-q` 等价 error；显式 `--log-level` 优先 | 与规范 4.2.3.1 冲突裁决一致 |
 | 新脚本使用标准名 | `--tp-size 8`、`--chrome-trace-file out.json`、`--disagg`、`--load-breakpoint` | 正式接口无 snake_case、无多字符短选项 |
 | 存量脚本 | `--chrome-trace`、`--load_breakpoint`、`-lb`、`--ttft-limits` 仍可解析 | 兼容性；stderr 引导迁移 |
-| 模型标识 | 位置参数 `model_id` 与 `--model-path` / `--model-id` 等价；缺一不可 | 对齐词表 `--model-path`，不强制删除位置参数 |
+| 模型标识 | 位置参数 `model_id` 与 `--model-id` 等价；缺一不可 | Hugging Face 可下载 id；`--model-path` 仅隐藏兼容 |
 | 多硬件寻优 | `throughput-optimizer` 以 `--device` 为正式入口，同时接受 `--devices` | 不把 `--device` 标成弃用 |
 | 适配器导出 | `model-adapter` 子命令用 `--output-file/-o` 写 JSON/YAML；`--output` 为隐藏别名 | `-o` 语义符合词表 |
 
@@ -259,7 +259,8 @@ cli/spec_cli.py
 | 分离部署 | `--disagg` | （不改正式名） | `disagg` |
 | Trace | `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` |
 | Profiling 库 | `--profiling-database-path` | `--profiling-database` | `profiling_database` |
-| 模型路径 | `--model-path` / `--model-id` + 位置参数 | `--model_id` | `model_id` |
+| 模型 id | `--model-id` + 位置参数 | `--model_id`、`--model-path` | `model_id` |
+| 编译图 dump | `--graph-log-path` | `--graph-log-url`、`--graph-log-file` | `graph_log_url` |
 | 输出文件 | `-o, --output-file` | `--output` | `output` |
 | 断点续跑 | `--load-breakpoint` | `--load_breakpoint`、`-lb` | `load_breakpoint` |
 | 反向开关 | `--no-repetition`（对偶 `--repetition`） | `--disable-repetition` | `disable_repetition` |
@@ -445,7 +446,7 @@ python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test
 | 文件 | 说明 |
 |:---|:---|
 | `cli/spec_cli.py` | 规范内核：formatter、version、别名、日志、枚举解析 |
-| `cli/utils.py` | 公共 parser：version、log、`--model-path` |
+| `cli/utils.py` | 公共 parser：version、log、`--model-id` |
 | `cli/main.py` | 顶层 help / version / Commands |
 | `cli/inference/text_generate.py` | 路径后缀、`--no-repetition`、log/version；并行度正式名仍为 `--tp-size` |
 | `cli/inference/throughput_optimizer.py` | `--ttft-limit`、`--jobs/-j`、路径后缀 |

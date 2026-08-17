@@ -9,6 +9,7 @@ from cli.logo import print_logo
 from cli.spec_cli import (
     METAVAR_FILE,
     METAVAR_FLOAT,
+    METAVAR_ID,
     METAVAR_N,
     METAVAR_NAME,
     METAVAR_RANGE,
@@ -375,7 +376,7 @@ def main():
         help="Device profile used for simulation.",
     )
     parser.add_argument(
-        "model_id",
+        "model_id_positional",
         nargs="?",
         metavar=METAVAR_NAME,
         type=str,
@@ -387,13 +388,12 @@ def main():
     )
     add_option(
         parser,
-        "--model-path",
         "--model-id",
         dest="model_id",
-        metavar=METAVAR_NAME,
+        metavar=METAVAR_ID,
         type=str,
-        help="Model path or Hub id. Equivalent to the positional model_id.",
-        aliases=("--model_id",),
+        help="Hugging Face model id that can be downloaded. Equivalent to the positional model_id.",
+        aliases=("--model_id", "--model-path"),
     )
     parser.add_argument(
         "--batch-size",

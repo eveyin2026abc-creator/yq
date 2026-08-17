@@ -221,7 +221,7 @@ usage: text_generate.py [-h]
                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                         [--quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                         [--quantize-lmhead] [--mxfp4-group-size mxfp4_GROUP_SIZE]
-                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-file GRAPH_LOG_URL]
+                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-path GRAPH_LOG_DIR]
                         [--dump-input-shapes] [--dump-op-bound-results] [--chrome-trace-file CHROME_TRACE]
                         [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tp-size TP_SIZE]
                         [--dp-size DP_SIZE] [--ep-size EP_SIZE] [--o-proj-tp-size O_PROJ_TP_SIZE]
@@ -264,7 +264,7 @@ Main parameters:
 | `--quantize-lmhead` | Quantization Options | Optional | Enables quantization for lm head.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--mxfp4-group-size` | Quantization Options | Optional | Specifies the group size for mxfp4 quantization.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
 | `--quantize-attention-action` | Quantization Options | Optional | Specifies KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
-| `--graph-log-file` | Debugging Options | Optional | Specifies the compiled graph log output path for debugging the compile path.<br>1. Type: Str.<br>2. Valid range: file or directory path.<br>3. Default: `None`. |
+| `--graph-log-path` | Debugging Options | Optional | Directory for compiled graph dumps when debugging the compile path. Each pass writes files under this directory.<br>1. Type: Str.<br>2. Valid range: directory path.<br>3. Default: `None`. |
 | `--dump-input-shapes` | Debugging Options | Optional | Dumps input shape information for troubleshooting model input configuration.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--dump-op-bound-results` | Debugging Options | Optional | Dumps per-operator memory, communication, MMA, and GP bound ratios in the result table.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--chrome-trace-file` | Debugging Options | Optional | Specifies the Chrome trace output path for exporting the performance timeline.<br>1. Type: Str.<br>2. Valid range: file path.<br>3. Default: `None`. |

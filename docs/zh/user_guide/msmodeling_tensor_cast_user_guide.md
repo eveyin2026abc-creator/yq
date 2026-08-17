@@ -215,7 +215,7 @@ usage: text_generate.py [-h]
                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                         [--quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                         [--quantize-lmhead] [--mxfp4-group-size mxfp4_GROUP_SIZE]
-                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-file GRAPH_LOG_URL]
+                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-path GRAPH_LOG_DIR]
                         [--dump-input-shapes] [--dump-op-bound-results] [--chrome-trace-file CHROME_TRACE]
                         [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tp-size TP_SIZE]
                         [--dp-size DP_SIZE] [--ep-size EP_SIZE] [--o-proj-tp-size O_PROJ_TP_SIZE]
@@ -258,7 +258,7 @@ Run a simulated LLM inference pass and dump the perf result.
 | `--quantize-lmhead` | Quantization Options | 可选 | 对 lm head 启用量化。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--mxfp4-group-size` | Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
 | `--quantize-attention-action` | Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
-| `--graph-log-file` | Debugging Options | 可选 | 指定编译图日志输出路径，仅在 compile 路径调试时使用。<br>1. 类型：Str。<br>2. 取值范围：文件或目录路径。<br>3. 默认值：`None`。 |
+| `--graph-log-path` | Debugging Options | 可选 | 指定编译图日志输出**目录**，仅在 compile 路径调试时使用。各 pass 会在该目录下写出多个 dump 文件。<br>1. 类型：Str。<br>2. 取值范围：目录路径。<br>3. 默认值：`None`。 |
 | `--dump-input-shapes` | Debugging Options | 可选 | 输出输入 shape 信息，便于排查模型输入配置。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--dump-op-bound-results` | Debugging Options | 可选 | 在结果表中输出算子级 memory、communication、MMA、GP bound 比例。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--chrome-trace-file` | Debugging Options | 可选 | 指定 Chrome trace 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |

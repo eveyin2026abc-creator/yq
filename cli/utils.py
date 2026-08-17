@@ -4,6 +4,7 @@ import re
 
 from cli.spec_cli import (
     METAVAR_FLOAT,
+    METAVAR_ID,
     METAVAR_N,
     METAVAR_NAME,
     add_log_options,
@@ -145,7 +146,7 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
     general_group = common_parser.add_argument_group("General Options")
 
     general_group.add_argument(
-        "model_id",
+        "model_id_positional",
         nargs="?",
         metavar=METAVAR_NAME,
         type=check_string_valid,
@@ -157,13 +158,15 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
     )
     add_option(
         general_group,
-        "--model-path",
         "--model-id",
         dest="model_id",
-        metavar=METAVAR_NAME,
+        metavar=METAVAR_ID,
         type=check_string_valid,
-        help="Model path or Hub id. Equivalent to the positional model_id.",
-        aliases=("--model_id",),
+        help=(
+            "Hugging Face model id that can be downloaded (for example Qwen/Qwen3-32B). "
+            "Equivalent to the positional model_id."
+        ),
+        aliases=("--model_id", "--model-path"),
     )
 
     general_group.add_argument(
@@ -197,5 +200,9 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
 
 
 def require_model_id(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    if not getattr(args, "model_id", None):
-        parser.error("model_id is required; pass a positional model id or --model-path / --model-id.")
+    model_id = getattr(args, "model_id", None) or getattr(args, "model_id_positional", None)
+    if not model_id:
+        parser.error("model_id is required; pass a positional model id or --model-id.")
+    args.model_id = model_id
+    if hasattr(args, "model_id_positional"):
+        delattr(args, "model_id_positional")

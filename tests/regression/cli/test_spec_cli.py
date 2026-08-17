@@ -70,6 +70,11 @@ def test_text_generate_help_hides_legacy_parallel_flags() -> None:
     assert "--tp-size" in help_text
     assert "--tensor-parallel-size" not in help_text
     assert "--chrome-trace-file" in help_text
+    assert "--graph-log-path" in help_text
+    assert "--graph-log-file" not in help_text
+    assert "--graph-log-url" not in help_text
+    assert "--model-id" in help_text
+    assert "--model-path" not in help_text
     assert "--log-level" in help_text
     assert "-v" in help_text
     assert "-V" in help_text
@@ -235,6 +240,74 @@ def test_text_generate_help_uses_native_enum_defaults() -> None:
     assert "[default: W8A8_DYNAMIC]" in result.stdout
     assert "--chrome-trace-file" in result.stdout
     assert "--chrome-trace" not in result.stdout.replace("--chrome-trace-file", "")
+    assert "--graph-log-path" in result.stdout
+    assert "--graph-log-file" not in result.stdout
+    assert "--model-id" in result.stdout
+    assert "--model-path" not in result.stdout
+
+
+def test_text_generate_graph_log_path_and_legacy_aliases(capsys: pytest.CaptureFixture[str]) -> None:
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+            "--graph-log-path",
+            "/tmp/graphs",
+        ]
+    )
+    assert ns.graph_log_url == "/tmp/graphs"
+    assert "deprecated" not in capsys.readouterr().err
+
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+            "--graph-log-url",
+            "/tmp/legacy-graphs",
+        ]
+    )
+    assert ns.graph_log_url == "/tmp/legacy-graphs"
+    assert "WARNING: --graph-log-url is deprecated; use --graph-log-path instead." in capsys.readouterr().err
+
+
+def test_text_generate_model_id_is_official_and_model_path_is_alias(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "--model-id",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+        ]
+    )
+    assert ns.model_id == "Qwen/Qwen3-32B"
+    assert "deprecated" not in capsys.readouterr().err
+
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "--model-path",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+        ]
+    )
+    assert ns.model_id == "Qwen/Qwen3-32B"
+    assert "WARNING: --model-path is deprecated; use --model-id instead." in capsys.readouterr().err
 
 
 def test_throughput_optimizer_help_hides_legacy_flags() -> None:
@@ -257,6 +330,8 @@ def test_video_generate_help_meets_spec() -> None:
     assert "--ulysses-parallel-size" not in result.stdout
     assert "--num-devices" in result.stdout
     assert "--world-size" not in result.stdout
+    assert "--model-id" in result.stdout
+    assert "--model-path" not in result.stdout
 
 
 def test_model_adapter_subcommand_help_meets_spec() -> None:
