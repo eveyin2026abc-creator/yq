@@ -351,28 +351,124 @@ msmodeling optix -e vllm -b ais_bench --config ./config.toml
 
 ## 4. Test Design (测试设计)
 
-| 类型 | 位置 | 覆盖 |
-|:---|:---|:---|
-| 规范回归 | `tests/regression/cli/test_spec_cli.py` | help 段落、kebab 默认值、隐藏旧名、别名告警、`--version`、verbose/quiet 裁决 |
-| 入口回归 | `tests/regression/cli/test_main.py`、`test_cli_utils.py`、`test_logo_cli_hooks.py`、`test_compile.py` | 分发、公共 parser、Logo 在 `--help` 时抑制 |
-| 存量解析 | 现有 `test_throughput_optimizer.py`、optix `test_main_cli.py`、smoke | `--disagg`、`--ttft-limits`、`-lb`、`--tp-sizes` 等旧写法仍可解析 |
+本节面向**测试同事的手工 / ST 验收**，说明验什么、怎么验、怎样算通过。不要求测试改自动化用例。开发侧回归与 CI 另行覆盖。
 
-验收对应 §4.7：
+验收重点四件事：公开命令能跑；`--help` / `--version` 符合规范；旧参数仍可用但会提示；同一组业务参数下新旧写法结果一致。
 
-1. 词表命中项均有标准写法。
-2. 公开入口 `--version/-V` 可用。
-3. `--help` 无正式 snake_case 长选项、无单破折号长选项。
-4. 短选项无跨子命令一词多义；`-v`/`-V` 符合约定。
-5. 正式 help 无 `-lb` 等多字符短选项。
-6. `--log-level` 默认 info，快捷开关按 4.2.3.1 生效。
-7. wrapper `--`：不适用，本工具跳过。
-8. metavar / kebab choices 在 help 可见。
-9. help 不以 yes/no、True/False 表达布尔；多值用复数 + nargs。
-10. 每个公开子命令 help 含 Usage、必填分段、默认值与示例。
-11. 旧参数现有 UT/ST 仍通过。
-12. 别名触发一次性 stderr 告警且不进 help。
+### 4.1 验收范围
 
----
+- 公开入口：`msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix`
+- `--help`、`--version/-V`、日志开关、正式参数名与取值
+- 旧参数名、旧枚举值仍能跑通，stderr 有弃用提示
+- 新旧写法仿真结果一致（同模型、同 device、同长度）
+- `--device` 仍是 DeviceProfile 名（如 `TEST_DEVICE`）
+
+中英文 user guide / quick start 已按正式名更新：文档抽测用新名；旧名只做兼容抽测。
+
+### 4.2 环境
+
+在仓库根目录、依赖已安装、`PYTHONPATH` 已指向仓库根的环境中执行。下面两组入口等价，任选：
+
+```bash
+msmodeling inference text-generate --help
+python -m cli.inference.text_generate --help
+```
+
+optix：`msmodeling optix --help`。若因缺少 `pydantic_settings` 直接报错，记为环境问题，不要据此判定本需求失败。
+
+### 4.3 验收步骤
+
+#### A. 帮助与版本（每个公开入口各做一遍）
+
+对下列命令执行 `--help`，并对顶层及至少一个子命令执行 `-V` / `--version`：
+
+- `msmodeling --help`、`msmodeling -V`
+- `python -m cli.inference.text_generate --help`
+- `python -m cli.inference.throughput_optimizer --help`
+- `python -m cli.inference.video_generate --help`
+- `python -m cli.inference.model_adapter doctor --help`（`verify` / `export-evidence` 抽一个即可）
+- `msmodeling optix --help`
+
+**通过标准：**
+
+1. `--help` 能看到 Description、Usage、Examples；有子命令时能看到 Commands；text-generate 能看到必选 / 可选分段。
+2. `-V` / `--version` 成功，输出含 MindStudio / msmodeling 与 Mulan PSL v2。**不要用 `-v` 查版本**（`-v` 是更详细日志）。
+3. help 中有 `--log-level {debug,info,warning,error}`（无 `critical`），以及 `-v`、`-q`、`--debug`、`--log-file`。
+4. 量化推荐取值是 `w8a8-dynamic`、`disabled` 这类小写 kebab，help 里不要再把 `W8A8_DYNAMIC` 当成正式选项展示。
+5. 布尔用开关语义（如 `[default: off]`），不要用 True/False、yes/no。
+6. 下列旧名**不应作为正式选项出现在 `--help`**：`--tp-size`、`--dp-size`、`--ep-size`、`--disagg`、`--chrome-trace`（没有 `-file`）、`--load_breakpoint`、`-lb`。对应正式名分别是 `--tensor-parallel-size`、`--data-parallel-size`、`--expert-parallel-size`、`--disaggregation`、`--chrome-trace-file`、`--load-breakpoint`。
+7. optix help 里测评工具取值仍是 **`ais_bench`、`vllm_benchmark`**（固定名称，不要验收成 `ais-bench`）。
+8. throughput-optimizer help 能看到 `--jobs` / `-j`（寻优进程并发，不是模型 TP）。
+
+#### B. 新写法功能抽测
+
+用正式参数跑最小可运行场景即可，不要求完整性能对标：
+
+```bash
+python -m cli.inference.text_generate Qwen/Qwen3-32B \
+  --num-queries 1 --query-length 128 --device TEST_DEVICE \
+  --tensor-parallel-size 1 --log-level info
+
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
+  --device TEST_DEVICE --num-devices 2 \
+  --input-length 128 --output-length 16 \
+  --tensor-parallel-sizes 1 2 --disaggregation --jobs 2
+```
+
+有实测环境时再抽测：`msmodeling optix -e vllm -b ais_bench --config ./config.toml`。没有实测环境时，确认 optix `--help` 与 `-e` / `-b` / `-c` 说明正确即可。
+
+**通过标准：** 命令能解析并进入原有流程；text-generate 能打出性能表；optimizer 能开始搜索或报出与改名前同类的配置错误。加上 `--chrome-trace-file trace.json` 时应生成文件。
+
+#### C. 旧写法兼容抽测（必做）
+
+同一组业务参数分别用旧名、新名各跑一遍，结果应一致。
+
+| 场景 | 旧写法（应仍可用） | 正式写法 | 期望 |
+|:---|:---|:---|:---|
+| 张量并行 | `--tp-size 2` | `--tensor-parallel-size 2` | 都能跑；旧名在 stderr 提示 deprecated，并指出正式名 |
+| 寻优 PD 分离 | `--disagg` | `--disaggregation` | 同上 |
+| 寻优 TP 搜索 | `--tp-sizes 1 2` | `--tensor-parallel-sizes 1 2` | 同上 |
+| Trace | `--chrome-trace out.json` | `--chrome-trace-file out.json` | 都能写出文件 |
+| 量化 | `--quantize-linear-action W8A8_DYNAMIC` | `--quantize-linear-action w8a8-dynamic` | 行为一致；旧大写取值有提示 |
+| adapter 输出 | `doctor ... --output a.json` | `-o a.json` 或 `--output-file a.json` | 都能写出报告 |
+| optix 断点 | `--load_breakpoint` 或 `-lb` | `--load-breakpoint` | 都能解析；旧名有提示；`--help` 里看不到 `-lb` |
+
+互斥约束与改名前相同（例如不要把 `--disagg` 和 PD 配比优化一起用）。
+
+**通过标准：** 旧命令不会被当成未知参数直接失败；功能与新名等价；提示出现在 stderr，不影响正常结果输出。
+
+#### D. 日志开关抽测
+
+| 操作 | 期望 |
+|:---|:---|
+| 不指定日志相关参数 | 默认 info（比改前默认 error 日志更多，属预期） |
+| `--verbose` 或 `-v` 或 `--debug` | 更详细，等价 debug |
+| `--quiet` 或 `-q` | 更少，等价 error |
+| 同时写 `--log-level warning` 和 `-v` | 以 `--log-level` 为准（warning） |
+| `--log-level critical` | 应失败（已不再支持） |
+
+#### E. 文档抽测
+
+中英文 TensorCast / 吞吐优化 / 快速入门中的示例应使用正式名。OptiX 指南里 `-b` 取值仍是 `ais_bench` / `vllm_benchmark`。
+
+### 4.4 判定为不通过的典型现象
+
+- `--help` 仍把 `--tp-size`、`-lb` 列成正式选项。
+- `--tp-size 2` 报 unrecognized arguments。
+- 排除拉模型失败、环境差异后，新旧写法指标仍明显不一致。
+- `-v` 打印版本而不是详细日志。
+- optix help 把测评工具写成 `ais-bench` / `vllm-benchmark`。
+- `--device cpu` 被当成合法设备类型。
+
+### 4.5 自动化（可选）
+
+开发已有 CLI 规范回归。测试环境若要复跑：
+
+```bash
+python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test_export.py
+```
+
+全量结论以 CI 为准，不要用本机 skip 的 optix 用例代替门禁。
 
 ## 5. Drawbacks and Risks (缺点和风险)
 
