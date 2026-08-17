@@ -13,7 +13,7 @@ The throughput optimizer supports hardware planning, SLO-constrained throughput 
 | Mode | Use Case | Key Parameters |
 | --- | --- | --- |
 | PD Aggregation | Prefill and Decode run in the same instance. Suitable for quick end-to-end throughput evaluation. | `--tpot-limit`, `--ttft-limit` |
-| PD Disaggregation | Prefill and Decode are deployed separately. Useful when phase-specific capacity needs to be evaluated. | `--disaggregation`, `--ttft-limit` or `--tpot-limit` |
+| PD Disaggregation | Prefill and Decode are deployed separately. Useful when phase-specific capacity needs to be evaluated. | `--disagg`, `--ttft-limit` or `--tpot-limit` |
 | PD Ratio | Plan the instance ratio between Prefill and Decode. | `--enable-optimize-prefill-decode-ratio`, `--prefill-devices-per-instance`, `--decode-devices-per-instance` |
 
 ### 2.1 PD Aggregation Scenario
@@ -29,7 +29,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --tpot-limit 50
 ```
@@ -45,7 +45,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --tpot-limit 50 \
     --prefix-cache-hit-rate 0.5
@@ -63,11 +63,11 @@ Disaggregation mode separates Prefill and Decode phases into independent optimiz
 
 To enable disaggregation mode, you must provide:
 
-- `--disaggregation`: Enable disaggregation mode
+- `--disagg`: Enable disaggregation mode
 
 #### Prefill Mode
 
-Optimizes Prefill phase throughput under TTFT (Time-to-First-Token) constraints. `--disaggregation` flag and `--ttft-limit` flag should be set in this mode.
+Optimizes Prefill phase throughput under TTFT (Time-to-First-Token) constraints. `--disagg` flag and `--ttft-limit` flag should be set in this mode.
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -76,15 +76,15 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
-    --disaggregation \
+    --disagg \
     --ttft-limit 2000
 ```
 
 #### Decode Mode
 
-Optimizes Decode phase throughput under TPOT (Time-per-Output-Token) constraints. `--disaggregation` flag and `--tpot-limit` flag should be set in this mode.
+Optimizes Decode phase throughput under TPOT (Time-per-Output-Token) constraints. `--disagg` flag and `--tpot-limit` flag should be set in this mode.
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -93,9 +93,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
-    --disaggregation \
+    --disagg \
     --tpot-limit 50
 ```
 
@@ -119,7 +119,7 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --enable-optimize-prefill-decode-ratio \
     --prefill-devices-per-instance 16 \
@@ -129,16 +129,16 @@ python -m cli.inference.throughput_optimizer deepseek-ai/DeepSeek-V3.1 \
 
 #### Constraints
 
-- `--enable-optimize-prefill-decode-ratio` cannot be used together with `--disaggregation`
+- `--enable-optimize-prefill-decode-ratio` cannot be used together with `--disagg`
 - Both `--prefill-devices-per-instance` and `--decode-devices-per-instance` must be specified when PD ratio optimization is enabled
 
 ## Search dimensions and ranges
 
 `throughput_optimizer` searches dimensions based on which search arguments are provided:
 
-- `--tensor-parallel-sizes`: enable TP search
-- `--expert-parallel-sizes`: enable EP search
-- `--moe-data-parallel-sizes`: enable MOE-DP search
+- `--tp-sizes`: enable TP search
+- `--ep-sizes`: enable EP search
+- `--moe-dp-sizes`: enable MOE-DP search
 
 Rules:
 
@@ -155,16 +155,16 @@ Examples:
 
 ```bash
 # Search TP only (explicit range)
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tp-sizes 1 2 4 8
 
 # Search TP/EP (MOE-DP fixed to 1)
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8 --expert-parallel-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tp-sizes 1 2 4 8 --ep-sizes 1 2 4 8
 
 # Search TP/EP/MOE-DP
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tensor-parallel-sizes 1 2 4 8 --expert-parallel-sizes 1 2 4 8 --moe-data-parallel-sizes 1 2 4 8
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --tp-sizes 1 2 4 8 --ep-sizes 1 2 4 8 --moe-dp-sizes 1 2 4 8
 
 # Search EP only with default range (argument provided without values)
-python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --expert-parallel-sizes
+python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device TEST_DEVICE --num-devices 8 --input-length 3500 --output-length 1500 --tpot-limit 50 --ep-sizes
 ```
 
 ## Performance model selection
@@ -191,7 +191,7 @@ After a successful run, the terminal first prints the input configuration and be
   ----------------------------------------------------------------------------
   Input Configuration:
     Model: Qwen/Qwen3-32B
-    Quantize Linear action: w8a8-dynamic
+    Quantize Linear action: W8A8_DYNAMIC
     Quantize Attention action: disabled
     Devices: 8 TEST_DEVICE
     TTFT Limits: None ms
@@ -271,19 +271,19 @@ Model & Quantization Options:
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
                         TP x EP x MOE-DP x MTP. (default: None)
-  --quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}
-                        Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: w8a8-dynamic)
-  --quantize-non-expert-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}
+  --quantize-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
+                        Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: W8A8_DYNAMIC)
+  --quantize-non-expert-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
                         Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: disabled)
   --mxfp4-group-size mxfp4_GROUP_SIZE
                         Group size for mxfp4 quantization (default: 32)
   --quantize-attention-action {disabled,int8,fp8}
                         Quantize the KV cache with the given action (default: disabled)
-  --tensor-parallel-sizes [TP_SIZES ...]
+  --tp-sizes [TP_SIZES ...]
                         Enable TP search. Optional explicit TP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
-  --expert-parallel-sizes [EP_SIZES ...]
+  --ep-sizes [EP_SIZES ...]
                         Enable EP search. Optional explicit EP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
-  --moe-data-parallel-sizes [MOE_DP_SIZES ...]
+  --moe-dp-sizes [MOE_DP_SIZES ...]
                         Enable MOE-DP search. Optional explicit MOE-DP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
 
 Performance Model Options:
@@ -305,7 +305,7 @@ Service Options:
                         Batch size range: [min max] or [max] (default: 1 for min, no limit for max) (default: None)
   --serving-cost SERVING_COST
                         Serving cost represents the cost of service delivery (default: 0)
-  --disaggregation              If set, run disaggregation mode. disagg means disaggregation mode. (default: False)
+  --disagg              If set, run disaggregation mode. disagg means disaggregation mode. (default: False)
   --jobs JOBS           Number of parallel jobs. (default: 8)
   --max-search-combinations MAX_SEARCH_COMBINATIONS
                         Warn when TP/EP/MOE-DP/MTP search combinations exceed this value. Set 0 to disable the warning. (default: 100)
@@ -324,7 +324,7 @@ PD Ratio Optimization Options:
   --enable-optimize-prefill-decode-ratio
                         Enable PD (Prefill-Decode) ratio optimization mode. This mode independently
                         optimizes Prefill and Decode phases, then combines results to find the optimal
-                        P/D instance ratio. Cannot be used together with --disaggregation. (default: False)
+                        P/D instance ratio. Cannot be used together with --disagg. (default: False)
   --prefill-devices-per-instance PREFILL_DEVICES_PER_INSTANCE
                         Number of devices per Prefill instance. Required when --enable-optimize-prefill-decode-ratio
                         is set. Determines the parallelism configuration search space for Prefill phase.
@@ -350,16 +350,16 @@ Main parameters:
 | `--compile` | Model & Quantization Options | Optional | Invokes `torch.compile()` before inference.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile-allow-graph-break` | Model & Quantization Options | Optional | Allows graph breaks during `torch.compile()`.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--num-mtp-tokens` | Model & Quantization Options | Optional | MTP token count candidates. Pass one or more values to search; `0` means disabled.<br>1. Type: List[Int] (`nargs="+"`).<br>2. Valid range: each candidate is an integer from `0` to `9`; multiple values are allowed, for example `--num-mtp-tokens 0 1 2`.<br>3. Default: if omitted, equivalent to `0` (MTP disabled).<br>4. A single value fixes the MTP configuration; multiple values are swept during throughput optimization and multiply with TP / EP / MOE-DP search combinations.<br>5. Only models with MTP support benefit from non-zero values; each candidate value must not exceed `len(--mtp-acceptance-rates) + 1` (default acceptance-rate list length is `4`, so the limit is `5`; exceeding it triggers a runtime error: `exceed the supported mtp_acceptance_rate length`). |
-| `--quantize-linear-action` | Model & Quantization Options | Optional | Linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `w8a16-static`, `w8a8-static`, `w4a8-static`, `w8a16-dynamic`, `w8a8-dynamic`, `w4a8-dynamic`, `fp8`, `mxfp4`.<br>3. Default: `w8a8-dynamic`. |
-| `--quantize-non-expert-linear-action` | Model & Quantization Options | Optional | Separate quantization mode for non-expert linear layers.<br>1. Type: Str.<br>2. Reference values: `disabled`, `w8a16-static`, `w8a8-static`, `w4a8-static`, `w8a16-dynamic`, `w8a8-dynamic`, `w4a8-dynamic`, `fp8`, `mxfp4`.<br>3. Default: `disabled`.<br>4. Mainly intended for DeepSeek V4-style MoE models. Routed MoE experts still use `--quantize-linear-action`. |
+| `--quantize-linear-action` | Model & Quantization Options | Optional | Linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
+| `--quantize-non-expert-linear-action` | Model & Quantization Options | Optional | Separate quantization mode for non-expert linear layers.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `disabled`.<br>4. Mainly intended for DeepSeek V4-style MoE models. Routed MoE experts still use `--quantize-linear-action`. |
 | `--mxfp4-group-size` | Model & Quantization Options | Optional | mxfp4 quantization group size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
 | `--quantize-attention-action` | Model & Quantization Options | Optional | KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
-| `--tensor-parallel-sizes` | Model & Quantization Options | Optional | Enables TP search and optionally specifies TP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
-| `--expert-parallel-sizes` | Model & Quantization Options | Optional | Enables EP search and optionally specifies EP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
-| `--moe-data-parallel-sizes` | Model & Quantization Options | Optional | Enables MOE-DP search and optionally specifies MOE-DP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
+| `--tp-sizes` | Model & Quantization Options | Optional | Enables TP search and optionally specifies TP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
+| `--ep-sizes` | Model & Quantization Options | Optional | Enables EP search and optionally specifies EP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
+| `--moe-dp-sizes` | Model & Quantization Options | Optional | Enables MOE-DP search and optionally specifies MOE-DP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
 | `--enable-shared-expert-tp` | Model & Quantization Options | Optional | Enables vLLM-style tensor parallel for shared experts.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Shared experts use dense MLP TP with delayed `down_proj` reduction. |
 | `--compilation-config` | Model & Quantization Options | Optional | Enables specific compilation features dynamically.<br>1. Type: List[Str].<br>2. Valid range: `enable_multistream`, `enable_sequence_parallel`, `enable_matmul_allreduce`, `enable_dispatch_ffn_combine`.<br>3. Default: `None`; when omitted, all compilation features remain at their defaults (disabled).<br>4. Multiple values can be passed, e.g. `--compilation-config enable_sequence_parallel enable_dispatch_ffn_combine`. |
-| `--word-embedding-tensor-parallel` | Model & Quantization Options | Optional | Enables word embedding tensor parallel and specifies mode.<br>1. Type: Str.<br>2. Reference values: `col`, `row`.<br>3. Default: `None`, meaning embedding TP is disabled. |
+| `--word-embedding-tp` | Model & Quantization Options | Optional | Enables word embedding tensor parallel and specifies mode.<br>1. Type: Str.<br>2. Reference values: `col`, `row`.<br>3. Default: `None`, meaning embedding TP is disabled. |
 | `--performance-model` | Performance Model Options | Optional | Performance model type.<br>1. Type: Str.<br>2. Reference values: `analytic`, `profiling`.<br>3. Default: `analytic`.<br>4. `profiling` mode requires `--profiling-database-path`. |
 | `--profiling-database-path` | Performance Model Options | Conditional | Directory of the measured operator CSV database used by profiling mode.<br>1. Type: Str.<br>2. Value: database directory path, such as `tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5/`.<br>3. Default: `None`; required when `--performance-model profiling` is used. |
 | `--chrome-trace-file` | Debug Options | Optional | Generates a Chrome Trace file for operator-level performance visualization.<br>1. Type: Str.<br>2. Reference value: trace file path, such as `trace.json`.<br>3. Default: `None`. |
@@ -368,7 +368,7 @@ Main parameters:
 | `--max-batched-tokens` | Service Options | Optional | Maximum batched tokens per data-parallel replica for one prefill or mixed prefill/decode step.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`; auto mode starts from `4 * input_length` and falls back to `2 * input_length` then `1 * input_length` on Prefill OOM. |
 | `--batch-range` | Service Options | Optional | Batch size search range.<br>1. Type: List[Int].<br>2. Format: `[min max]` or `[max]`.<br>3. Default: `None`; if `min` is omitted, search starts from `1`; if `max` is omitted, no upper limit is set. |
 | `--serving-cost` | Service Options | Optional | Serving cost used for cost-related metrics.<br>1. Type: Float.<br>2. Valid range: non-negative number.<br>3. Default: `0`. |
-| `--disaggregation` | Service Options | Optional | Enables PD disaggregation mode.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
+| `--disagg` | Service Options | Optional | Enables PD disaggregation mode.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--jobs` | Service Options | Optional | Number of parallel search jobs.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `8`. |
 | `--max-search-combinations` | Service Options | Optional | Warns when TP / EP / MOE-DP / MTP search combinations exceed this value.<br>1. Type: Int.<br>2. Valid range: non-negative integer; set to `0` to disable this warning.<br>3. Default: `100`. |
 | `--concurrency-search-strategy` | Service Options | Optional | Concurrency search strategy.<br>1. Type: Str.<br>2. Reference values: `exponential`, `linear_exponential`.<br>3. Default: `exponential`. |
@@ -377,7 +377,7 @@ Main parameters:
 | `--image-width` | MultiModal Options | Optional | Input image width.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
 | `--prefill-devices-per-instance` | PD Ratio Optimization Options | Conditionally Required | Required when PD ratio optimization is enabled. Specifies devices per Prefill instance.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none.<br>4. Determines the parallel configuration search space for Prefill phase. |
 | `--decode-devices-per-instance` | PD Ratio Optimization Options | Conditionally Required | Required when PD ratio optimization is enabled. Specifies devices per Decode instance.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none.<br>4. Determines the parallel configuration search space for Decode phase. |
-| `--enable-optimize-prefill-decode-ratio` | PD Ratio Optimization Options | Optional | Enables Prefill/Decode instance ratio optimization mode.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Cannot be used together with `--disaggregation`. |
+| `--enable-optimize-prefill-decode-ratio` | PD Ratio Optimization Options | Optional | Enables Prefill/Decode instance ratio optimization mode.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Cannot be used together with `--disagg`. |
 
 ## How to calculate the performance metrics in aggregation mode
 
@@ -475,7 +475,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --input-length 3500 \
     --output-length 1500 \
     --compile \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --tpot-limit 50
 ```

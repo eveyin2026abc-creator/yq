@@ -83,7 +83,7 @@ def arg_parse():
             "--device TEST_DEVICE --num-devices 8 --input-length 1024 --output-length 512\n"
             "# Disaggregated prefill/decode search\n"
             "msmodeling inference throughput-optimizer Qwen/Qwen3-32B "
-            "--num-devices 16 --input-length 1024 --output-length 512 --disaggregation"
+            "--num-devices 16 --input-length 1024 --output-length 512 --disagg"
         ),
         output_help="Best-strategy tables on stdout. Optional chrome trace via --chrome-trace-file.",
     )
@@ -92,13 +92,13 @@ def arg_parse():
     parse_attn, attn_meta = make_enum_type(QuantizeAttentionAction, "--quantize-attention-action")
     parse_cc, cc_meta = make_token_type(COMPILATION_CONFIG_OPTIONS, "--compilation-config", store_canonical="snake")
     parse_strategy, strategy_meta = make_token_type(
-        ("exponential", "linear-exponential"),
+        ("exponential", "linear_exponential"),
         "--concurrency-search-strategy",
         store_canonical="snake",
     )
     parser.add_argument(
-        "--devices",
         "--device",
+        "--devices",
         dest="device",
         type=str,
         nargs="+",
@@ -191,47 +191,43 @@ def arg_parse():
     )
     add_option(
         model_group,
-        "--tensor-parallel-sizes",
+        "--tp-sizes",
         dest="tp_sizes",
         type=check_positive_integer,
         nargs="*",
         default=None,
         metavar=METAVAR_N,
         help="Enable TP search. Optional explicit sizes; default is powers of 2 up to world size.",
-        aliases=("--tp-sizes",),
     )
     add_option(
         model_group,
-        "--expert-parallel-sizes",
+        "--ep-sizes",
         dest="ep_sizes",
         type=check_positive_integer,
         nargs="*",
         default=None,
         metavar=METAVAR_N,
         help="Enable EP search. Optional explicit sizes; default is powers of 2 up to world size.",
-        aliases=("--ep-sizes",),
     )
     add_option(
         model_group,
-        "--moe-data-parallel-sizes",
+        "--moe-dp-sizes",
         dest="moe_dp_sizes",
         type=check_positive_integer,
         nargs="*",
         default=None,
         metavar=METAVAR_N,
         help="Enable MOE-DP search. Optional explicit sizes; default is powers of 2 up to world size.",
-        aliases=("--moe-dp-sizes",),
     )
     add_option(
         model_group,
-        "--decode-context-parallel-sizes",
+        "--dcp-sizes",
         dest="dcp_sizes",
         type=check_positive_integer,
         nargs="*",
         default=None,
         metavar=METAVAR_N,
         help="Enable DCP search. Optional explicit sizes; default is powers of 2 up to world size.",
-        aliases=("--dcp-sizes",),
     )
     model_group.add_argument(
         "--enable-shared-expert-tp",
@@ -247,16 +243,14 @@ def arg_parse():
         metavar=cc_meta,
         help="Enable specific compilation features. If omitted, all compilation features stay disabled.",
     )
-    add_option(
-        model_group,
-        "--word-embedding-tensor-parallel",
+    model_group.add_argument(
+        "--word-embedding-tp",
         dest="word_embedding_tp",
         type=str,
         choices=[mode.value for mode in WordEmbeddingTPMode],
         default=None,
         metavar="{col,row}",
         help="Word embedding tensor parallel mode. Omitted disables embedding TP.",
-        aliases=("--word-embedding-tp",),
     )
     perf_group = parser.add_argument_group("Performance Model Options")
     perf_group.add_argument(
@@ -336,11 +330,10 @@ def arg_parse():
     )
     add_option(
         service_group,
-        "--disaggregation",
+        "--disagg",
         dest="disagg",
         action="store_true",
         help="Run disaggregation mode.",
-        aliases=("--disagg",),
     )
     service_group.add_argument(
         "--jobs",
@@ -494,8 +487,8 @@ def arg_parse():
             "[WARNING] Large number of parallel search combinations "
             f"({total_combinations} = TP:{len(tp_candidates)} x EP:{len(ep_candidates)} "
             f"x MOE-DP:{len(moe_dp_candidates)} x MTP:{len(mtp_candidates)} x DCP:{len(dcp_candidates)}). "
-            "Optimization may take a long time. Consider narrowing --tensor-parallel-sizes, --expert-parallel-sizes, "
-            "--moe-data-parallel-sizes, --num-mtp-tokens, or --decode-context-parallel-sizes; "
+            "Optimization may take a long time. Consider narrowing --tp-sizes, --ep-sizes, "
+            "--moe-dp-sizes, --num-mtp-tokens, or --dcp-sizes; "
             "or increase --max-search-combinations.",
             file=sys.stderr,
             flush=True,
@@ -550,7 +543,7 @@ def main():
     decode_devices_per_instance = getattr(args, "decode_devices_per_instance", None)
     if args.enable_optimize_prefill_decode_ratio:
         if args.disagg:
-            logger.error("--enable-optimize-prefill-decode-ratio cannot be used together with --disaggregation.")
+            logger.error("--enable-optimize-prefill-decode-ratio cannot be used together with --disagg.")
             return 1
         if prefill_devices_per_instance is None or decode_devices_per_instance is None:
             logger.error(

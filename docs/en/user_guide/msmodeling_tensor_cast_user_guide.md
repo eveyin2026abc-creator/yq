@@ -49,7 +49,7 @@ In prefill mode, omit `--decode`; `--query-length` is the new input length and `
 You can also use different quantization schemes for linear layers. For example, use W8A8 dynamic quantization with a 4500-token context prefix:
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action w8a8-dynamic --compile
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-length 3500 --context-length 4500 --device TEST_DEVICE --quantize-linear-action W8A8_DYNAMIC --compile
 ```
 
 #### Decode Scenario
@@ -57,7 +57,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 2 --query-len
 The decode scenario is similar; only adjust the input length `--query-length` and the requested context length `--context-length`. When MTP is not enabled, `--query-length` is usually `1`; when `--num-mtp-tokens` is enabled, set `--query-length` to `1 + --num-mtp-tokens`.
 
 ```bash
-python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --decode --device TEST_DEVICE --quantize-linear-action w8a8-static --compile
+python -m cli.inference.text_generate Qwen/Qwen3-32B --num-queries 10 --query-length 1 --context-length 4500 --decode --device TEST_DEVICE --quantize-linear-action W8A8_STATIC --compile
 ```
 
 **Output:** A performance summary table; optionally a Chrome trace file if `--chrome-trace-file` is set.
@@ -115,7 +115,7 @@ python -m cli.inference.video_generate Wan-AI/Wan2.2-T2V-A14B-Diffusers \
   --frame-num 81 \
   --sample-step 50 \
   --dtype float16 \
-  --quantize-linear-action w8a8-dynamic
+  --quantize-linear-action W8A8_DYNAMIC
 ```
 
 To run the block sparse attention (BSA) backend, retain the dense example above for the default path and add the BSA-only options:
@@ -218,18 +218,18 @@ usage: text_generate.py [-h]
                         [--prefix-cache-hit-rate PREFIX_CACHE_HIT_RATE] [--num-mtp-tokens NUM_MTP_TOKENS]
                         [--no-repetition] [--compile] [--compile-allow-graph-break]
                         [--compilation-config [{enable_multistream,enable_sequence_parallel,enable_matmul_allreduce,enable_dispatch_ffn_combine} ...]]
-                        [--quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
-                        [--quantize-non-expert-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
+                        [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
+                        [--quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                         [--quantize-lmhead] [--mxfp4-group-size mxfp4_GROUP_SIZE]
-                        [--quantize-attention-action {disabled,int8,fp8}] [--graph-log-file GRAPH_LOG_URL]
+                        [--quantize-attention-action {DISABLED,INT8,FP8}] [--graph-log-file GRAPH_LOG_URL]
                         [--dump-input-shapes] [--dump-op-bound-results] [--chrome-trace-file CHROME_TRACE]
-                        [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tensor-parallel-size TP_SIZE]
-                        [--data-parallel-size DP_SIZE] [--expert-parallel-size EP_SIZE] [--o-proj-tensor-parallel-size O_PROJ_TP_SIZE]
-                        [--o-proj-data-parallel-size O_PROJ_DP_SIZE] [--mlp-tensor-parallel-size MLP_TP_SIZE] [--mlp-data-parallel-size MLP_DP_SIZE]
-                        [--lmhead-tensor-parallel-size LMHEAD_TP_SIZE] [--lmhead-data-parallel-size LMHEAD_DP_SIZE]
-                        [--moe-tensor-parallel-size MOE_TP_SIZE] [--moe-data-parallel-size MOE_DP_SIZE] [--word-embedding-tensor-parallel {col,row}]
+                        [--num-hidden-layers-override NUM_HIDDEN_LAYERS_OVERRIDE] [--tp-size TP_SIZE]
+                        [--dp-size DP_SIZE] [--ep-size EP_SIZE] [--o-proj-tp-size O_PROJ_TP_SIZE]
+                        [--o-proj-dp-size O_PROJ_DP_SIZE] [--mlp-tp-size MLP_TP_SIZE] [--mlp-dp-size MLP_DP_SIZE]
+                        [--lmhead-tp-size LMHEAD_TP_SIZE] [--lmhead-dp-size LMHEAD_DP_SIZE]
+                        [--moe-tp-size MOE_TP_SIZE] [--moe-dp-size MOE_DP_SIZE] [--word-embedding-tp {col,row}]
                         [--enable-redundant-experts] [--enable-shared-expert-tp] [--enable-external-shared-experts]
-                        [--host-external-shared-experts] [--vision-tensor-parallel-size VISION_TP_SIZE]
+                        [--host-external-shared-experts] [--vision-tp-size VISION_TP_SIZE]
                         [--image-batch-size IMAGE_BATCH_SIZE] [--image-height IMAGE_HEIGHT]
                         [--image-width IMAGE_WIDTH]
                         [--remote-source {huggingface,modelscope}] [--performance-model {analytic,profiling}]
@@ -259,8 +259,8 @@ Main parameters:
 | `--compile` | Optimization Options | Optional | Invokes `torch.compile()` on the model before inference.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile-allow-graph-break` | Optimization Options | Optional | Allows graph breaks during `torch.compile()`.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compilation-config` | Optimization Options | Optional | Dynamically enable specified compilation features. Multiple options can be provided at once.<br>1. Type: List[Str] (`nargs="*"`).<br>2. Choices: `enable_multistream` (enable multi-stream scheduling), `enable_sequence_parallel` (enable sequence parallel graph rewrite pass), `enable_matmul_allreduce` (enable matmul-allreduce fusion), `enable_dispatch_ffn_combine` (enable dispatch_ffn_combine fusion).<br>3. Default: when omitted, all compilation features remain disabled (`False`).<br>4. Example: `--compilation-config enable_multistream enable_sequence_parallel`. |
-| `--quantize-linear-action` | Quantization Options | Optional | Specifies the linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `w8a16-static`, `w8a8-static`, `w4a8-static`, `w8a16-dynamic`, `w8a8-dynamic`, `w4a8-dynamic`, `fp8`, `mxfp4`.<br>3. Default: `w8a8-dynamic`. |
-| `--quantize-non-expert-linear-action` | Quantization Options | Optional | Specifies a separate quantization mode for non-expert linear layers, such as attention projections, dense MLP, and shared experts.<br>1. Type: Str.<br>2. Reference values: `disabled`, `w8a16-static`, `w8a8-static`, `w4a8-static`, `w8a16-dynamic`, `w8a8-dynamic`, `w4a8-dynamic`, `fp8`, `mxfp4`.<br>3. Default: `disabled`. |
+| `--quantize-linear-action` | Quantization Options | Optional | Specifies the linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
+| `--quantize-non-expert-linear-action` | Quantization Options | Optional | Specifies a separate quantization mode for non-expert linear layers, such as attention projections, dense MLP, and shared experts.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `disabled`. |
 | `--quantize-lmhead` | Quantization Options | Optional | Enables quantization for lm head.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--mxfp4-group-size` | Quantization Options | Optional | Specifies the group size for mxfp4 quantization.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
 | `--quantize-attention-action` | Quantization Options | Optional | Specifies KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
@@ -269,23 +269,23 @@ Main parameters:
 | `--dump-op-bound-results` | Debugging Options | Optional | Dumps per-operator memory, communication, MMA, and GP bound ratios in the result table.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--chrome-trace-file` | Debugging Options | Optional | Specifies the Chrome trace output path for exporting the performance timeline.<br>1. Type: Str.<br>2. Valid range: file path.<br>3. Default: `None`. |
 | `--num-hidden-layers-override` | Debugging Options | Optional | Overrides the number of hidden layers for debugging only.<br>1. Type: Int.<br>2. Valid range: non-negative integer.<br>3. Default: `0`. |
-| `--tensor-parallel-size` | Parallelism Options | Optional | Specifies the tensor parallel size for the whole model.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--data-parallel-size` | Parallelism Options | Optional | Specifies the data parallel size for the whole model.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--expert-parallel-size` | Parallelism Options | Optional | Specifies expert parallel size for experts.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--o-proj-tensor-parallel-size` | Parallelism Options | Optional | Specifies TP size for the attention `o_proj` layer.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--o-proj-data-parallel-size` | Parallelism Options | Optional | Specifies DP size for the attention `o_proj` layer.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--mlp-tensor-parallel-size` | Parallelism Options | Optional | Specifies TP size for MLP layers and can override `--tensor-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--mlp-data-parallel-size` | Parallelism Options | Optional | Specifies DP size for MLP layers and can override `--data-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--lmhead-tensor-parallel-size` | Parallelism Options | Optional | Specifies TP size for lm head and can override `--tensor-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--lmhead-data-parallel-size` | Parallelism Options | Optional | Specifies DP size for lm head and can override `--data-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--moe-tensor-parallel-size` | Parallelism Options | Optional | Specifies TP size for experts and can override `--tensor-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
-| `--moe-data-parallel-size` | Parallelism Options | Optional | Specifies DP size for experts and can override `--data-parallel-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--word-embedding-tensor-parallel` | Parallelism Options | Optional | Enables word embedding tensor parallel and specifies the parallel mode.<br>1. Type: Str.<br>2. Reference values: `col`, `row`.<br>3. Default: `None`, meaning embedding TP is disabled. |
+| `--tp-size` | Parallelism Options | Optional | Specifies the tensor parallel size for the whole model.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
+| `--dp-size` | Parallelism Options | Optional | Specifies the data parallel size for the whole model.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--ep-size` | Parallelism Options | Optional | Specifies expert parallel size for experts.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
+| `--o-proj-tp-size` | Parallelism Options | Optional | Specifies TP size for the attention `o_proj` layer.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--o-proj-dp-size` | Parallelism Options | Optional | Specifies DP size for the attention `o_proj` layer.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--mlp-tp-size` | Parallelism Options | Optional | Specifies TP size for MLP layers and can override `--tp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--mlp-dp-size` | Parallelism Options | Optional | Specifies DP size for MLP layers and can override `--dp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--lmhead-tp-size` | Parallelism Options | Optional | Specifies TP size for lm head and can override `--tp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--lmhead-dp-size` | Parallelism Options | Optional | Specifies DP size for lm head and can override `--dp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--moe-tp-size` | Parallelism Options | Optional | Specifies TP size for experts and can override `--tp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
+| `--moe-dp-size` | Parallelism Options | Optional | Specifies DP size for experts and can override `--dp-size`.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
+| `--word-embedding-tp` | Parallelism Options | Optional | Enables word embedding tensor parallel and specifies the parallel mode.<br>1. Type: Str.<br>2. Reference values: `col`, `row`.<br>3. Default: `None`, meaning embedding TP is disabled. |
 | `--enable-redundant-experts` | Parallelism Options | Optional | Enables redundant expert configuration.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. When enabled alone, each device hosts 1 additional redundant expert.<br>5. When enabled together with `--enable-external-shared-experts`, the allocation logic is the same as external shared experts. If routing experts are already evenly distributed across devices and no redundant experts are needed for padding, each device hosting routing experts hosts 1 additional redundant expert. |
 | `--enable-shared-expert-tp` | Parallelism Options | Optional | Enables vLLM-style tensor parallel for shared experts.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Shared experts use dense MLP TP with delayed `down_proj` reduction. |
 | `--enable-external-shared-experts` | Parallelism Options | Optional | Enables external shared experts.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. When enabled, devices are allocated between external shared experts and routing experts at a `1:top_k` ratio. Redundant experts are used to pad routing experts if needed.<br>5. For example, if `world_size=64`, `top_k=8`, and the number of routing experts is 256, 8 devices host external shared experts and the remaining 56 devices distribute the 256 routing experts: 32 devices host 5 routing experts each, and 24 devices host 4 routing experts plus 1 redundant expert each. |
 | `--host-external-shared-experts` | Parallelism Options | Optional | Specifies that the current device hosts external shared experts.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
-| `--vision-tensor-parallel-size` | Parallelism Options | Optional | Specifies tensor parallel size for vision modules.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`, meaning vision modules are not sharded. |
+| `--vision-tp-size` | Parallelism Options | Optional | Specifies tensor parallel size for vision modules.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`, meaning vision modules are not sharded. |
 | `--image-batch-size` | MultiModal Options | Optional | Specifies image processing batch size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
 | `--image-height` | MultiModal Options | Optional | Specifies input image height.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
 | `--image-width` | MultiModal Options | Optional | Specifies input image width.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `None`. |
@@ -311,11 +311,11 @@ usage: video_generate.py [-h]
                          [--height HEIGHT] [--width WIDTH] [--frame-num FRAME_NUM] [--sample-step SAMPLE_STEP]
                          [--log-level {debug,info,warning,error}] [--dtype {float16,float32,bfloat16}]
                          [--remote-source {huggingface,modelscope}]
-                         [--quantize-linear-action {disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}]
-                         [--quantize-attention-action {disabled,int8,fp8}] [--use-cfg]
+                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
+                         [--quantize-attention-action {DISABLED,INT8,FP8}] [--use-cfg]
                          [--attention-backend {dense,block_sparse_attention}] [--attention-block-size ATTENTION_BLOCK_SIZE]
                          [--attention-sparsity ATTENTION_SPARSITY] [--num-devices WORLD_SIZE]
-                         [--ulysses-parallel-size ULYSSES_SIZE] [--cfg-parallel] [--compile]
+                         [--ulysses-size ULYSSES_SIZE] [--cfg-parallel] [--compile]
                          [--compile-allow-graph-break] [--dit-cache]
                          [--cache-step-range CACHE_STEP_RANGE] [--cache-step-interval CACHE_STEP_INTERVAL]
                          [--cache-block-range CACHE_BLOCK_RANGE]
@@ -340,14 +340,14 @@ Main parameters:
 | `--log-level` | options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`.<br>3. Default: `info`. |
 | `--dtype` | options | Optional | Specifies model compute data type.<br>1. Type: Str.<br>2. Reference values: `float16`, `float32`, `bfloat16`.<br>3. Default: `float16`. |
 | `--remote-source` | options | Optional | Specifies the remote source for non-local Diffusers repo IDs.<br>1. Type: Str.<br>2. Reference values: `huggingface`, `modelscope`.<br>3. Default: `huggingface`. |
-| `--quantize-linear-action` | options | Optional | Specifies linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `w8a16-static`, `w8a8-static`, `w4a8-static`, `w8a16-dynamic`, `w8a8-dynamic`, `w4a8-dynamic`, `fp8`, `mxfp4`.<br>3. Default: `w8a8-dynamic`. |
+| `--quantize-linear-action` | options | Optional | Specifies linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
 | `--quantize-attention-action` | options | Optional | Specifies attention computation quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
 | `--use-cfg` | options | Optional | Enables classifier-free guidance simulation path.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--attention-backend` | Attention Options | Optional | Selects the attention backend.<br>1. Type: Str.<br>2. Reference values: `dense`, `block_sparse_attention`.<br>3. Default: `dense`. |
 | `--attention-block-size` | Attention Options | Optional | Sets the BSA block size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `128`. |
 | `--attention-sparsity` | Attention Options | Optional | Sets the ratio of KV blocks skipped by BSA.<br>1. Type: Float.<br>2. Valid range: `[0.0, 1.0)`.<br>3. Default: `0.0`. |
 | `--num-devices` | Parallel Options | Optional | Specifies the total number of devices participating in distributed simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--ulysses-parallel-size` | Parallel Options | Optional | Specifies Ulysses parallel size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
+| `--ulysses-size` | Parallel Options | Optional | Specifies Ulysses parallel size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
 | `--cfg-parallel` | Parallel Options | Optional | Enables CFG parallel strategy.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile` | Optimization Options | Optional | Compiles the primary transformer before simulation.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Uses `dynamic=False, fullgraph=True`; when DiT cache is active, the cache transformer uses the same policy. |
 | `--compile-allow-graph-break` | Optimization Options | Optional | Allows graph breaks during compilation.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Changes compilation to `fullgraph=False` for both the primary and DiT cache transformers. |

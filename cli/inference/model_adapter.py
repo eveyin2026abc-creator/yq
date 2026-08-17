@@ -211,63 +211,57 @@ def _add_doctor_runtime_options(parser: argparse.ArgumentParser) -> None:
     parallel_group = parser.add_argument_group("Parallelism Options")
     add_option(
         parallel_group,
-        "--tensor-parallel-size",
+        "--tp-size",
         dest="tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Tensor parallel size.",
-        aliases=("--tp-size",),
     )
     add_option(
         parallel_group,
-        "--data-parallel-size",
+        "--dp-size",
         dest="dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size.",
-        aliases=("--dp-size",),
     )
     add_option(
         parallel_group,
-        "--expert-parallel-size",
+        "--ep-size",
         dest="ep_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Expert parallel size.",
-        aliases=("--ep-size",),
     )
     add_option(
         parallel_group,
-        "--moe-tensor-parallel-size",
+        "--moe-tp-size",
         dest="moe_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="MoE tensor parallel size.",
-        aliases=("--moe-tp-size",),
     )
     add_option(
         parallel_group,
-        "--moe-data-parallel-size",
+        "--moe-dp-size",
         dest="moe_dp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="MoE data parallel size.",
-        aliases=("--moe-dp-size",),
     )
     add_option(
         parallel_group,
-        "--vision-tensor-parallel-size",
+        "--vision-tp-size",
         dest="vision_tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Vision tensor parallel size.",
-        aliases=("--vision-tp-size",),
     )
 
 
@@ -398,63 +392,57 @@ def _add_verify_case_options(parser: argparse.ArgumentParser) -> None:
     parallel_group = parser.add_argument_group("Parallelism Options")
     add_option(
         parallel_group,
-        "--tensor-parallel-size",
+        "--tp-size",
         dest="tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Tensor parallel size.",
-        aliases=("--tp-size",),
     )
     add_option(
         parallel_group,
-        "--data-parallel-size",
+        "--dp-size",
         dest="dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size.",
-        aliases=("--dp-size",),
     )
     add_option(
         parallel_group,
-        "--expert-parallel-size",
+        "--ep-size",
         dest="ep_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Expert parallel size.",
-        aliases=("--ep-size",),
     )
     add_option(
         parallel_group,
-        "--moe-tensor-parallel-size",
+        "--moe-tp-size",
         dest="moe_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="MoE tensor parallel size.",
-        aliases=("--moe-tp-size",),
     )
     add_option(
         parallel_group,
-        "--moe-data-parallel-size",
+        "--moe-dp-size",
         dest="moe_dp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="MoE data parallel size.",
-        aliases=("--moe-dp-size",),
     )
     add_option(
         parallel_group,
-        "--vision-tensor-parallel-size",
+        "--vision-tp-size",
         dest="vision_tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Vision tensor parallel size.",
-        aliases=("--vision-tp-size",),
     )
 
     parser.add_argument(

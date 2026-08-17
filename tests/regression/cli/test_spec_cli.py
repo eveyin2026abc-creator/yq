@@ -67,8 +67,8 @@ def test_text_generate_help_hides_legacy_parallel_flags() -> None:
     assert "Required arguments:" in help_text
     assert "Optional arguments:" in help_text
     assert "Examples:" in help_text
-    assert "--tensor-parallel-size" in help_text
-    assert "--tp-size" not in help_text.replace("--tensor-parallel-size", "")
+    assert "--tp-size" in help_text
+    assert "--tensor-parallel-size" not in help_text
     assert "--chrome-trace-file" in help_text
     assert "--log-level" in help_text
     assert "-v" in help_text
@@ -76,7 +76,7 @@ def test_text_generate_help_hides_legacy_parallel_flags() -> None:
     assert "(default: None)" not in help_text
 
 
-def test_text_generate_legacy_tp_size_still_parses(capsys: pytest.CaptureFixture[str]) -> None:
+def test_text_generate_tp_size_parses_without_deprecation(capsys: pytest.CaptureFixture[str]) -> None:
     ns = _capture_text_generate_args(
         [
             "text_generate",
@@ -90,29 +90,10 @@ def test_text_generate_legacy_tp_size_still_parses(capsys: pytest.CaptureFixture
         ]
     )
     assert ns.tp_size == 2
-    err = capsys.readouterr().err
-    assert "deprecated" in err
-    assert "--tp-size" in err
-    assert "--tensor-parallel-size" in err
+    assert "deprecated" not in capsys.readouterr().err
 
 
-def test_text_generate_accepts_kebab_quant_choice() -> None:
-    ns = _capture_text_generate_args(
-        [
-            "text_generate",
-            "Qwen/Qwen3-32B",
-            "--num-queries",
-            "1",
-            "--query-length",
-            "8",
-            "--quantize-linear-action",
-            "w8a8-dynamic",
-        ]
-    )
-    assert ns.quantize_linear_action == QuantizeLinearAction.W8A8_DYNAMIC
-
-
-def test_text_generate_legacy_quant_choice_warns(capsys: pytest.CaptureFixture[str]) -> None:
+def test_text_generate_accepts_native_and_kebab_quant_choice() -> None:
     ns = _capture_text_generate_args(
         [
             "text_generate",
@@ -126,7 +107,19 @@ def test_text_generate_legacy_quant_choice_warns(capsys: pytest.CaptureFixture[s
         ]
     )
     assert ns.quantize_linear_action == QuantizeLinearAction.W8A8_DYNAMIC
-    assert "deprecated" in capsys.readouterr().err
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+            "--quantize-linear-action",
+            "w8a8-dynamic",
+        ]
+    )
+    assert ns.quantize_linear_action == QuantizeLinearAction.W8A8_DYNAMIC
 
 
 def test_throughput_optimizer_legacy_flags_parse() -> None:
@@ -159,10 +152,10 @@ def test_throughput_optimizer_new_flags_parse() -> None:
         "Qwen/Qwen3-32B",
         "--num-devices",
         "8",
-        "--tensor-parallel-sizes",
+        "--tp-sizes",
         "1",
         "2",
-        "--disaggregation",
+        "--disagg",
         "--verbose",
     ]
     with patch.object(sys, "argv", argv):
@@ -235,12 +228,11 @@ def _assert_help_meets_spec(help_text: str) -> None:
             raise AssertionError(f"multi-character short option in help: {line!r}")
 
 
-def test_text_generate_help_uses_kebab_enum_defaults() -> None:
+def test_text_generate_help_uses_native_enum_defaults() -> None:
     result = run_module_main("cli.inference.text_generate", ["--help"])
     assert result.returncode == 0
     _assert_help_meets_spec(result.stdout)
-    assert "[default: w8a8-dynamic]" in result.stdout
-    assert "W8A8_DYNAMIC" not in result.stdout
+    assert "[default: W8A8_DYNAMIC]" in result.stdout
     assert "--chrome-trace-file" in result.stdout
     assert "--chrome-trace" not in result.stdout.replace("--chrome-trace-file", "")
 
@@ -249,10 +241,10 @@ def test_throughput_optimizer_help_hides_legacy_flags() -> None:
     result = run_module_main("cli.inference.throughput_optimizer", ["--help"])
     assert result.returncode == 0
     _assert_help_meets_spec(result.stdout)
-    assert "--tensor-parallel-sizes" in result.stdout
-    assert "--tp-sizes" not in result.stdout
-    assert "--disaggregation" in result.stdout
-    assert "--disagg" not in result.stdout.replace("--disaggregation", "")
+    assert "--tp-sizes" in result.stdout
+    assert "--tensor-parallel-sizes" not in result.stdout
+    assert "--disagg" in result.stdout
+    assert "--disaggregation" not in result.stdout
     assert "-j," in result.stdout
     assert "--jobs" in result.stdout
 
@@ -261,8 +253,8 @@ def test_video_generate_help_meets_spec() -> None:
     result = run_module_main("cli.inference.video_generate", ["--help"])
     assert result.returncode == 0
     _assert_help_meets_spec(result.stdout)
-    assert "--ulysses-parallel-size" in result.stdout
-    assert "--ulysses-size" not in result.stdout.replace("--ulysses-parallel-size", "")
+    assert "--ulysses-size" in result.stdout
+    assert "--ulysses-parallel-size" not in result.stdout
     assert "--num-devices" in result.stdout
     assert "--world-size" not in result.stdout
 

@@ -54,7 +54,7 @@ def main():
             "# Decode with tensor parallel\n"
             "msmodeling inference text-generate Qwen/Qwen3-32B "
             "--num-queries 8 --query-length 1 --context-length 4096 --decode "
-            "--tensor-parallel-size 8"
+            "--tp-size 8"
         ),
         output_help="Metrics table on stdout. Optional chrome trace via --chrome-trace-file.",
     )
@@ -215,146 +215,118 @@ def main():
     )
 
     par_group = parser.add_argument_group("Parallelism Options")
-    add_option(
-        par_group,
-        "--tensor-parallel-size",
+    par_group.add_argument(
+        "--tp-size",
         dest="tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Tensor parallel size for the whole model.",
-        aliases=("--tp-size",),
     )
-    add_option(
-        par_group,
-        "--pipeline-parallel-size",
+    par_group.add_argument(
+        "--pp-size",
         dest="pp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Pipeline parallel size for the whole model.",
-        aliases=("--pp-size",),
     )
-    add_option(
-        par_group,
-        "--decode-context-parallel-size",
+    par_group.add_argument(
+        "--dcp-size",
         dest="dcp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
-        help="Decode Context Parallel size. Reuses TP devices and must divide tensor-parallel-size.",
-        aliases=("--dcp-size",),
+        help="Decode Context Parallel size. Reuses TP devices and must divide --tp-size.",
     )
-    add_option(
-        par_group,
-        "--data-parallel-size",
+    par_group.add_argument(
+        "--dp-size",
         dest="dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size for the whole model.",
-        aliases=("--dp-size",),
     )
-    add_option(
-        par_group,
-        "--expert-parallel-size",
+    par_group.add_argument(
+        "--ep-size",
         dest="ep_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Expert parallel size.",
-        aliases=("--ep-size",),
     )
-    add_option(
-        par_group,
-        "--o-proj-tensor-parallel-size",
+    par_group.add_argument(
+        "--o-proj-tp-size",
         dest="o_proj_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Tensor parallel size for attn o_proj.",
-        aliases=("--o-proj-tp-size",),
     )
-    add_option(
-        par_group,
-        "--o-proj-data-parallel-size",
+    par_group.add_argument(
+        "--o-proj-dp-size",
         dest="o_proj_dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size for attn o_proj.",
-        aliases=("--o-proj-dp-size",),
     )
-    add_option(
-        par_group,
-        "--mlp-tensor-parallel-size",
+    par_group.add_argument(
+        "--mlp-tp-size",
         dest="mlp_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Tensor parallel size for MLP layers.",
-        aliases=("--mlp-tp-size",),
     )
-    add_option(
-        par_group,
-        "--mlp-data-parallel-size",
+    par_group.add_argument(
+        "--mlp-dp-size",
         dest="mlp_dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size for MLP layers.",
-        aliases=("--mlp-dp-size",),
     )
-    add_option(
-        par_group,
-        "--lmhead-tensor-parallel-size",
+    par_group.add_argument(
+        "--lmhead-tp-size",
         dest="lmhead_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Tensor parallel size for the LM head.",
-        aliases=("--lmhead-tp-size",),
     )
-    add_option(
-        par_group,
-        "--lmhead-data-parallel-size",
+    par_group.add_argument(
+        "--lmhead-dp-size",
         dest="lmhead_dp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Data parallel size for the LM head.",
-        aliases=("--lmhead-dp-size",),
     )
-    add_option(
-        par_group,
-        "--moe-tensor-parallel-size",
+    par_group.add_argument(
+        "--moe-tp-size",
         dest="moe_tp_size",
         type=check_positive_integer,
         default=None,
         metavar=METAVAR_N,
         help="Tensor parallel size for experts.",
-        aliases=("--moe-tp-size",),
     )
-    add_option(
-        par_group,
-        "--moe-data-parallel-size",
+    par_group.add_argument(
+        "--moe-dp-size",
         dest="moe_dp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Data parallel size for experts.",
-        aliases=("--moe-dp-size",),
     )
-    add_option(
-        par_group,
-        "--word-embedding-tensor-parallel",
+    par_group.add_argument(
+        "--word-embedding-tp",
         dest="word_embedding_tp",
         type=str,
         choices=[mode.value for mode in WordEmbeddingTPMode],
         default=None,
         metavar="{col,row}",
         help="Word embedding tensor parallel mode. Omitted disables embedding TP.",
-        aliases=("--word-embedding-tp",),
     )
     par_group.add_argument(
         "--enable-redundant-experts",
@@ -379,15 +351,13 @@ def main():
         action="store_true",
         help="Whether to have the current device host the external shared experts",
     )
-    add_option(
-        par_group,
-        "--vision-tensor-parallel-size",
+    par_group.add_argument(
+        "--vision-tp-size",
         dest="vision_tp_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Vision tensor parallel degree. Default 1 keeps vision modules unsharded.",
-        aliases=("--vision-tp-size",),
     )
 
     multimodal_group = parser.add_argument_group("MultiModal Options")
@@ -441,11 +411,10 @@ def main():
     )
     add_option(
         parser,
-        "--no-profiling-interpolation",
+        "--disable-profiling-interpolation",
         dest="disable_profiling_interpolation",
         action="store_true",
         help="Use exact and partial profiling matches only with --performance-model profiling.",
-        aliases=("--disable-profiling-interpolation",),
     )
     add_option(
         parser,

@@ -7,7 +7,7 @@
 | **状态** | Draft |
 | **作者** | eveyin1 |
 | **创建日期** | 2026-08-16 |
-| **更新日期** | 2026-08-16 |
+| **更新日期** | 2026-08-17 |
 | **相关链接** | 分支 `cli`，提交 `4904a2f`；依据《MindStudio 工具链命令行统一规范化设计方案》§4.7 |
 
 ---
@@ -16,7 +16,7 @@
 
 ### 1.1 Summary (简介)
 
-本 RFC 将 msmodeling 公开控制台对齐 MindStudio 工具链命令行规范：长选项 kebab-case、短选项单字符且语义统一、`--version/-V` 与日志分级开关齐全、`--help` 按固定段落输出，枚举取值统一小写 kebab-case。
+本 RFC 将 msmodeling 公开控制台对齐 MindStudio 工具链命令行规范中的**必须项与值得改项**：长选项 kebab-case（去掉 snake 与多字符短选项）、短选项单字符且语义统一、`--version/-V` 与日志分级开关齐全、`--help` 按固定段落输出。并行度短名（`--tp-size`）与量化原取值（`W8A8_DYNAMIC`）保持正式接口。
 
 实现上不删除旧参数。旧写法降为隐藏兼容别名：继续解析、在 stderr 打印一次性弃用提示、不出现在 `--help`。内部 `argparse` dest 与 `UserInputConfig` / ServingCast / OptiX 字段名保持不变，避免仿真内核随 CLI 表面一起改动。
 
@@ -53,58 +53,18 @@
 
 | 块 | 规范章节 | 要改的内容 |
 |:---|:---|:---|
-| 参数名 (K) | 4.2 | 长选项 kebab-case；短选项单字符且 `-V/-v/-o/-c` 语义固定；目录 `-path`、文件 `-file`；并行度写成 `--<维度>-parallel-size`；词表命中项必须提供标准写法 |
-| 参数值 (V) | 4.3 | 布尔用 flag / `--no-*`，help 不用 True/False、yes/no；枚举小写 kebab-case；多值用复数名 + nargs |
+| 参数名 (K) | 4.2 | 长选项 kebab-case；短选项单字符且 `-V/-v/-o/-c` 语义固定；目录 `-path`、文件 `-file`；词表命中项必须提供标准写法。并行度短名（`--tp-size` 等）保持正式接口，不强制全拼 |
+| 参数值 (V) | 4.3 | 布尔用 flag / `--no-*`，help 不用 True/False、yes/no；多值用复数名 + nargs。量化等枚举保持原取值（如 `W8A8_DYNAMIC`），kebab 拼写仍可解析 |
 | 帮助与版本 | 4.4–4.5 | `--help` 含 Description / Usage / Required / Optional / Examples；带值参数有 `<N>` / `<FILE>` / `{a,b,c}`；默认值 `[default: xxx]`；全部支持 `--version/-V` |
-| 兼容 | 4.1、4.6、4.7.11–12 | 旧名不删，能解析；不进 `--help`；用到时 stderr 一次性弃用提示 |
+| 兼容 | 4.1、4.6、4.7.11–12 | 被改名的旧写法不删，能解析；不进 `--help`；用到时 stderr 一次性弃用提示 |
 
 对 **msmodeling**：上表 1–4 都要做。§4.7 第 7 条 wrapper `-- <prog> [args]`（mssanitizer / msmemscope / msopprof / msprof）不适用，本工具跳过。内部 dest（`tp_size`、`disagg` 等）不改。
 
 #### 1.4.1 参数一共改哪三类
 
-下列每条都写清：正式名、旧名、内部 dest、作用范围、取值形态。dest 一律不改，旧名一律可解析并告警。
+落地范围只覆盖**必须改**和**值得改**。并行度短名（`--tp-size`、`--disagg`、量化 `W8A8_DYNAMIC` 等）保持正式接口，与 aiconfigurator / 业界习惯对齐。dest 一律不改；被改名的旧写法可解析并告警。
 
 **第一类：改名字（旧名留下当隐藏别名）**
-
-依据 **4.2.2 第 3 条**：并行度统一 `--<维度>-parallel-size`；**4.2.3.2**：`tp`/`pp`/`dp`/`ep`/`dcp` 不在缩写白名单，正式接口须全拼。
-
-单值并行度（`text-generate`；`model-adapter` 的 doctor/verify 覆盖其中标了「适配器」的项）：
-
-| 正式接口 | 隐藏别名 | dest | metavar | 具体改动 |
-|:---|:---|:---|:---|:---|
-| `--tensor-parallel-size` | `--tp-size` | `tp_size` | `<N>` | 整模型张量并行度，默认 1。适配器同样改名 |
-| `--pipeline-parallel-size` | `--pp-size` | `pp_size` | `<N>` | 流水线并行度，默认 1。仅 text-generate |
-| `--data-parallel-size` | `--dp-size` | `dp_size` | `<N>` | 数据并行度，默认空。适配器同样改名 |
-| `--decode-context-parallel-size` | `--dcp-size` | `dcp_size` | `<N>` | Decode Context Parallel，须整除 TP。仅 text-generate |
-| `--expert-parallel-size` | `--ep-size` | `ep_size` | `<N>` | 专家并行度，默认 1。适配器同样改名 |
-| `--o-proj-tensor-parallel-size` | `--o-proj-tp-size` | `o_proj_tp_size` | `<N>` | attn o_proj 的 TP。仅 text-generate |
-| `--o-proj-data-parallel-size` | `--o-proj-dp-size` | `o_proj_dp_size` | `<N>` | attn o_proj 的 DP。仅 text-generate |
-| `--mlp-tensor-parallel-size` | `--mlp-tp-size` | `mlp_tp_size` | `<N>` | MLP 的 TP。仅 text-generate |
-| `--mlp-data-parallel-size` | `--mlp-dp-size` | `mlp_dp_size` | `<N>` | MLP 的 DP。仅 text-generate |
-| `--lmhead-tensor-parallel-size` | `--lmhead-tp-size` | `lmhead_tp_size` | `<N>` | LM Head 的 TP。仅 text-generate |
-| `--lmhead-data-parallel-size` | `--lmhead-dp-size` | `lmhead_dp_size` | `<N>` | LM Head 的 DP。仅 text-generate |
-| `--moe-tensor-parallel-size` | `--moe-tp-size` | `moe_tp_size` | `<N>` | 专家 TP。适配器同样改名 |
-| `--moe-data-parallel-size` | `--moe-dp-size` | `moe_dp_size` | `<N>` | 专家 DP，默认 1。适配器同样改名 |
-| `--vision-tensor-parallel-size` | `--vision-tp-size` | `vision_tp_size` | `<N>` | 视觉模块 TP，默认 1。适配器同样改名 |
-| `--word-embedding-tensor-parallel` | `--word-embedding-tp` | `word_embedding_tp` | `{col,row}` | 词嵌入 TP 模式。text-generate 与 throughput-optimizer |
-
-示例：`--tp-size 8` 与 `--tensor-parallel-size 8` 都写入 `args.tp_size == 8`。
-
-多值并行搜索（仅 `throughput-optimizer`，`nargs=*`，空列表表示按 world size 自动生成 2 的幂）：
-
-| 正式接口 | 隐藏别名 | dest | 具体改动 |
-|:---|:---|:---|:---|
-| `--tensor-parallel-sizes` | `--tp-sizes` | `tp_sizes` | TP 搜索候选，如 `--tensor-parallel-sizes 1 2 4` |
-| `--expert-parallel-sizes` | `--ep-sizes` | `ep_sizes` | EP 搜索候选 |
-| `--moe-data-parallel-sizes` | `--moe-dp-sizes` | `moe_dp_sizes` | MoE-DP 搜索候选 |
-| `--decode-context-parallel-sizes` | `--dcp-sizes` | `dcp_sizes` | DCP 搜索候选 |
-
-视频生成并行（仅 `video-generate`）：
-
-| 正式接口 | 隐藏别名 | dest | 具体改动 |
-|:---|:---|:---|:---|
-| `--num-devices` | `--world-size` | `world_size` | 设备数，默认 1。公开名与 text-generate 的 `--num-devices` 对齐 |
-| `--ulysses-parallel-size` | `--ulysses-size` | `ulysses_size` | Ulysses 序列并行度，默认 1，须整除 `world_size` |
 
 路径与产物后缀（4.2.1 第 5 条：文件 `-file`，目录 `-path`）：
 
@@ -124,12 +84,11 @@
 | 正式接口 | 隐藏别名 | dest | 范围 | 具体改动 |
 |:---|:---|:---|:---|:---|
 | `--model-path` / `--model-id` | `--model_id` | `model_id` | 公共 parser、video-generate、model-adapter | 与位置参数 `model_id` 等价；缺一则 `require_model_id` 报错。词表标准名是 `--model-path` |
-| `--disaggregation` | `--disagg` | `disagg` | throughput-optimizer | store_true，分离 PD 寻优 |
+| `--num-devices` | `--world-size` | `world_size` | video-generate | 与其它入口 `--num-devices` 对齐 |
 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` | throughput-optimizer | 单个 TTFT 约束，`<FLOAT>`。旧名是复数但只收一个值，按 4.3.3 改为单数 |
 | `--tpot-limit` | `--tpot-limits` | `tpot_limits` | throughput-optimizer | 单个 TPOT 约束，同上 |
 | `--mtp-acceptance-rates` | `--mtp-acceptance-rate` | `mtp_acceptance_rate` | throughput-optimizer | `nargs=+`，默认 `[0.9, 0.6, 0.4, 0.2]`，按 4.3.3 改为复数 |
 | `--no-repetition` | `--disable-repetition` | `disable_repetition` | text-generate、model-adapter | store_true；另提供对偶 `--repetition`（store_false）。4.3.1 要求 `--name` / `--no-name` |
-| `--no-profiling-interpolation` | `--disable-profiling-interpolation` | `disable_profiling_interpolation` | text-generate | 关闭 profiling 插值 |
 | `--ignore-existing-profiles` | `--ignore-existing-profile` | `ignore_existing_profile` | model-adapter doctor | `action=append`，多值用复数 |
 | `--load-breakpoint` | `--load_breakpoint`、`-lb` | `load_breakpoint` | optix | store_true。废除 snake_case 与多字符短选项 `-lb` |
 | `--benchmark-policy` | `--benchmark_policy` | `benchmark_policy` | optix | 短选项仍是词表外的 `-b`；取值见第三类 |
@@ -141,7 +100,7 @@
 | 正式接口 | dest / 行为 | 范围 | 具体改动 |
 |:---|:---|:---|:---|
 | `-V, --version` | `VersionAction`，打印后退出 | 顶层 `msmodeling`、`inference`、text-generate、throughput-optimizer、video-generate、model-adapter 及子命令、optix | 输出 Logo、`msmodeling {ver} ({7 位 git})`、版权、Mulan PSL v2、Repo。`-v` 不再表示 version |
-| `--log-level {debug,info,warning,error}` | `log_level`，默认解析为 `info` | 同上（export-evidence 仅 version，无完整仿真日志栈） | 隐藏别名 `--log_level`。help metavar 为 `{debug,info,warning,error}` |
+| `--log-level {debug,info,warning,error,critical}` | `log_level`，默认解析为 `info` | 同上（export-evidence 仅 version，无完整仿真日志栈） | 隐藏别名 `--log_level`。help metavar 含 `critical` |
 | `-v, --verbose` | `verbose`，store_true | 同上 | 未写 `--log-level` 时等价 debug |
 | `-q, --quiet` | `quiet`，store_true | 同上 | 未写 `--log-level` 时等价 error |
 | `--debug` | `debug`，store_true | 同上 | 与 `--verbose` 同级，取 debug |
@@ -158,20 +117,9 @@
 
 optix 在解析后再调用 `set_log_level`，接到 loguru。
 
-**第三类：改取值写法（参数名大多不动，合法值变了）**
+**第三类：取值与 metavar（参数名大多不动）**
 
-| 参数 | 正式取值（help 展示） | 旧取值（仍可解析，会告警） | 写入 dest 的实际对象 | 范围 |
-|:---|:---|:---|:---|:---|
-| `--quantize-linear-action`、`--quantize-non-expert-linear-action` | `{disabled,w8a16-static,w8a8-static,w4a8-static,w8a16-dynamic,w8a8-dynamic,w4a8-dynamic,fp8,mxfp4}` | `W8A8_DYNAMIC`、`DISABLED` 等 UPPER_SNAKE | `QuantizeLinearAction` 成员 | text-generate、throughput-optimizer、video-generate、model-adapter doctor |
-| `--quantize-attention-action` | `{disabled,int8,fp8}` | `DISABLED`、`INT8`、`FP8` | `QuantizeAttentionAction` 成员 | 同上 |
-| `--compilation-config` | `{enable-multistream,enable-sequence-parallel,enable-matmul-allreduce,enable-dispatch-ffn-combine}`，`nargs=*` | `enable_multistream` 等 snake_case | 内部仍存 snake_case 配置键 | text-generate、throughput-optimizer |
-| `--concurrency-search-strategy` | `{exponential,linear-exponential}` | `linear_exponential` | 内部仍存 snake_case | throughput-optimizer |
-| `--attention-backend` | `{dense,block-sparse-attention}` | `block_sparse_attention` | `AttentionBackend` 成员 | video-generate |
-| `--benchmark-policy` | `{ais_bench,vllm_benchmark}`（注册表固定名，不改成 kebab） | 无 | 注册表键 `ais_bench` / `vllm_benchmark` | optix |
-| `--engine` | 注册表固定名（如 `vllm`、`mindie`） | 无 | 内部仍是注册表键 | optix |
-| `--remote-source` | `{huggingface,modelscope}` | 原本已是小写，仅补 metavar | 字符串 | text-generate、video-generate、model-adapter |
-| `--performance-model` | `{analytic,profiling}` | 原本已是小写，仅补 metavar | 字符串或 append 列表 | text-generate、throughput-optimizer、model-adapter verify |
-| `--devices` / `--device` | `<NAME> [<NAME> ...]` | 单值 `--device TEST_DEVICE` 仍合法 | `device`：optimizer 为 list，其它入口为单个 profile 名 | optimizer 公开复数 `--devices`，同时保留 `--device` 为正式入口（不告警） |
+量化、编译开关、attention backend 的正式取值保持原样（`W8A8_DYNAMIC`、`enable_multistream` 等）；kebab 拼写仍可解析，不告警。`--log-level` 含 `critical`。optix `--benchmark-policy` 仍是 `ais_bench` / `vllm_benchmark`。`--device` 为正式入口，throughput-optimizer 同时接受 `--devices`（不告警）。`--remote-source` / `--performance-model` 仅补 metavar。
 
 布尔：help 用 `[default: off]` / `[default: on]`，不再写 True/False。`--enable-redundant-experts` 等说明改为陈述句，去掉 “When this flag is True”。
 
@@ -183,7 +131,7 @@ optix 在解析后再调用 `set_log_level`，接到 loguru。
 |:---|:---|
 | 帮助段落 | `SpecArgumentParser.format_help()` 固定输出 Description / Usage / Commands（有子命令时）/ Required arguments / Optional arguments / Examples；有落盘时加 Output |
 | 必填/可选 | 靠段落分组，禁止 `<Required>`、`[Mandatory]` 等行内标签 |
-| 默认值 | 行尾 `[default: xxx]`；无默认不写；禁止 `(default: None)`。枚举默认展示 kebab，如 `[default: w8a8-dynamic]` |
+| 默认值 | 行尾 `[default: xxx]`；无默认不写；禁止 `(default: None)`。枚举默认展示原值，如 `[default: W8A8_DYNAMIC]` |
 | metavar | `<N>` / `<FILE>` / `<DIR>` / `<FLOAT>` / `<NAME>` / `<RANGE>` / `{a,b,c}` |
 | `--help` 文案 | `Show help message.` |
 | 示例 | 每个公开子命令至少 1 条可运行命令，推荐带 `#` 注释 |
@@ -193,8 +141,8 @@ optix 在解析后再调用 `set_log_level`，接到 loguru。
 
 能用。旧参数不删除，只是降为隐藏别名：
 
-1. **能解析**：`--tp-size 8` 与 `--tensor-parallel-size 8` 效果相同。
-2. **stderr 打一次弃用提示**：`WARNING: --tp-size is deprecated; use --tensor-parallel-size instead.`
+1. **能解析**：`--chrome-trace out.json` 与 `--chrome-trace-file out.json` 效果相同。
+2. **stderr 打一次弃用提示**：`WARNING: --chrome-trace is deprecated; use --chrome-trace-file instead.`
 3. **不出现在 `--help`**：新用户只看到正式名。
 
 存量脚本、CI 与现有 UT/ST 不必先改参数名。内部变量名（dest）也不改。
@@ -207,18 +155,18 @@ optix 在解析后再调用 `set_log_level`，接到 loguru。
 |:---|:---|:---|
 | 新用户查看帮助 | `msmodeling --help` 与各子命令 `--help` 只展示标准名、metavar、默认值与至少 1 条可运行示例 | 可学习、可被 Agent 解析 |
 | 查询版本 | 任意公开入口 `--version` / `-V` 打印 Logo、`msmodeling {ver} ({git})`、版权与 Mulan PSL v2 | 排障可确认安装版本 |
-| 调节日志 | `--log-level {debug,info,warning,error}` 默认 info；`--verbose/-v` 与 `--debug` 等价 debug，`--quiet/-q` 等价 error；显式 `--log-level` 优先 | 与规范 4.2.3.1 冲突裁决一致 |
-| 新脚本使用标准名 | `--tensor-parallel-size 8`、`--chrome-trace-file out.json`、`--disaggregation`、`--load-breakpoint` | 正式接口无 snake_case、无多字符短选项 |
-| 存量脚本 | `--tp-size`、`--chrome-trace`、`--disagg`、`--load_breakpoint`、`-lb` 仍可解析 | 兼容性；stderr 引导迁移 |
+| 调节日志 | `--log-level {debug,info,warning,error,critical}` 默认 info；`--verbose/-v` 与 `--debug` 等价 debug，`--quiet/-q` 等价 error；显式 `--log-level` 优先 | 与规范 4.2.3.1 冲突裁决一致 |
+| 新脚本使用标准名 | `--tp-size 8`、`--chrome-trace-file out.json`、`--disagg`、`--load-breakpoint` | 正式接口无 snake_case、无多字符短选项 |
+| 存量脚本 | `--chrome-trace`、`--load_breakpoint`、`-lb`、`--ttft-limits` 仍可解析 | 兼容性；stderr 引导迁移 |
 | 模型标识 | 位置参数 `model_id` 与 `--model-path` / `--model-id` 等价；缺一不可 | 对齐词表 `--model-path`，不强制删除位置参数 |
-| 多硬件寻优 | `throughput-optimizer` 公开 `--devices`（可重复），`--device` 仍作为同 dest 的公开单/多值入口 | 多值用复数名，不把 `--device` 标成弃用 |
+| 多硬件寻优 | `throughput-optimizer` 以 `--device` 为正式入口，同时接受 `--devices` | 不把 `--device` 标成弃用 |
 | 适配器导出 | `model-adapter` 子命令用 `--output-file/-o` 写 JSON/YAML；`--output` 为隐藏别名 | `-o` 语义符合词表 |
 
 使用约束：
 
 - `--device` 取值是已注册 DeviceProfile 名，不是 `cpu`/`npu`。
-- 量化等枚举对外接受 `w8a8-dynamic`，对内仍落到 `QuantizeLinearAction.W8A8_DYNAMIC`。
-- `--compilation-config` help 展示 kebab-case，解析后仍写入内部 snake_case 选项名。
+- 量化等枚举正式值为 `W8A8_DYNAMIC`；`w8a8-dynamic` 仍可解析。
+- `--compilation-config` help 展示内部 snake_case 选项名。
 
 ---
 
@@ -251,7 +199,7 @@ cli/spec_cli.py
 
 1. **公开选项**用 kebab-case 长选项；标准短选项仅 `-h/-V/-v/-q/-o/-j/-c/-e/-b` 等单字符。
 2. **兼容别名**经 `add_option(..., aliases=)` 注册，`help=argparse.SUPPRESS`，命中时 `WARNING: {old} is deprecated; use {new} instead.`
-3. **dest 不变**：例如公开 `--tensor-parallel-size` 的 dest 仍是 `tp_size`。
+3. **dest 不变**：例如公开 `--tp-size` 的 dest 仍是 `tp_size`。
 4. **帮助重排**：`SpecArgumentParser.format_help()` 重写全文，不依赖 argparse 默认分组标题。
 5. **日志**：`resolve_log_level` 在 `parse_args` 后写回 `args.log_level`；optix 再调用 `set_log_level` 接到 loguru。
 
@@ -300,27 +248,22 @@ cli/spec_cli.py
 
 ##### `make_enum_type` / `make_token_type`
 
-- **描述**：对外接受 kebab-case；旧 UPPER_SNAKE / snake_case 作为值别名并告警。
+- **描述**：help 展示原取值；kebab 拼写仍可解析，不告警。
 - **存储**：枚举返回成员实例；`compilation-config` 等 token 可 `store_canonical="snake"` 以对接内部配置键。
 
 ##### 公开参数映射（节选）
 
 | 概念 | 正式接口 | 隐藏别名（仍可解析） | dest（不变） |
 |:---|:---|:---|:---|
-| 张量并行 | `--tensor-parallel-size` | `--tp-size` | `tp_size` |
-| 流水线并行 | `--pipeline-parallel-size` | `--pp-size` | `pp_size` |
-| 数据并行 | `--data-parallel-size` | `--dp-size` | `dp_size` |
-| 专家并行 | `--expert-parallel-size` | `--ep-size` | `ep_size` |
-| DCP | `--decode-context-parallel-size` | `--dcp-size` | `dcp_size` |
-| MoE TP/DP | `--moe-tensor-parallel-size` / `--moe-data-parallel-size` | `--moe-tp-size` / `--moe-dp-size` | `moe_tp_size` / `moe_dp_size` |
-| 寻优并行集合 | `--tensor-parallel-sizes` 等复数 | `--tp-sizes` 等 | `tp_sizes` 等 |
-| 分离部署 | `--disaggregation` | `--disagg` | `disagg` |
+| 张量并行 | `--tp-size` | （不改正式名） | `tp_size` |
+| 分离部署 | `--disagg` | （不改正式名） | `disagg` |
 | Trace | `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` |
 | Profiling 库 | `--profiling-database-path` | `--profiling-database` | `profiling_database` |
 | 模型路径 | `--model-path` / `--model-id` + 位置参数 | `--model_id` | `model_id` |
 | 输出文件 | `-o, --output-file` | `--output` | `output` |
 | 断点续跑 | `--load-breakpoint` | `--load_breakpoint`、`-lb` | `load_breakpoint` |
 | 反向开关 | `--no-repetition`（对偶 `--repetition`） | `--disable-repetition` | `disable_repetition` |
+| TTFT 约束 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` |
 
 optix 引擎/benchmark 取值是注册表固定名（`ais_bench`、`vllm_benchmark`），help 与文档保持该写法，不改成 kebab-case。
 
@@ -331,11 +274,11 @@ optix 引擎/benchmark 取值是注册表固定名（`ais_bench`、`vllm_benchma
 ```bash
 msmodeling inference text-generate Qwen/Qwen3-32B \
   --num-queries 1 --query-length 128 --device TEST_DEVICE \
-  --tensor-parallel-size 8 --chrome-trace-file trace.json
+  --tp-size 8 --chrome-trace-file trace.json
 
 msmodeling inference throughput-optimizer Qwen/Qwen3-32B \
   --device TEST_DEVICE --num-devices 8 \
-  --input-length 1024 --output-length 512 --disaggregation
+  --input-length 1024 --output-length 512 --disagg
 
 msmodeling inference model-adapter doctor --model-id Qwen/Qwen3-32B -o doctor.json
 msmodeling optix -e vllm -b ais_bench --config ./config.toml
@@ -393,10 +336,10 @@ optix：`msmodeling optix --help`。若因缺少 `pydantic_settings` 直接报�
 
 1. `--help` 能看到 Description、Usage、Examples；有子命令时能看到 Commands；text-generate 能看到必选 / 可选分段。
 2. `-V` / `--version` 成功，输出含 MindStudio / msmodeling 与 Mulan PSL v2。**不要用 `-v` 查版本**（`-v` 是更详细日志）。
-3. help 中有 `--log-level {debug,info,warning,error}`（无 `critical`），以及 `-v`、`-q`、`--debug`、`--log-file`。
-4. 量化推荐取值是 `w8a8-dynamic`、`disabled` 这类小写 kebab，help 里不要再把 `W8A8_DYNAMIC` 当成正式选项展示。
+3. help 中有 `--log-level {debug,info,warning,error,critical}`，以及 `-v`、`-q`、`--debug`、`--log-file`。
+4. 量化正式取值仍是 `W8A8_DYNAMIC`、`DISABLED` 等；kebab 拼写也能解析。
 5. 布尔用开关语义（如 `[default: off]`），不要用 True/False、yes/no。
-6. 下列旧名**不应作为正式选项出现在 `--help`**：`--tp-size`、`--dp-size`、`--ep-size`、`--disagg`、`--chrome-trace`（没有 `-file`）、`--load_breakpoint`、`-lb`。对应正式名分别是 `--tensor-parallel-size`、`--data-parallel-size`、`--expert-parallel-size`、`--disaggregation`、`--chrome-trace-file`、`--load-breakpoint`。
+6. 下列旧名**不应作为正式选项出现在 `--help`**：`--chrome-trace`（没有 `-file`）、`--load_breakpoint`、`-lb`、`--output`（adapter）、`--ttft-limits`。对应正式名分别是 `--chrome-trace-file`、`--load-breakpoint`、`--output-file`、`--ttft-limit`。`--tp-size`、`--disagg` **应**出现在 help 中。
 7. optix help 里测评工具取值仍是 **`ais_bench`、`vllm_benchmark`**（固定名称，不要验收成 `ais-bench`）。
 8. throughput-optimizer help 能看到 `--jobs` / `-j`（寻优进程并发，不是模型 TP）。
 
@@ -407,12 +350,12 @@ optix：`msmodeling optix --help`。若因缺少 `pydantic_settings` 直接报�
 ```bash
 python -m cli.inference.text_generate Qwen/Qwen3-32B \
   --num-queries 1 --query-length 128 --device TEST_DEVICE \
-  --tensor-parallel-size 1 --log-level info
+  --tp-size 1 --log-level info
 
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
   --device TEST_DEVICE --num-devices 2 \
   --input-length 128 --output-length 16 \
-  --tensor-parallel-sizes 1 2 --disaggregation --jobs 2
+  --tp-sizes 1 2 --disagg --jobs 2
 ```
 
 有实测环境时再抽测：`msmodeling optix -e vllm -b ais_bench --config ./config.toml`。没有实测环境时，确认 optix `--help` 与 `-e` / `-b` / `-c` 说明正确即可。
@@ -425,13 +368,11 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 | 场景 | 旧写法（应仍可用） | 正式写法 | 期望 |
 |:---|:---|:---|:---|
-| 张量并行 | `--tp-size 2` | `--tensor-parallel-size 2` | 都能跑；旧名在 stderr 提示 deprecated，并指出正式名 |
-| 寻优 PD 分离 | `--disagg` | `--disaggregation` | 同上 |
-| 寻优 TP 搜索 | `--tp-sizes 1 2` | `--tensor-parallel-sizes 1 2` | 同上 |
-| Trace | `--chrome-trace out.json` | `--chrome-trace-file out.json` | 都能写出文件 |
-| 量化 | `--quantize-linear-action W8A8_DYNAMIC` | `--quantize-linear-action w8a8-dynamic` | 行为一致；旧大写取值有提示 |
+| Trace | `--chrome-trace out.json` | `--chrome-trace-file out.json` | 都能写出文件；旧名 stderr 提示 deprecated |
+| TTFT | `--ttft-limits 2000` | `--ttft-limit 2000` | 同上 |
 | adapter 输出 | `doctor ... --output a.json` | `-o a.json` 或 `--output-file a.json` | 都能写出报告 |
 | optix 断点 | `--load_breakpoint` 或 `-lb` | `--load-breakpoint` | 都能解析；旧名有提示；`--help` 里看不到 `-lb` |
+| 量化 kebab | `--quantize-linear-action w8a8-dynamic` | `--quantize-linear-action W8A8_DYNAMIC` | 都能解析；help 展示大写正式值 |
 
 互斥约束与改名前相同（例如不要把 `--disagg` 和 PD 配比优化一起用）。
 
@@ -445,7 +386,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 | `--verbose` 或 `-v` 或 `--debug` | 更详细，等价 debug |
 | `--quiet` 或 `-q` | 更少，等价 error |
 | 同时写 `--log-level warning` 和 `-v` | 以 `--log-level` 为准（warning） |
-| `--log-level critical` | 应失败（已不再支持） |
+| `--log-level critical` | 应成功，级别为 critical |
 
 #### E. 文档抽测
 
@@ -453,7 +394,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 ### 4.4 判定为不通过的典型现象
 
-- `--help` 仍把 `--tp-size`、`-lb` 列成正式选项。
+- `--help` 仍把 `-lb`、`--load_breakpoint`、无 `-file` 的 `--chrome-trace` 列成正式选项。
 - `--tp-size 2` 报 unrecognized arguments。
 - 排除拉模型失败、环境差异后，新旧写法指标仍明显不一致。
 - `-v` 打印版本而不是详细日志。
@@ -475,9 +416,8 @@ python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test
 | 风险 | 影响 | 应对 |
 |:---|:---|:---|
 | dest 与公开选项名不一致 | 二次开发若按 dest 猜 CLI 会出错 | RFC 与 help 只承诺 option string；dest 视为内部 |
-| Web UI / Skill 仍拼旧名 | 功能可用但会告警 | 别名保留；后续单独改命令拼装与 Skill 文档 |
+| Web UI / Skill 仍拼旧路径名 | `--chrome-trace` 等会告警 | 别名保留；后续单独改命令拼装 |
 | `--device` 与规范词表不完全同义 | 跨工具用户可能误解为 cpu/npu | help 写明 DeviceProfile；本 RFC 明确不改语义 |
-| 枚举默认从 `W8A8_DYNAMIC` 改为 help 展示 `w8a8-dynamic` | 仅展示变化 | 解析结果仍是同一 StrEnum 成员 |
 | 本机缺 `pydantic_settings` 时 optix `--help` 不可用 | 测试跳过 | CI 完整依赖环境仍覆盖 optix |
 
 ---
@@ -507,10 +447,10 @@ python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test
 | `cli/spec_cli.py` | 规范内核：formatter、version、别名、日志、枚举解析 |
 | `cli/utils.py` | 公共 parser：version、log、`--model-path` |
 | `cli/main.py` | 顶层 help / version / Commands |
-| `cli/inference/text_generate.py` | 并行度家族、路径后缀、枚举 kebab |
-| `cli/inference/throughput_optimizer.py` | 复数搜索项、`--disaggregation`、`--jobs/-j` |
+| `cli/inference/text_generate.py` | 路径后缀、`--no-repetition`、log/version；并行度正式名仍为 `--tp-size` |
+| `cli/inference/throughput_optimizer.py` | `--ttft-limit`、`--jobs/-j`、路径后缀 |
 | `cli/inference/model_adapter.py` | 子命令 help、`--output-file/-o` |
-| `cli/inference/video_generate.py` | `--num-devices`、`--ulysses-parallel-size`、log/version |
+| `cli/inference/video_generate.py` | `--num-devices`、log/version；`--ulysses-size` 保持正式名 |
 | `optix/optimizer/optimizer.py` | kebab 选项、`--load-breakpoint`、引擎/benchmark 取值 |
 | `optix/logging.py` | `set_log_level` 对接 `--log-level` |
 | `tests/regression/cli/test_spec_cli.py` | 4.7 回归 |

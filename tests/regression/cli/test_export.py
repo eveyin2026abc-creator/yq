@@ -11,8 +11,8 @@ def test_text_generate_help_describes_profiling_interpolation(monkeypatch, capsy
     assert exc_info.value.code == 0
     help_text = capsys.readouterr().out
     normalized_help = " ".join(help_text.split())
-    assert "--no-profiling-interpolation" in normalized_help
-    assert "--disable-profiling-interpolation" not in normalized_help
+    assert "--disable-profiling-interpolation" in normalized_help
+    assert "--no-profiling-interpolation" not in normalized_help
     assert "exact and partial profiling matches only" in normalized_help
     assert "--performance-model" in normalized_help
 

@@ -20,12 +20,13 @@ from typing import Any
 
 from cli.logo import render_logo
 
-STANDARD_LOG_LEVELS = ("debug", "info", "warning", "error")
+STANDARD_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 LOG_LEVEL_MAP = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
     "warning": logging.WARNING,
     "error": logging.ERROR,
+    "critical": logging.CRITICAL,
 }
 
 METAVAR_DIR = "<DIR>"
@@ -33,7 +34,7 @@ METAVAR_FILE = "<FILE>"
 METAVAR_N = "<N>"
 METAVAR_FLOAT = "<FLOAT>"
 METAVAR_NAME = "<NAME>"
-METAVAR_LEVEL = "{debug,info,warning,error}"
+METAVAR_LEVEL = "{debug,info,warning,error,critical}"
 METAVAR_SEC = "<SEC>"
 METAVAR_ID = "<ID>"
 METAVAR_RANGE = "<RANGE>"
@@ -282,8 +283,12 @@ def kebab_choice_metavar(values: Iterable[str]) -> str:
     return "{" + ",".join(to_kebab(value) for value in values) + "}"
 
 
+def native_choice_metavar(values: Iterable[str]) -> str:
+    return "{" + ",".join(str(value) for value in values) + "}"
+
+
 def make_enum_type(enum_cls: type[Enum], option_name: str):
-    """Parse lowercase kebab-case enum values; accept legacy UPPER_SNAKE aliases."""
+    """Parse native enum values; also accept kebab-case spellings."""
     members = list(enum_cls)
     kebab_map = {to_kebab(member.value): member for member in members}
 
@@ -293,14 +298,12 @@ def make_enum_type(enum_cls: type[Enum], option_name: str):
         kebab = to_kebab(value)
         member = kebab_map.get(kebab)
         if member is None:
-            allowed = ", ".join(sorted(kebab_map))
+            allowed = ", ".join(str(item.value) for item in members)
             raise argparse.ArgumentTypeError(f"invalid choice {value!r} for {option_name} (choose from {allowed})")
-        if to_kebab(value) != str(value):
-            warn_deprecated(f"{option_name} {value}", f"{option_name} {kebab}")
         return member
 
     parser.__name__ = f"parse_{enum_cls.__name__}"
-    return parser, kebab_choice_metavar(member.value for member in members)
+    return parser, native_choice_metavar(member.value for member in members)
 
 
 def make_token_type(
@@ -312,30 +315,27 @@ def make_token_type(
 ):
     """Parse token values.
 
-    By default, help shows kebab-case and snake_case is a deprecated alias.
-    ``registered_names=True`` keeps the registered tokens as the official
-    values (for example ``ais_bench`` / ``vllm_benchmark``).
-    ``store_canonical`` is ``kebab`` or ``snake`` (the form returned to dest).
+    Help shows ``canonical_values`` as passed. Kebab and snake spellings both
+    parse. ``store_canonical`` is ``kebab`` or ``snake`` (the form returned to dest).
+    ``registered_names=True`` is for registry keys such as ``ais_bench``.
     """
     kebab_values = [to_kebab(value) for value in canonical_values]
     snake_map = {to_kebab(value): value.replace("-", "_") for value in canonical_values}
-    display_values = list(canonical_values) if registered_names else kebab_values
+    display_values = list(canonical_values)
 
     def parser(value: str) -> str:
         kebab = to_kebab(value)
         if kebab not in kebab_values:
             allowed = ", ".join(display_values)
             raise argparse.ArgumentTypeError(f"invalid choice {value!r} for {option_name} (choose from {allowed})")
-        if not registered_names and "_" in value:
-            warn_deprecated(f"{option_name} {value}", f"{option_name} {kebab}")
         if store_canonical == "snake":
             return snake_map[kebab]
+        if registered_names:
+            return next(item for item in canonical_values if to_kebab(item) == kebab)
         return kebab
 
     parser.__name__ = f"parse_{option_name.strip('-').replace('-', '_')}"
-    if registered_names:
-        return parser, "{" + ",".join(display_values) + "}"
-    return parser, kebab_choice_metavar(kebab_values)
+    return parser, native_choice_metavar(display_values)
 
 
 def _is_suppressed(action: argparse.Action) -> bool:
@@ -400,7 +400,7 @@ def _metavar_for(action: argparse.Action) -> str:
 
 def _format_default_value(default: Any) -> str:
     if isinstance(default, Enum):
-        return to_kebab(default.value)
+        return str(default.value)
     if isinstance(default, list):
         return "[" + ", ".join(_format_default_value(item) for item in default) + "]"
     return str(default)

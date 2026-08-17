@@ -110,7 +110,7 @@ python -m cli.inference.text_generate Qwen/Qwen3-VL-8B-Instruct \
   --image-height 224 \
   --image-width 224 \
   --quantize-attention-action disabled \
-  --quantize-linear-action w8a8-dynamic
+  --quantize-linear-action W8A8_DYNAMIC
 EOF
 ```
 

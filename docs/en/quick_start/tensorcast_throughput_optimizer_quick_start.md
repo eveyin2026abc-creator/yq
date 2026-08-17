@@ -125,7 +125,7 @@ The ServingCast throughput optimizer searches for the best parallel strategy and
 
 #### 2.3.1 Run Service-Level Performance Simulation
 
-The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tensor-parallel-sizes` in advanced usage to narrow the search space.
+The following command quickly evaluates a PD colocated scenario. For the first run, no explicit search dimensions are specified, so the tool uses the default TP search range. If the run takes too long, reduce `--num-devices` or specify `--tp-sizes` in advanced usage to narrow the search space.
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -133,7 +133,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --num-devices 8 \
     --input-length 3500 \
     --output-length 1500 \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --tpot-limit 50
 ```
@@ -183,7 +183,7 @@ Common issues:
 
 - If model configuration cannot be downloaded, check network access to Hugging Face or set the `HF_ENDPOINT` mirror.
 - If `cli` or `tensor_cast` cannot be imported, confirm that you are in the repository root or that `PYTHONPATH` is set correctly.
-- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tensor-parallel-sizes`.
+- If throughput optimization takes too long, reduce the search range, such as lowering `--num-devices` or explicitly specifying `--tp-sizes`.
 
 Continue with:
 

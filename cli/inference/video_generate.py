@@ -530,15 +530,13 @@ def main():
         help="Number of devices.",
         aliases=("--world-size",),
     )
-    add_option(
-        parallel_group,
-        "--ulysses-parallel-size",
+    parallel_group.add_argument(
+        "--ulysses-size",
         dest="ulysses_size",
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
         help="Ulysses sequence-parallel size.",
-        aliases=("--ulysses-size",),
     )
     parallel_group.add_argument(
         "--cfg-parallel",

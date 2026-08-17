@@ -125,7 +125,7 @@ Throughput Optimizer（服务化性能仿真）可在 TTFT、TPOT 等 SLO 约束
 
 #### 2.3.1 执行服务化性能仿真
 
-以下命令用于快速体验 PD 混部场景。首次体验时不额外指定搜索维度，工具会使用默认 TP 搜索范围；如果运行耗时较长，可减少 `--num-devices` 或在进阶使用时显式指定 `--tensor-parallel-sizes` 缩小搜索范围。
+以下命令用于快速体验 PD 混部场景。首次体验时不额外指定搜索维度，工具会使用默认 TP 搜索范围；如果运行耗时较长，可减少 `--num-devices` 或在进阶使用时显式指定 `--tp-sizes` 缩小搜索范围。
 
 ```bash
 python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
@@ -133,7 +133,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --num-devices 8 \
     --input-length 3500 \
     --output-length 1500 \
-    --quantize-linear-action w8a8-dynamic \
+    --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action disabled \
     --tpot-limit 50
 ```
@@ -183,7 +183,7 @@ Top 4 PD Aggregated Configurations:
 
 - 如果提示无法下载模型配置，请确认网络可访问 Hugging Face，或设置 `HF_ENDPOINT` 镜像。
 - 如果提示无法找到 `cli` 或 `tensor_cast` 模块，请确认当前目录为仓库根目录，或已正确设置 `PYTHONPATH`。
-- 如果服务化性能仿真运行耗时较长，可先减小搜索范围，例如减少 `--num-devices` 或显式指定 `--tensor-parallel-sizes`。
+- 如果服务化性能仿真运行耗时较长，可先减小搜索范围，例如减少 `--num-devices` 或显式指定 `--tp-sizes`。
 
 更多用法请继续阅读：
 
