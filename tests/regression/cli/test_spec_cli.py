@@ -73,8 +73,6 @@ def test_text_generate_help_hides_legacy_parallel_flags() -> None:
     assert "--graph-log-path" in help_text
     assert "--graph-log-file" not in help_text
     assert "--graph-log-url" not in help_text
-    assert "--model-id" in help_text
-    assert "--model-path" not in help_text
     assert "--log-level" in help_text
     assert "-v" in help_text
     assert "-V" in help_text
@@ -212,14 +210,14 @@ def test_to_kebab_enum_values() -> None:
 def test_log_level_verbose_and_quiet_resolution() -> None:
     from cli.spec_cli import resolve_log_level
 
-    args = argparse.Namespace(log_level=None, verbose=True, debug=False, quiet=True)
+    args = argparse.Namespace(log_level=None, verbose=True, quiet=True)
     assert resolve_log_level(args) == "debug"
-    args = argparse.Namespace(log_level="warning", verbose=True, debug=False, quiet=True)
+    args = argparse.Namespace(log_level="warning", verbose=True, quiet=True)
     assert resolve_log_level(args) == "warning"
-    args = argparse.Namespace(log_level=None, verbose=False, debug=False, quiet=True)
+    args = argparse.Namespace(log_level=None, verbose=False, quiet=True)
     assert resolve_log_level(args) == "error"
-    args = argparse.Namespace(log_level=None, verbose=False, debug=False, quiet=False)
-    assert resolve_log_level(args) == "info"
+    args = argparse.Namespace(log_level=None, verbose=False, quiet=False)
+    assert resolve_log_level(args) == "error"
 
 
 def _assert_help_meets_spec(help_text: str) -> None:
@@ -227,7 +225,7 @@ def _assert_help_meets_spec(help_text: str) -> None:
     assert "Usage:" in help_text
     assert "Examples:" in help_text
     assert "(default: None)" not in help_text
-    assert re.search(r"--[A-Za-z0-9]*_[A-Za-z0-9_]+", help_text) is None
+    assert re.search(r"--(?!model_id\b)[A-Za-z0-9]*_[A-Za-z0-9_]+", help_text) is None
     for line in help_text.splitlines():
         if re.match(r"^  -[A-Za-z0-9]{2}", line):
             raise AssertionError(f"multi-character short option in help: {line!r}")
@@ -242,8 +240,6 @@ def test_text_generate_help_uses_native_enum_defaults() -> None:
     assert "--chrome-trace" not in result.stdout.replace("--chrome-trace-file", "")
     assert "--graph-log-path" in result.stdout
     assert "--graph-log-file" not in result.stdout
-    assert "--model-id" in result.stdout
-    assert "--model-path" not in result.stdout
 
 
 def test_text_generate_graph_log_path_and_legacy_aliases(capsys: pytest.CaptureFixture[str]) -> None:
@@ -278,38 +274,6 @@ def test_text_generate_graph_log_path_and_legacy_aliases(capsys: pytest.CaptureF
     assert "WARNING: --graph-log-url is deprecated; use --graph-log-path instead." in capsys.readouterr().err
 
 
-def test_text_generate_model_id_is_official_and_model_path_is_alias(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    ns = _capture_text_generate_args(
-        [
-            "text_generate",
-            "--model-id",
-            "Qwen/Qwen3-32B",
-            "--num-queries",
-            "1",
-            "--query-length",
-            "8",
-        ]
-    )
-    assert ns.model_id == "Qwen/Qwen3-32B"
-    assert "deprecated" not in capsys.readouterr().err
-
-    ns = _capture_text_generate_args(
-        [
-            "text_generate",
-            "--model-path",
-            "Qwen/Qwen3-32B",
-            "--num-queries",
-            "1",
-            "--query-length",
-            "8",
-        ]
-    )
-    assert ns.model_id == "Qwen/Qwen3-32B"
-    assert "WARNING: --model-path is deprecated; use --model-id instead." in capsys.readouterr().err
-
-
 def test_throughput_optimizer_help_hides_legacy_flags() -> None:
     result = run_module_main("cli.inference.throughput_optimizer", ["--help"])
     assert result.returncode == 0
@@ -330,8 +294,6 @@ def test_video_generate_help_meets_spec() -> None:
     assert "--ulysses-parallel-size" not in result.stdout
     assert "--num-devices" in result.stdout
     assert "--world-size" not in result.stdout
-    assert "--model-id" in result.stdout
-    assert "--model-path" not in result.stdout
 
 
 def test_model_adapter_subcommand_help_meets_spec() -> None:

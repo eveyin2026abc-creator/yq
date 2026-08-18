@@ -114,13 +114,6 @@ def main():
         help="Do not reuse repeated transformer layers to save runtime cost.",
         aliases=("--disable-repetition",),
     )
-    llm_group.add_argument(
-        "--repetition",
-        dest="disable_repetition",
-        action="store_false",
-        default=argparse.SUPPRESS,
-        help="Enable repeated-layer reuse (default).",
-    )
 
     optim_group = parser.add_argument_group("Optimization Options")
     optim_group.add_argument(

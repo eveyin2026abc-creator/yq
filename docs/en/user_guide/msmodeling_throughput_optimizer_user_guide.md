@@ -260,7 +260,7 @@ General Options:
                         Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. Set to 0 to disable
                         memory reservation. (default: 10.0)
   --log-level {debug,info,warning,error}
-                        Specifies the verbosity level for log output. Available levels: 'debug', 'info', 'warning', 'error'. --verbose/--debug equal debug; --quiet equals error. [default: info]
+                        Specifies the verbosity level for log output. Available levels: 'debug', 'info', 'warning', 'error'. --verbose equals debug; --quiet equals error. [default: error]
 
 Model & Quantization Options:
   --compile             If set, invoke torch.compile() on the model before inference. (default: False)

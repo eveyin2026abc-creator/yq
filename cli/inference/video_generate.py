@@ -9,7 +9,6 @@ from cli.logo import print_logo
 from cli.spec_cli import (
     METAVAR_FILE,
     METAVAR_FLOAT,
-    METAVAR_ID,
     METAVAR_N,
     METAVAR_NAME,
     METAVAR_RANGE,
@@ -376,7 +375,7 @@ def main():
         help="Device profile used for simulation.",
     )
     parser.add_argument(
-        "model_id_positional",
+        "model_id",
         nargs="?",
         metavar=METAVAR_NAME,
         type=str,
@@ -385,15 +384,6 @@ def main():
             "(needs transformer/config.json or a compatible transformer config). Recommended safe mode: "
             "a reviewed absolute local directory; remote model ids are not security-guaranteed."
         ),
-    )
-    add_option(
-        parser,
-        "--model-id",
-        dest="model_id",
-        metavar=METAVAR_ID,
-        type=str,
-        help="Hugging Face model id that can be downloaded. Equivalent to the positional model_id.",
-        aliases=("--model_id", "--model-path"),
     )
     parser.add_argument(
         "--batch-size",

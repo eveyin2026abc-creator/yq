@@ -225,7 +225,7 @@ def add_log_options(parser: argparse.ArgumentParser | argparse._ArgumentGroup) -
         choices=list(STANDARD_LOG_LEVELS),
         default=None,
         metavar=METAVAR_LEVEL,
-        help="Log level. --verbose/--debug equal debug; --quiet equals error. [default: info]",
+        help="Log level. --verbose equals debug; --quiet equals error. [default: error]",
         aliases=("--log_level",),
     )
     parser.add_argument(
@@ -240,29 +240,18 @@ def add_log_options(parser: argparse.ArgumentParser | argparse._ArgumentGroup) -
         action="store_true",
         help="Quiet output (equivalent to --log-level error).",
     )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Debug mode (equivalent to --log-level debug).",
-    )
-    parser.add_argument(
-        "--log-file",
-        metavar=METAVAR_FILE,
-        default=None,
-        help="Write logs to this file instead of stderr.",
-    )
 
 
 def resolve_log_level(args: argparse.Namespace) -> str:
     explicit = getattr(args, "log_level", None)
     if explicit:
         level = str(explicit).lower()
-    elif getattr(args, "verbose", False) or getattr(args, "debug", False):
+    elif getattr(args, "verbose", False):
         level = "debug"
     elif getattr(args, "quiet", False):
         level = "error"
     else:
-        level = "info"
+        level = "error"
     args.log_level = level
     return level
 
@@ -272,9 +261,6 @@ def configure_std_logging(args: argparse.Namespace, *, log_format: str | None = 
     kwargs: dict[str, Any] = {"level": LOG_LEVEL_MAP[level]}
     if log_format:
         kwargs["format"] = log_format
-    log_file = getattr(args, "log_file", None)
-    if log_file:
-        kwargs["filename"] = log_file
     logging.basicConfig(**kwargs)
     return level
 

@@ -4,11 +4,9 @@ import re
 
 from cli.spec_cli import (
     METAVAR_FLOAT,
-    METAVAR_ID,
     METAVAR_N,
     METAVAR_NAME,
     add_log_options,
-    add_option,
     add_version_option,
 )
 from tensor_cast.device import DeviceProfile
@@ -146,7 +144,7 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
     general_group = common_parser.add_argument_group("General Options")
 
     general_group.add_argument(
-        "model_id_positional",
+        "model_id",
         nargs="?",
         metavar=METAVAR_NAME,
         type=check_string_valid,
@@ -155,18 +153,6 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
             "Model id mode also accepts Hugging Face or ModelScope ids, but may execute remote Python code through "
             "trust_remote_code=True and is not security-guaranteed."
         ),
-    )
-    add_option(
-        general_group,
-        "--model-id",
-        dest="model_id",
-        metavar=METAVAR_ID,
-        type=check_string_valid,
-        help=(
-            "Hugging Face model id that can be downloaded (for example Qwen/Qwen3-32B). "
-            "Equivalent to the positional model_id."
-        ),
-        aliases=("--model_id", "--model-path"),
     )
 
     general_group.add_argument(
@@ -202,7 +188,7 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
 def require_model_id(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     model_id = getattr(args, "model_id", None) or getattr(args, "model_id_positional", None)
     if not model_id:
-        parser.error("model_id is required; pass a positional model id or --model-id.")
+        parser.error("model_id is required; pass a positional model id.")
     args.model_id = model_id
     if hasattr(args, "model_id_positional"):
         delattr(args, "model_id_positional")

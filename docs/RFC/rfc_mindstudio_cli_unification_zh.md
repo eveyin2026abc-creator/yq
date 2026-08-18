@@ -34,7 +34,7 @@
 **目标**
 
 - 公开入口 `msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix` 满足规范 §4.7 中适用于本工具的条款。
-- 提供公共词表中语义命中的标准写法：`--log-level`、`--log-file`、`--verbose/-v`、`--quiet/-q`、`--debug`、`--version/-V`、`--jobs/-j`、`--config/-c`、`--output-file/-o`。模型来源保持 `--model-id`（Hugging Face 可下载 id），不改成词表 `--model-path`。
+- 提供公共词表中语义命中且 **4.7 验收点名** 的标准写法：`--log-level`、`--verbose/-v`、`--quiet/-q`、`--version/-V`、`--jobs/-j`、`--config/-c`、`--output-file/-o`。不新增验收未要求的 `--debug`、`--log-file`。`--model-id` / `--model_id` 维持原写法，不改成 `--model-path`。
 - `--help` 固定输出 `Description` / `Usage` / `Commands`（有子命令时）/ `Required arguments` / `Optional arguments` / `Examples`，有落盘产物时附加 `Output`。
 - 带值参数打印语义化 metavar；枚举在 help 中展示小写 kebab-case，默认值同样 kebab-case。
 - 旧参数全部可解析；使用旧名时 stderr 一次性告警。
@@ -83,12 +83,11 @@
 
 | 正式接口 | 隐藏别名 | dest | 范围 | 具体改动 |
 |:---|:---|:---|:---|:---|
-| `--model-id` | `--model_id`、`--model-path` | `model_id` | 公共 parser、video-generate、model-adapter | Hugging Face 可下载 id（如 `Qwen/Qwen3-32B`），与位置参数 `model_id` 等价。本工具暂不把正式名改成词表 `--model-path` |
 | `--num-devices` | `--world-size` | `world_size` | video-generate | 与其它入口 `--num-devices` 对齐 |
 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` | throughput-optimizer | 单个 TTFT 约束，`<FLOAT>`。旧名是复数但只收一个值，按 4.3.3 改为单数 |
 | `--tpot-limit` | `--tpot-limits` | `tpot_limits` | throughput-optimizer | 单个 TPOT 约束，同上 |
 | `--mtp-acceptance-rates` | `--mtp-acceptance-rate` | `mtp_acceptance_rate` | throughput-optimizer | `nargs=+`，默认 `[0.9, 0.6, 0.4, 0.2]`，按 4.3.3 改为复数 |
-| `--no-repetition` | `--disable-repetition` | `disable_repetition` | text-generate、model-adapter | store_true；另提供对偶 `--repetition`（store_false）。4.3.1 要求 `--name` / `--no-name` |
+| `--no-repetition` | `--disable-repetition` | `disable_repetition` | text-generate、model-adapter | store_true。不另增 `--repetition`（4.7 未要求成对补正向开关） |
 | `--ignore-existing-profiles` | `--ignore-existing-profile` | `ignore_existing_profile` | model-adapter doctor | `action=append`，多值用复数 |
 | `--load-breakpoint` | `--load_breakpoint`、`-lb` | `load_breakpoint` | optix | store_true。废除 snake_case 与多字符短选项 `-lb` |
 | `--benchmark-policy` | `--benchmark_policy` | `benchmark_policy` | optix | 短选项仍是词表外的 `-b`；取值见第三类 |
@@ -100,20 +99,18 @@
 | 正式接口 | dest / 行为 | 范围 | 具体改动 |
 |:---|:---|:---|:---|
 | `-V, --version` | `VersionAction`，打印后退出 | 顶层 `msmodeling`、`inference`、text-generate、throughput-optimizer、video-generate、model-adapter 及子命令、optix | 输出 Logo、`msmodeling {ver} ({7 位 git})`、版权、Mulan PSL v2、Repo。`-v` 不再表示 version |
-| `--log-level {debug,info,warning,error,critical}` | `log_level`，默认解析为 `info` | 同上（export-evidence 仅 version，无完整仿真日志栈） | 隐藏别名 `--log_level`。help metavar 含 `critical` |
+| `--log-level {debug,info,warning,error,critical}` | `log_level`，默认解析为 `error` | 同上（export-evidence 仅 version，无完整仿真日志栈） | 隐藏别名 `--log_level`。help metavar 含 `critical`。默认保持改前的 `error`，避免 info 日志拖慢仿真 |
 | `-v, --verbose` | `verbose`，store_true | 同上 | 未写 `--log-level` 时等价 debug |
 | `-q, --quiet` | `quiet`，store_true | 同上 | 未写 `--log-level` 时等价 error |
-| `--debug` | `debug`，store_true | 同上 | 与 `--verbose` 同级，取 debug |
-| `--log-file` | `log_file`，`<FILE>` | 同上 | 日志写文件而非 stderr |
-| `-j, --jobs` | 默认 8，`<N>`，正整数 | 仅 throughput-optimizer | 寻优进程并发，不是模型 TP/DP |
+| `-j, --jobs` | 默认 8，`<N>`，正整数 | 仅 throughput-optimizer | 寻优进程并发，不是模型 TP/DP。原已有 `--jobs`，补词表短选项 `-j` |
 | `-c, --config` | `config`，`<FILE>` | 仅 optix | TOML 配置；原先已有，本次按词表保留 `-c` 并纳入统一 help |
 
 日志冲突裁决（4.2.3.1，`resolve_log_level`）：
 
 1. 命令行出现 `--log-level` → 以它为准。
-2. 否则出现 `--verbose` 或 `--debug` → `debug`。
+2. 否则出现 `--verbose` → `debug`。
 3. 否则仅 `--quiet` → `error`。
-4. 都没有 → `info`。
+4. 都没有 → `error`（与改前公共 parser 默认一致）。
 
 optix 在解析后再调用 `set_log_level`，接到 loguru。
 
@@ -155,10 +152,10 @@ optix 在解析后再调用 `set_log_level`，接到 loguru。
 |:---|:---|:---|
 | 新用户查看帮助 | `msmodeling --help` 与各子命令 `--help` 只展示标准名、metavar、默认值与至少 1 条可运行示例 | 可学习、可被 Agent 解析 |
 | 查询版本 | 任意公开入口 `--version` / `-V` 打印 Logo、`msmodeling {ver} ({git})`、版权与 Mulan PSL v2 | 排障可确认安装版本 |
-| 调节日志 | `--log-level {debug,info,warning,error,critical}` 默认 info；`--verbose/-v` 与 `--debug` 等价 debug，`--quiet/-q` 等价 error；显式 `--log-level` 优先 | 与规范 4.2.3.1 冲突裁决一致 |
+| 调节日志 | `--log-level {debug,info,warning,error,critical}` 默认 error；`--verbose/-v` 等价 debug，`--quiet/-q` 等价 error；显式 `--log-level` 优先 | 默认保持改前 error，避免 info 日志拖慢运行 |
 | 新脚本使用标准名 | `--tp-size 8`、`--chrome-trace-file out.json`、`--disagg`、`--load-breakpoint` | 正式接口无 snake_case、无多字符短选项 |
 | 存量脚本 | `--chrome-trace`、`--load_breakpoint`、`-lb`、`--ttft-limits` 仍可解析 | 兼容性；stderr 引导迁移 |
-| 模型标识 | 位置参数 `model_id` 与 `--model-id` 等价；缺一不可 | Hugging Face 可下载 id；`--model-path` 仅隐藏兼容 |
+| 模型标识 | 位置参数 `model_id`；adapter 仍用 `--model-id` / `--model_id` 双正式名 | 维持原写法，不引入 `--model-path` |
 | 多硬件寻优 | `throughput-optimizer` 以 `--device` 为正式入口，同时接受 `--devices` | 不把 `--device` 标成弃用 |
 | 适配器导出 | `model-adapter` 子命令用 `--output-file/-o` 写 JSON/YAML；`--output` 为隐藏别名 | `-o` 语义符合词表 |
 
@@ -244,7 +241,7 @@ cli/spec_cli.py
 ##### `parse_args` / `resolve_log_level`
 
 - **描述**：`parse_args` 在 `parser.parse_args` 之后扫描 argv 中的别名、解析日志级别。
-- **冲突裁决**：显式 `--log-level` 优先；否则 `--verbose` 或 `--debug` → `debug`；仅 `--quiet` → `error`；默认 `info`。
+- **冲突裁决**：显式 `--log-level` 优先；否则 `--verbose` → `debug`；仅 `--quiet` → `error`；默认 `error`。
 
 ##### `make_enum_type` / `make_token_type`
 
@@ -259,11 +256,10 @@ cli/spec_cli.py
 | 分离部署 | `--disagg` | （不改正式名） | `disagg` |
 | Trace | `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` |
 | Profiling 库 | `--profiling-database-path` | `--profiling-database` | `profiling_database` |
-| 模型 id | `--model-id` + 位置参数 | `--model_id`、`--model-path` | `model_id` |
 | 编译图 dump | `--graph-log-path` | `--graph-log-url`、`--graph-log-file` | `graph_log_url` |
 | 输出文件 | `-o, --output-file` | `--output` | `output` |
 | 断点续跑 | `--load-breakpoint` | `--load_breakpoint`、`-lb` | `load_breakpoint` |
-| 反向开关 | `--no-repetition`（对偶 `--repetition`） | `--disable-repetition` | `disable_repetition` |
+| 反向开关 | `--no-repetition` | `--disable-repetition` | `disable_repetition` |
 | TTFT 约束 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` |
 
 optix 引擎/benchmark 取值是注册表固定名（`ais_bench`、`vllm_benchmark`），help 与文档保持该写法，不改成 kebab-case。
@@ -337,7 +333,7 @@ optix：`msmodeling optix --help`。若因缺少 `pydantic_settings` 直接报�
 
 1. `--help` 能看到 Description、Usage、Examples；有子命令时能看到 Commands；text-generate 能看到必选 / 可选分段。
 2. `-V` / `--version` 成功，输出含 MindStudio / msmodeling 与 Mulan PSL v2。**不要用 `-v` 查版本**（`-v` 是更详细日志）。
-3. help 中有 `--log-level {debug,info,warning,error,critical}`，以及 `-v`、`-q`、`--debug`、`--log-file`。
+3. help 中有 `--log-level {debug,info,warning,error,critical}`，以及 `-v`、`-q`。
 4. 量化正式取值仍是 `W8A8_DYNAMIC`、`DISABLED` 等；kebab 拼写也能解析。
 5. 布尔用开关语义（如 `[default: off]`），不要用 True/False、yes/no。
 6. 下列旧名**不应作为正式选项出现在 `--help`**：`--chrome-trace`（没有 `-file`）、`--load_breakpoint`、`-lb`、`--output`（adapter）、`--ttft-limits`。对应正式名分别是 `--chrome-trace-file`、`--load-breakpoint`、`--output-file`、`--ttft-limit`。`--tp-size`、`--disagg` **应**出现在 help 中。
@@ -383,8 +379,8 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 | 操作 | 期望 |
 |:---|:---|
-| 不指定日志相关参数 | 默认 info（比改前默认 error 日志更多，属预期） |
-| `--verbose` 或 `-v` 或 `--debug` | 更详细，等价 debug |
+| 不指定日志相关参数 | 默认 error（与改前公共 parser 一致） |
+| `--verbose` 或 `-v` | 更详细，等价 debug |
 | `--quiet` 或 `-q` | 更少，等价 error |
 | 同时写 `--log-level warning` 和 `-v` | 以 `--log-level` 为准（warning） |
 | `--log-level critical` | 应成功，级别为 critical |
@@ -446,7 +442,7 @@ python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test
 | 文件 | 说明 |
 |:---|:---|
 | `cli/spec_cli.py` | 规范内核：formatter、version、别名、日志、枚举解析 |
-| `cli/utils.py` | 公共 parser：version、log、`--model-id` |
+| `cli/utils.py` | 公共 parser：version、log |
 | `cli/main.py` | 顶层 help / version / Commands |
 | `cli/inference/text_generate.py` | 路径后缀、`--no-repetition`、log/version；并行度正式名仍为 `--tp-size` |
 | `cli/inference/throughput_optimizer.py` | `--ttft-limit`、`--jobs/-j`、路径后缀 |

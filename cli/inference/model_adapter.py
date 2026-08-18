@@ -5,7 +5,6 @@ from cli.logo import print_logo
 from cli.spec_cli import (
     METAVAR_DIR,
     METAVAR_FILE,
-    METAVAR_ID,
     METAVAR_N,
     METAVAR_NAME,
     SpecArgumentParser,
@@ -55,17 +54,15 @@ def _add_adapter_common_args(parser: argparse.ArgumentParser) -> None:
         nargs="?",
         metavar=METAVAR_NAME,
         type=check_string_valid,
-        help="Hugging Face model id. Equivalent to --model-id.",
+        help="Model source. Prefer a reviewed absolute local model path. Equivalent to --model-id.",
     )
-    add_option(
-        general_group,
+    general_group.add_argument(
         "--model-id",
+        "--model_id",
         dest="model_id",
         type=check_string_valid,
         default=None,
-        metavar=METAVAR_ID,
-        help="Hugging Face model id that can be downloaded (for example Qwen/Qwen3-32B).",
-        aliases=("--model_id", "--model-path"),
+        help="Model source. Prefer a reviewed absolute local model path.",
     )
     general_group.add_argument(
         "--device",
