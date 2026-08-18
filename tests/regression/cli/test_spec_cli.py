@@ -11,7 +11,7 @@ import pytest
 
 from cli.inference import text_generate, throughput_optimizer
 from cli.main import main
-from cli.spec_cli import parse_args, reset_deprecation_warnings, to_kebab
+from cli.spec_cli import SpecArgumentParser, parse_args, reset_deprecation_warnings, to_kebab
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tests.helpers.cli_runner import run_cli_main, run_module_main
 
@@ -318,6 +318,9 @@ def test_model_adapter_subcommand_help_meets_spec() -> None:
             assert "-o," in result.stdout
             assert "--output-file" in result.stdout
             assert re.search(r"--output[^-a-z]", result.stdout) is None
+        if argv[0] in ("doctor", "verify"):
+            assert "--model-id" in result.stdout
+            assert "--model_id" in result.stdout
 
 
 def test_top_level_help_lists_commands() -> None:
@@ -327,3 +330,17 @@ def test_top_level_help_lists_commands() -> None:
     assert "Commands:" in result.stdout
     assert "inference" in result.stdout
     assert "optix" in result.stdout
+
+
+def test_help_renders_all_public_long_options_on_one_action() -> None:
+    parser = SpecArgumentParser(description="model id help")
+    parser.add_argument(
+        "--model-id",
+        "--model_id",
+        dest="model_id",
+        metavar="<NAME>",
+        help="Model source.",
+    )
+    help_text = parser.format_help()
+    assert "--model-id" in help_text
+    assert "--model_id" in help_text

@@ -14,6 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 import os
+import sys
 from contextlib import contextmanager
 from copy import deepcopy
 from math import inf, isclose, isinf, isnan
@@ -33,7 +34,7 @@ from ..config.base_config import (
     reuse_simulator_in_fine_tune_flag,
 )
 from ..config.config import DecodeContext, field_to_param, map_param_with_value
-from ..logging import LogStage, format_evaluation_failure, set_log_level
+from ..logging import LogStage, format_evaluation_failure, resolve_log_level as resolve_optix_env_log_level, set_log_level
 from ..optimizer.errors import (
     BaselineRunError,
     ConfigFileNotFoundError,
@@ -53,7 +54,6 @@ from cli.spec_cli import (
     add_version_option,
     make_token_type,
     parse_args as spec_parse_args,
-    resolve_log_level,
 )
 
 MAX_ITER_NUM = 200
@@ -773,8 +773,12 @@ def _run_optimizer() -> None:
     )
 
     args = spec_parse_args(parser)
-    resolve_log_level(args)
-    set_log_level(args.log_level)
+    argv = sys.argv[1:]
+    cli_set_log_level = any(token.split("=", 1)[0] in ("--log-level", "--log_level") for token in argv)
+    if cli_set_log_level or getattr(args, "verbose", False) or getattr(args, "quiet", False):
+        set_log_level(args.log_level)
+    else:
+        set_log_level(resolve_optix_env_log_level())
     from cli.logo import print_logo
 
     print_logo()

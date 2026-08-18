@@ -363,7 +363,7 @@ def _format_option_name(action: argparse.Action) -> str:
     else:
         name_parts.append("   ")
     if longs:
-        long_text = longs[0]
+        long_text = ", ".join(longs)
         name_parts.append(f"{long_text} {metavar}".rstrip() if metavar else long_text)
     elif action.option_strings:
         name_parts.append(action.option_strings[0])
