@@ -46,15 +46,6 @@ from ..optimizer.outcome import RunStatus
 from ..optimizer.performance_tunner import PerformanceTuner
 from ..optimizer.register import benchmarks, simulates
 from ..optimizer.utils import get_required_field_from_json, is_root
-from cli.spec_cli import (
-    METAVAR_FILE,
-    SpecArgumentParser,
-    add_log_options,
-    add_option,
-    add_version_option,
-    make_token_type,
-    parse_args as spec_parse_args,
-)
 
 MAX_ITER_NUM = 200
 
@@ -704,6 +695,15 @@ def _run_optimizer() -> None:
     from ..optimizer.scheduler import Scheduler
     from ..optimizer.store import DataStorage
     from ..plugins import load_general_plugins
+    from cli.spec_cli import (
+        METAVAR_FILE,
+        SpecArgumentParser,
+        add_log_options,
+        add_option,
+        add_version_option,
+        make_token_type,
+        parse_args as spec_parse_args,
+    )
 
     register_ori_functions()
     load_general_plugins()

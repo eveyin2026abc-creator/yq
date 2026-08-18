@@ -372,7 +372,7 @@ python -m cli.inference.video_generate <model_id> [options]
 | `--sample-step` | denoise step 数 |
 | `--dtype` | `float16`、`float32`、`bfloat16` |
 | `--num-devices` | 总卡数 |
-| `--ulysses-size` | Ulysses sequence parallel 大小，必须整除 `world-size` |
+| `--ulysses-size` | Ulysses sequence parallel 大小，必须整除 `--num-devices` |
 | `--use-cfg` | 启用 CFG |
 | `--cfg-parallel` | 使用 CFG 并行 |
 | `--dit-cache` | 启用 DiT block cache |

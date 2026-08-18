@@ -248,7 +248,7 @@ Main parameters:
 | `--device` | General Options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: registered `DeviceProfile` names, including `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: `TEST_DEVICE`. |
 | `--num-devices` | General Options | Optional | Specifies the number of devices participating in simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
 | `--reserved-memory-gb` | General Options | Optional | Specifies device memory reserved for system use, in GB.<br>1. Type: Float.<br>2. Valid range: non-negative number; set to `0` to disable memory reservation.<br>3. Default: `0.0`. |
-| `--log-level` | General Options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`.<br>3. Default: `info`. |
+| `--log-level` | General Options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`, `critical`.<br>3. Default: `error`. |
 | `--num-queries` | LLM Options | Required | Number of queries in this simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--query-length` | LLM Options | Required | New input token length for each query.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--context-length` | LLM Options | Optional | Existing context token length for each query.<br>1. Type: Int.<br>2. Valid range: non-negative integer.<br>3. Default: `0`. |
@@ -305,11 +305,11 @@ We provide a `video_generate.py` command line interface to simulate the forward 
 Its general usage is shown below:
 
 ```text
-usage: video_generate.py [-h]
-                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
+usage: video_generate.py [-h] [-V] [-v] [-q]
+                         [--device {TEST_DEVICE,...}]
                          --batch-size BATCH_SIZE --seq-len SEQ_LEN [--chrome-trace-file CHROME_TRACE]
                          [--height HEIGHT] [--width WIDTH] [--frame-num FRAME_NUM] [--sample-step SAMPLE_STEP]
-                         [--log-level {debug,info,warning,error}] [--dtype {float16,float32,bfloat16}]
+                         [--log-level {debug,info,warning,error,critical}] [--dtype {float16,float32,bfloat16}]
                          [--remote-source {huggingface,modelscope}]
                          [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                          [--quantize-attention-action {DISABLED,INT8,FP8}] [--use-cfg]
@@ -324,6 +324,8 @@ usage: video_generate.py [-h]
 Run a simulated diffusion transformer forward and dump perf stats.
 ```
 
+Full `--help` also includes `--version/-V`, `--verbose/-v`, and `--quiet/-q`. Default `--log-level` is `error`. This command does not provide `--debug` or `--log-file`. The model source is the positional `model_id`, not `--model-id`.
+
 Main parameters:
 
 | Parameter | Category | Required/Optional | Description |
@@ -337,7 +339,7 @@ Main parameters:
 | `--width` | options | Optional | Specifies input video or image frame width.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `832`. |
 | `--frame-num` | options | Optional | Specifies the number of video frames.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `81`. |
 | `--sample-step` | options | Optional | Specifies the number of diffusion sampling steps.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--log-level` | options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`.<br>3. Default: `info`. |
+| `--log-level` | options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`, `critical`.<br>3. Default: `error`. |
 | `--dtype` | options | Optional | Specifies model compute data type.<br>1. Type: Str.<br>2. Reference values: `float16`, `float32`, `bfloat16`.<br>3. Default: `float16`. |
 | `--remote-source` | options | Optional | Specifies the remote source for non-local Diffusers repo IDs.<br>1. Type: Str.<br>2. Reference values: `huggingface`, `modelscope`.<br>3. Default: `huggingface`. |
 | `--quantize-linear-action` | options | Optional | Specifies linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |

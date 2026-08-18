@@ -242,7 +242,7 @@ Run a simulated LLM inference pass and dump the perf result.
 | `--device` | General Options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--reserved-memory-gb` | General Options | 可选 | 指定每张设备预留给系统使用的显存大小，单位为 GB。<br>1. 类型：Float。<br>2. 取值范围：非负数；设置为 `0` 表示不预留系统显存。<br>3. 默认值：`0.0`。 |
-| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
+| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
 | `--num-queries` | LLM Options | 必选 | 本次仿真的 query 数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--query-length` | LLM Options | 必选 | 每个 query 的新输入 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--context-length` | LLM Options | 可选 | 每个 query 的已有上下文 token 长度。<br>1. 类型：Int。<br>2. 取值范围：非负整数。<br>3. 默认值：`0`。 |
@@ -299,11 +299,11 @@ Run a simulated LLM inference pass and dump the perf result.
 其一般用法如下：
 
 ```text
-usage: video_generate.py [-h]
-                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
+usage: video_generate.py [-h] [-V] [-v] [-q]
+                         [--device {TEST_DEVICE,...}]
                          --batch-size BATCH_SIZE --seq-len SEQ_LEN [--chrome-trace-file CHROME_TRACE]
                          [--height HEIGHT] [--width WIDTH] [--frame-num FRAME_NUM] [--sample-step SAMPLE_STEP]
-                         [--log-level {debug,info,warning,error}] [--dtype {float16,float32,bfloat16}]
+                         [--log-level {debug,info,warning,error,critical}] [--dtype {float16,float32,bfloat16}]
                          [--remote-source {huggingface,modelscope}]
                          [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
                          [--quantize-attention-action {DISABLED,INT8,FP8}] [--use-cfg]
@@ -318,6 +318,8 @@ usage: video_generate.py [-h]
 Run a simulated diffusion transformer forward and dump perf stats.
 ```
 
+完整 `--help` 还包含 `--version/-V`、`--verbose/-v`、`--quiet/-q`。默认 `--log-level error`。本工具不提供 `--debug` 或 `--log-file`；模型来源是位置参数 `model_id`，不是 `--model-id`。
+
 主要参数说明如下：
 
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
@@ -331,7 +333,7 @@ Run a simulated diffusion transformer forward and dump perf stats.
 | `--width` | options | 可选 | 指定输入视频或图像帧宽度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`832`。 |
 | `--frame-num` | options | 可选 | 指定视频帧数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`81`。 |
 | `--sample-step` | options | 可选 | 指定 diffusion 采样步数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--log-level` | options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
+| `--log-level` | options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
 | `--dtype` | options | 可选 | 指定模型计算数据类型。<br>1. 类型：Str。<br>2. 参考值：`float16`、`float32`、`bfloat16`。<br>3. 默认值：`float16`。 |
 | `--remote-source` | options | 可选 | 指定非本地 Diffusers repo ID 的远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
 | `--quantize-linear-action` | options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |

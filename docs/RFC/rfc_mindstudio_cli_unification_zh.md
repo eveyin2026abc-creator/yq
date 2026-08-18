@@ -36,7 +36,7 @@
 - 公开入口 `msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix` 满足规范 §4.7 中适用于本工具的条款。
 - 提供公共词表中语义命中且 **4.7 验收点名** 的标准写法：`--log-level`、`--verbose/-v`、`--quiet/-q`、`--version/-V`、`--jobs/-j`、`--config/-c`、`--output-file/-o`。不新增验收未要求的 `--debug`、`--log-file`。`--model-id` / `--model_id` 维持原写法，不改成 `--model-path`。
 - `--help` 固定输出 `Description` / `Usage` / `Commands`（有子命令时）/ `Required arguments` / `Optional arguments` / `Examples`，有落盘产物时附加 `Output`。
-- 带值参数打印语义化 metavar；枚举在 help 中展示小写 kebab-case，默认值同样 kebab-case。
+- 带值参数打印语义化 metavar。量化与注册表原值（如 `W8A8_DYNAMIC`、`ais_bench`）在 help 中保持原样；其余枚举展示小写 kebab-case。
 - 旧参数全部可解析；使用旧名时 stderr 一次性告警。
 
 **非目标**

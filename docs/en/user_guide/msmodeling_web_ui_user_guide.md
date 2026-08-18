@@ -370,7 +370,7 @@ This tool simulates the Diffusion Transformer forward process, commonly used for
 | `--sample-step` | Number of denoise steps |
 | `--dtype` | `float16`, `float32`, `bfloat16` |
 | `--num-devices` | Total number of devices |
-| `--ulysses-size` | Ulysses sequence parallel size, must evenly divide `world-size` |
+| `--ulysses-size` | Ulysses sequence parallel size, must evenly divide `--num-devices` |
 | `--use-cfg` | Enable CFG |
 | `--cfg-parallel` | Use CFG parallel |
 | `--dit-cache` | Enable DiT block cache |

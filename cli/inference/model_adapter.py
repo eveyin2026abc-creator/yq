@@ -204,7 +204,10 @@ def _add_doctor_runtime_options(parser: argparse.ArgumentParser) -> None:
         metavar=METAVAR_N,
         help="Width of the input images.",
     )
+    _add_parallelism_options(parser)
 
+
+def _add_parallelism_options(parser: argparse.ArgumentParser) -> None:
     parallel_group = parser.add_argument_group("Parallelism Options")
     add_option(
         parallel_group,
@@ -385,62 +388,7 @@ def _add_verify_case_options(parser: argparse.ArgumentParser) -> None:
         help="Profiling database directory.",
         aliases=("--profiling-database",),
     )
-
-    parallel_group = parser.add_argument_group("Parallelism Options")
-    add_option(
-        parallel_group,
-        "--tp-size",
-        dest="tp_size",
-        type=check_positive_integer,
-        default=1,
-        metavar=METAVAR_N,
-        help="Tensor parallel size.",
-    )
-    add_option(
-        parallel_group,
-        "--dp-size",
-        dest="dp_size",
-        type=check_positive_integer,
-        default=None,
-        metavar=METAVAR_N,
-        help="Data parallel size.",
-    )
-    add_option(
-        parallel_group,
-        "--ep-size",
-        dest="ep_size",
-        type=check_positive_integer,
-        default=1,
-        metavar=METAVAR_N,
-        help="Expert parallel size.",
-    )
-    add_option(
-        parallel_group,
-        "--moe-tp-size",
-        dest="moe_tp_size",
-        type=check_positive_integer,
-        default=None,
-        metavar=METAVAR_N,
-        help="MoE tensor parallel size.",
-    )
-    add_option(
-        parallel_group,
-        "--moe-dp-size",
-        dest="moe_dp_size",
-        type=check_positive_integer,
-        default=1,
-        metavar=METAVAR_N,
-        help="MoE data parallel size.",
-    )
-    add_option(
-        parallel_group,
-        "--vision-tp-size",
-        dest="vision_tp_size",
-        type=check_positive_integer,
-        default=1,
-        metavar=METAVAR_N,
-        help="Vision tensor parallel size.",
-    )
+    _add_parallelism_options(parser)
 
     parser.add_argument(
         "--remote-source",

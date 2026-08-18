@@ -404,7 +404,7 @@ PD Ratio Optimization Options:
 | `model_id` | General Options | 必选 | 模型 ID 或已审核的本地模型绝对路径。<br>1. 类型：Str。<br>2. 参考值：Hugging Face ID、ModelScope ID 或本地绝对路径。<br>3. 默认值：无。<br>4. 使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备总数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--reserved-memory-gb` | General Options | 可选 | 指定每张设备预留给系统使用的显存，单位为 GB。<br>1. 类型：Float。<br>2. 取值范围：非负数；设置为 `0` 表示不预留系统显存。<br>3. 默认值：`10.0`。 |
-| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`。<br>3. 默认值：`info`。 |
+| `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
 | `--compile` | Model & Quantization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Model & Quantization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rates) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。 |

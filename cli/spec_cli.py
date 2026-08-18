@@ -368,11 +368,7 @@ def _format_option_name(action: argparse.Action) -> str:
     elif action.option_strings:
         name_parts.append(action.option_strings[0])
     else:
-        name_parts = [action.dest if action.metavar is None else str(action.metavar)]
-        if metavar and action.option_strings:
-            pass
-        elif metavar and not action.option_strings:
-            name_parts = [metavar]
+        name_parts = [metavar] if metavar else [action.dest]
     return " ".join(part for part in name_parts if part).rstrip()
 
 
@@ -434,18 +430,7 @@ def _format_action_line(action: argparse.Action, name_width: int) -> str:
 
 
 def _public_actions(parser: argparse.ArgumentParser) -> list[argparse.Action]:
-    actions = []
-    for action in parser._actions:
-        if _is_suppressed(action):
-            continue
-        if isinstance(action, argparse._HelpAction):
-            actions.append(action)
-            continue
-        if isinstance(action, VersionAction):
-            actions.append(action)
-            continue
-        actions.append(action)
-    return actions
+    return [action for action in parser._actions if not _is_suppressed(action)]
 
 
 class SpecHelpFormatter(argparse.RawDescriptionHelpFormatter):
