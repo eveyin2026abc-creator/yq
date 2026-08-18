@@ -34,7 +34,12 @@ from ..config.base_config import (
     reuse_simulator_in_fine_tune_flag,
 )
 from ..config.config import DecodeContext, field_to_param, map_param_with_value
-from ..logging import LogStage, format_evaluation_failure, resolve_log_level as resolve_optix_env_log_level, set_log_level
+from ..logging import (
+    LogStage,
+    format_evaluation_failure,
+    resolve_log_level as resolve_optix_env_log_level,
+    set_log_level,
+)
 from ..optimizer.errors import (
     BaselineRunError,
     ConfigFileNotFoundError,
