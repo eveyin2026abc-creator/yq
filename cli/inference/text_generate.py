@@ -1,4 +1,3 @@
-import argparse
 import logging
 
 from cli.logo import print_logo
