@@ -34,7 +34,6 @@ METAVAR_FILE = "<FILE>"
 METAVAR_N = "<N>"
 METAVAR_FLOAT = "<FLOAT>"
 METAVAR_NAME = "<NAME>"
-METAVAR_LEVEL = "{debug,info,warning,error,critical}"
 METAVAR_SEC = "<SEC>"
 METAVAR_ID = "<ID>"
 METAVAR_RANGE = "<RANGE>"
@@ -148,7 +147,7 @@ def warn_deprecated_from_argv(parser: argparse.ArgumentParser, argv: Sequence[st
 def parse_args(parser: argparse.ArgumentParser, args: Sequence[str] | None = None) -> argparse.Namespace:
     namespace = parser.parse_args(args)
     warn_deprecated_from_argv(parser, args)
-    resolve_log_level(namespace)
+    resolve_log_level(namespace, argv=list(sys.argv[1:] if args is None else args))
     return namespace
 
 
@@ -218,14 +217,25 @@ def add_version_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-V", "--version", action=VersionAction)
 
 
+_LOG_LEVEL_FLAGS = ("--log-level", "--log_level")
+
+
+def _argv_has_log_level(argv: Sequence[str] | None) -> bool | None:
+    if argv is None:
+        return None
+    return any(token.split("=", 1)[0] in _LOG_LEVEL_FLAGS for token in argv)
+
+
 def add_log_options(parser: argparse.ArgumentParser | argparse._ArgumentGroup) -> None:
     add_option(
         parser,
         "--log-level",
         choices=list(STANDARD_LOG_LEVELS),
-        default=None,
-        metavar=METAVAR_LEVEL,
-        help="Log level. --verbose equals debug; --quiet equals error. [default: error]",
+        default="error",
+        help=(
+            "Specifies the verbosity level for log output. "
+            "Available levels: 'debug' (most verbose), 'info', 'warning', 'error', 'critical' (least verbose)."
+        ),
         aliases=("--log_level",),
     )
     parser.add_argument(
@@ -242,14 +252,19 @@ def add_log_options(parser: argparse.ArgumentParser | argparse._ArgumentGroup) -
     )
 
 
-def resolve_log_level(args: argparse.Namespace) -> str:
+def resolve_log_level(args: argparse.Namespace, argv: Sequence[str] | None = None) -> str:
     explicit = getattr(args, "log_level", None)
-    if explicit:
+    on_cli = _argv_has_log_level(argv)
+    verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
+    if explicit and on_cli is not False:
         level = str(explicit).lower()
-    elif getattr(args, "verbose", False):
+    elif verbose:
         level = "debug"
-    elif getattr(args, "quiet", False):
+    elif quiet:
         level = "error"
+    elif explicit:
+        level = str(explicit).lower()
     else:
         level = "error"
     args.log_level = level
@@ -257,7 +272,7 @@ def resolve_log_level(args: argparse.Namespace) -> str:
 
 
 def configure_std_logging(args: argparse.Namespace, *, log_format: str | None = None) -> str:
-    level = resolve_log_level(args)
+    level = resolve_log_level(args, argv=sys.argv[1:])
     kwargs: dict[str, Any] = {"level": LOG_LEVEL_MAP[level]}
     if log_format:
         kwargs["format"] = log_format

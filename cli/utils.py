@@ -70,7 +70,7 @@ def check_positive_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value <= 0:
-        raise argparse.ArgumentTypeError(f"{value!r} is out of range; expected a positive integer")
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
 
     return value
 
@@ -81,7 +81,7 @@ def check_non_negative_integer(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid integer value: {value!r}") from None
     if value < 0:
-        raise argparse.ArgumentTypeError(f"{value!r} is out of range; expected a non-negative integer")
+        raise argparse.ArgumentTypeError(f"{value!r} is not a non-negative integer")
 
     return value
 
@@ -161,7 +161,11 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
         choices=list(DeviceProfile.all_device_profiles.keys()),
         default="TEST_DEVICE",
         metavar=METAVAR_NAME,
-        help="Target device profile name used for simulation [default: TEST_DEVICE]",
+        help=(
+            "Specifies the target device profile to use for benchmarking and simulation. "
+            "Must be a valid device name as defined in DeviceProfile. "
+            "The default device 'TEST_DEVICE' is used for standard simulation runs."
+        ),
     )
 
     general_group.add_argument(
@@ -169,7 +173,11 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
         type=check_positive_integer,
         default=1,
         metavar=METAVAR_N,
-        help="Total number of devices. Must be a positive integer [default: 1]",
+        help=(
+            "Specifies the total number of devices/processes to use. "
+            "Must be a positive integer. "
+            "A value of 1 indicates single-device execution."
+        ),
     )
 
     general_group.add_argument(
@@ -177,8 +185,10 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
         type=float,
         default=reserved_memory_gb_default,
         metavar=METAVAR_FLOAT,
-        help="Device memory in GB reserved for the system and unavailable to the app [default: "
-        f"{reserved_memory_gb_default}]",
+        help=(
+            "Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. "
+            "Set to 0 to disable memory reservation."
+        ),
     )
 
     add_log_options(general_group)

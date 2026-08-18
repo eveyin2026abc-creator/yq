@@ -220,6 +220,19 @@ def test_log_level_verbose_and_quiet_resolution() -> None:
     assert resolve_log_level(args) == "error"
 
 
+def test_log_level_verbose_overrides_argparse_default_error() -> None:
+    parser = argparse.ArgumentParser()
+    from cli.spec_cli import add_log_options
+
+    add_log_options(parser)
+    ns = parse_args(parser, ["-v"])
+    assert ns.log_level == "debug"
+    ns = parse_args(parser, ["--log-level", "warning", "-v"])
+    assert ns.log_level == "warning"
+    ns = parse_args(parser, [])
+    assert ns.log_level == "error"
+
+
 def _assert_help_meets_spec(help_text: str) -> None:
     assert "Description:" in help_text
     assert "Usage:" in help_text
