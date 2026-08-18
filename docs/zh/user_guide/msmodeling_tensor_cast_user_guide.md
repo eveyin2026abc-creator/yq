@@ -318,7 +318,7 @@ usage: video_generate.py [-h] [-V] [-v] [-q]
 Run a simulated diffusion transformer forward and dump perf stats.
 ```
 
-完整 `--help` 还包含 `--version/-V`、`--verbose/-v`、`--quiet/-q`。默认 `--log-level error`。本工具不提供 `--debug` 或 `--log-file`；模型来源是位置参数 `model_id`，不是 `--model-id`。
+完整 `--help` 还包含 `--version/-V`、`--verbose/-v`、`--quiet/-q`。默认 `--log-level error`。本工具不提供 `--debug` 或 `--log-file`。模型来源是位置参数 `model_id` 或 `--model-id`。
 
 主要参数说明如下：
 

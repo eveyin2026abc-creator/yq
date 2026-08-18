@@ -324,7 +324,7 @@ usage: video_generate.py [-h] [-V] [-v] [-q]
 Run a simulated diffusion transformer forward and dump perf stats.
 ```
 
-Full `--help` also includes `--version/-V`, `--verbose/-v`, and `--quiet/-q`. Default `--log-level` is `error`. This command does not provide `--debug` or `--log-file`. The model source is the positional `model_id`, not `--model-id`.
+Full `--help` also includes `--version/-V`, `--verbose/-v`, and `--quiet/-q`. Default `--log-level` is `error`. This command does not provide `--debug` or `--log-file`. The model source is the positional `model_id` or `--model-id`.
 
 Main parameters:
 

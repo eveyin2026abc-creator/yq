@@ -24,9 +24,10 @@ from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import DeviceProfile
 
 from ..utils import (
+    add_model_id_source,
     check_non_negative_integer,
     check_positive_integer,
-    check_string_valid,
+    require_model_id,
 )
 
 SUPPORTED_PERFORMANCE_MODELS = ["analytic", "profiling"]
@@ -49,20 +50,11 @@ def _add_output_file_option(parser: argparse.ArgumentParser, help_text: str) -> 
 def _add_adapter_common_args(parser: argparse.ArgumentParser) -> None:
     add_version_option(parser)
     general_group = parser.add_argument_group("General Options")
-    general_group.add_argument(
-        "model_id_positional",
-        nargs="?",
-        metavar=METAVAR_NAME,
-        type=check_string_valid,
-        help="Model source. Prefer a reviewed absolute local model path. Equivalent to --model-id.",
-    )
-    general_group.add_argument(
-        "--model-id",
-        "--model_id",
-        dest="model_id",
-        type=check_string_valid,
-        default=None,
-        help="Model source. Prefer a reviewed absolute local model path.",
+    add_model_id_source(
+        general_group,
+        positional_help="Model source. Prefer a reviewed absolute local model path. Equivalent to --model-id.",
+        option_help="Model source. Prefer a reviewed absolute local model path.",
+        public_snake_alias=True,
     )
     general_group.add_argument(
         "--device",
@@ -90,11 +82,7 @@ def _add_adapter_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _normalize_adapter_common_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    model_id = args.model_id or args.model_id_positional
-    if not model_id:
-        parser.error("model_id is required; pass positional model_id or --model-id.")
-    args.model_id = model_id
-    delattr(args, "model_id_positional")
+    require_model_id(parser, args)
 
 
 def _configure_logging(args: argparse.Namespace) -> None:

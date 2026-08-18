@@ -1,12 +1,14 @@
 import argparse
 import logging
 import re
+from typing import Any
 
 from cli.spec_cli import (
     METAVAR_FLOAT,
     METAVAR_N,
     METAVAR_NAME,
     add_log_options,
+    add_option,
     add_version_option,
 )
 from tensor_cast.device import DeviceProfile
@@ -142,16 +144,16 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
     add_version_option(common_parser)
 
     general_group = common_parser.add_argument_group("General Options")
-
-    general_group.add_argument(
-        "model_id",
-        nargs="?",
-        metavar=METAVAR_NAME,
-        type=check_string_valid,
-        help=(
+    add_model_id_source(
+        general_group,
+        positional_help=(
             "Model source. Recommended safe mode: a reviewed absolute local model path. "
             "Model id mode also accepts Hugging Face or ModelScope ids, but may execute remote Python code through "
-            "trust_remote_code=True and is not security-guaranteed."
+            "trust_remote_code=True and is not security-guaranteed. Equivalent to --model-id."
+        ),
+        option_help=(
+            "Model source. Recommended safe mode: a reviewed absolute local model path. "
+            "Equivalent to the positional model id."
         ),
     )
 
@@ -195,9 +197,61 @@ def get_common_argparser(reserved_memory_gb_default: float = 0.0):
     return common_parser
 
 
+def add_model_id_source(
+    parser: argparse.ArgumentParser | argparse._ArgumentGroup,
+    *,
+    positional_help: str,
+    option_help: str | None = None,
+    value_type: Any = check_string_valid,
+    public_snake_alias: bool = False,
+) -> None:
+    """Register positional model source and ``--model-id`` on separate dests.
+
+    Positional dest is ``model_id_positional``. Option dest is ``model_id``.
+    ``require_model_id`` merges them. ``--model_id`` is a hidden alias unless
+    ``public_snake_alias`` is true (model-adapter dual public names).
+    """
+    if option_help is None:
+        option_help = "Model source. Equivalent to the positional model id."
+    parser.add_argument(
+        "model_id_positional",
+        nargs="?",
+        metavar=METAVAR_NAME,
+        type=value_type,
+        help=positional_help,
+    )
+    if public_snake_alias:
+        parser.add_argument(
+            "--model-id",
+            "--model_id",
+            dest="model_id",
+            type=value_type,
+            default=None,
+            metavar=METAVAR_NAME,
+            help=option_help,
+        )
+        return
+    add_option(
+        parser,
+        "--model-id",
+        dest="model_id",
+        type=value_type,
+        default=None,
+        metavar=METAVAR_NAME,
+        help=option_help,
+        aliases=("--model_id",),
+    )
+
+
+def _parser_has_option(parser: argparse.ArgumentParser, option: str) -> bool:
+    return any(option in action.option_strings for action in parser._actions)
+
+
 def require_model_id(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     model_id = getattr(args, "model_id", None) or getattr(args, "model_id_positional", None)
     if not model_id:
+        if _parser_has_option(parser, "--model-id"):
+            parser.error("model_id is required; pass a positional model id or use --model-id <MODEL_ID>.")
         parser.error("model_id is required; pass a positional model id.")
     args.model_id = model_id
     if hasattr(args, "model_id_positional"):

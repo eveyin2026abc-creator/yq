@@ -45,7 +45,7 @@ from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.quantize_utils import QuantGranularity
 from tensor_cast.runtime import Runtime
 from tensor_cast.utils import str_to_dtype
-from ..utils import check_positive_integer, parse_int_range, require_model_id
+from ..utils import add_model_id_source, check_positive_integer, parse_int_range, require_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -374,16 +374,16 @@ def main():
         metavar=METAVAR_NAME,
         help="Device profile used for simulation.",
     )
-    parser.add_argument(
-        "model_id",
-        nargs="?",
-        metavar=METAVAR_NAME,
-        type=str,
-        help=(
+    add_model_id_source(
+        parser,
+        positional_help=(
             "Diffusers model dir, remote repo id, or remote repo id plus subfolder "
             "(needs transformer/config.json or a compatible transformer config). Recommended safe mode: "
-            "a reviewed absolute local directory; remote model ids are not security-guaranteed."
+            "a reviewed absolute local directory; remote model ids are not security-guaranteed. "
+            "Equivalent to --model-id."
         ),
+        option_help="Diffusers model source. Equivalent to the positional model id.",
+        value_type=str,
     )
     parser.add_argument(
         "--batch-size",

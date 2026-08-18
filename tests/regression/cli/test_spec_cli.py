@@ -74,9 +74,27 @@ def test_text_generate_help_hides_legacy_parallel_flags() -> None:
     assert "--graph-log-file" not in help_text
     assert "--graph-log-url" not in help_text
     assert "--log-level" in help_text
+    assert "--model-id" in help_text
+    assert "--model_id" not in help_text
     assert "-v" in help_text
     assert "-V" in help_text
     assert "(default: None)" not in help_text
+
+
+def test_text_generate_accepts_model_id_option(capsys: pytest.CaptureFixture[str]) -> None:
+    ns = _capture_text_generate_args(
+        [
+            "text_generate",
+            "--model-id",
+            "Qwen/Qwen3-32B",
+            "--num-queries",
+            "1",
+            "--query-length",
+            "8",
+        ]
+    )
+    assert ns.model_id == "Qwen/Qwen3-32B"
+    assert "deprecated" not in capsys.readouterr().err
 
 
 def test_text_generate_tp_size_parses_without_deprecation(capsys: pytest.CaptureFixture[str]) -> None:
@@ -307,6 +325,46 @@ def test_video_generate_help_meets_spec() -> None:
     assert "--ulysses-parallel-size" not in result.stdout
     assert "--num-devices" in result.stdout
     assert "--world-size" not in result.stdout
+    assert "--model-id" in result.stdout
+    assert "--model_id" not in result.stdout
+
+
+def test_video_generate_accepts_model_id_option() -> None:
+    from cli.inference import video_generate
+
+    captured: dict[str, object] = {}
+
+    def _capture(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    with (
+        patch.object(video_generate, "print_logo", lambda: None),
+        patch.object(video_generate, "run_inference", _capture),
+        patch.object(
+            sys,
+            "argv",
+            [
+                "video_generate",
+                "--model-id",
+                "Wan-AI/Wan2.1-T2V-1.3B",
+                "--batch-size",
+                "1",
+                "--seq-len",
+                "8",
+            ],
+        ),
+    ):
+        video_generate.main()
+    assert captured["model_id"] == "Wan-AI/Wan2.1-T2V-1.3B"
+
+
+def test_video_generate_missing_model_id_mentions_option() -> None:
+    result = run_module_main(
+        "cli.inference.video_generate",
+        ["--batch-size", "1", "--seq-len", "8"],
+    )
+    assert result.returncode != 0
+    assert "model_id is required; pass a positional model id or use --model-id <MODEL_ID>." in result.stderr
 
 
 def test_model_adapter_subcommand_help_meets_spec() -> None:
@@ -330,6 +388,12 @@ def test_top_level_help_lists_commands() -> None:
     assert "Commands:" in result.stdout
     assert "inference" in result.stdout
     assert "optix" in result.stdout
+
+
+def test_model_adapter_missing_model_id_mentions_option() -> None:
+    result = run_module_main("cli.inference.model_adapter", ["doctor"])
+    assert result.returncode != 0
+    assert "model_id is required; pass a positional model id or use --model-id <MODEL_ID>." in result.stderr
 
 
 def test_help_renders_all_public_long_options_on_one_action() -> None:
