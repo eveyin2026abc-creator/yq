@@ -32,7 +32,7 @@
 
 **目标（与当前实现一致）**
 
-- 公开入口：`msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix`。
+- 公开入口：`msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate` / `image-generate`、`optix`。
 - 公共词表中 **§4.7 验收点名** 且已实现的标准写法：`--log-level`、`--verbose/-v`、`--quiet/-q`、`--version/-V`、`--jobs/-j`（仅 throughput-optimizer）、`--config/-c`（仅 optix）、`--output-file/-o`（model-adapter 子命令）。
 - `--help` 固定输出 `Description` / `Usage` / `Commands`（有子命令时）/ `Required arguments` / `Optional arguments` / `Examples`；声明了 `output_help` 的入口再附加 `Output`。
 - 带值参数打印语义化 metavar。量化与注册表原值（`W8A8_DYNAMIC`、`ais_bench`）在 help 中保持原样。
@@ -45,7 +45,7 @@
 - 不实现 wrapper 类 `-- <prog> [args]`（§4.7 第 7 条针对 mssanitizer 等 launcher）。
 - 不把 `--device` 改成规范词表中的 `cpu/npu`；取值仍是 TensorCast `DeviceProfile` 名称。
 - 不重命名内部 dest（`tp_size`、`disagg`、`chrome_trace`、`graph_log_url` 等）。
-- 不把 `--model-id` 改成 `--model-path`。text-generate / optimizer / video-generate / model-adapter 均支持位置参数与 `--model-id`（分 dest）；adapter 额外把 `--model_id` 作为正式名展示，其它入口将 `--model_id` 作为隐藏别名。
+- 不把 `--model-id` 改成 `--model-path`。text-generate / optimizer / video-generate / image-generate / model-adapter 均支持位置参数与 `--model-id`（分 dest）；adapter 额外把 `--model_id` 作为正式名展示，其它入口将 `--model_id` 作为隐藏别名。
 - 不在本 RFC 同步改 Web UI 命令拼装、Skill 文档中的旧参数示例。
 
 ### 1.4 方案要求改什么（简表）
@@ -71,7 +71,7 @@
 
 | 正式接口 | 隐藏别名 | dest | 范围 | 当前行为 |
 |:---|:---|:---|:---|:---|
-| `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` | text-generate、throughput-optimizer、video-generate | Chrome trace JSON，metavar `<FILE>` |
+| `--chrome-trace-file` | `--chrome-trace` | `chrome_trace` | text-generate、throughput-optimizer、video-generate、image-generate | Chrome trace JSON，metavar `<FILE>` |
 | `--graph-log-path` | `--graph-log-url`、`--graph-log-file` | `graph_log_url` | 仅 text-generate | 编译图 dump **目录**，`<DIR>`。内部交给 `GraphTransformObserver(log_url=...)` |
 | `--profiling-database-path` | `--profiling-database` | `profiling_database` | text-generate、throughput-optimizer、model-adapter verify 相关路径 | profiling CSV 目录，`<DIR>` |
 | `--export-empirical-metrics-file` | `--export-empirical-metrics` | `export_empirical_metrics` | text-generate | M1–M5 JSON；须 `--performance-model profiling` |
@@ -84,7 +84,7 @@
 
 | 正式接口 | 隐藏别名 | dest | 范围 | 当前行为 |
 |:---|:---|:---|:---|:---|
-| `--num-devices` | `--world-size` | `world_size` | video-generate | 与其它入口语义对齐；video-generate **不用** `get_common_argparser` |
+| `--num-devices` | `--world-size` | `world_size` | video-generate、image-generate | 与其它入口语义对齐；二者 **不用** `get_common_argparser` |
 | `--ttft-limit` | `--ttft-limits` | `ttft_limits` | throughput-optimizer | 单个 TTFT 约束，`<FLOAT>` |
 | `--tpot-limit` | `--tpot-limits` | `tpot_limits` | throughput-optimizer | 单个 TPOT 约束 |
 | `--mtp-acceptance-rates` | `--mtp-acceptance-rate` | `mtp_acceptance_rate` | throughput-optimizer | `nargs=+`，默认 `[0.9, 0.6, 0.4, 0.2]` |
@@ -100,8 +100,8 @@
 
 | 正式接口 | dest / 行为 | 挂载位置（当前代码） |
 |:---|:---|:---|
-| `-V, --version` | `VersionAction`，打印后 `parser.exit(0)` | 顶层 `msmodeling`、`inference` 父 parser、text-generate / throughput-optimizer（经 `get_common_argparser`）、video-generate、model-adapter 及其子命令、optix |
-| `--log-level {debug,info,warning,error,critical}` | `log_level`，argparse 默认 `"error"` | `get_common_argparser`、video-generate、model-adapter **doctor/verify**、optix。**顶层 `msmodeling` 与 `model-adapter export-evidence` 不挂日志选项** |
+| `-V, --version` | `VersionAction`，打印后 `parser.exit(0)` | 顶层 `msmodeling`、`inference` 父 parser、text-generate / throughput-optimizer（经 `get_common_argparser`）、video-generate、image-generate、model-adapter 及其子命令、optix |
+| `--log-level {debug,info,warning,error,critical}` | `log_level`，argparse 默认 `"error"` | `get_common_argparser`、video-generate、image-generate、model-adapter **doctor/verify**、optix。**顶层 `msmodeling` 与 `model-adapter export-evidence` 不挂日志选项** |
 | `-v, --verbose` | `verbose`，`store_true` | 与 `--log-level` 同挂载 |
 | `-q, --quiet` | `quiet`，`store_true` | 同上 |
 | `-j, --jobs` | 默认 `8`，`<N>` | 仅 throughput-optimizer；寻优进程并发，不是模型 TP/DP |
@@ -202,7 +202,8 @@ msmodeling (cli/main.py, SpecArgumentParser)
 │   ├── text-generate       # parents=get_common_argparser()；inherit_deprecated
 │   ├── throughput-optimizer
 │   ├── model-adapter {doctor, verify, export-evidence}
-│   └── video-generate      # 独立 parser，不走 common_parser
+│   ├── video-generate      # 独立 parser，不走 common_parser
+│   └── image-generate      # 独立 parser，不走 common_parser
 └── optix                   # optix/optimizer/optimizer.py，独立 SpecArgumentParser
 
 cli/spec_cli.py
@@ -322,7 +323,7 @@ msmodeling optix -e vllm -b ais_bench --config ./config.toml
 
 ### 4.1 验收范围
 
-- 公开入口：`msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate`、`optix`
+- 公开入口：`msmodeling`、`inference text-generate` / `throughput-optimizer` / `model-adapter` / `video-generate` / `image-generate`、`optix`
 - `--help`、`--version/-V`、已实现的日志开关、正式参数名与取值
 - 旧参数名仍能跑通，stderr 有弃用提示
 - `--device` 仍是 DeviceProfile 名
@@ -349,6 +350,7 @@ optix：`msmodeling optix --help`。若缺 `pydantic_settings` 直接报错，�
 - `python -m cli.inference.text_generate --help`
 - `python -m cli.inference.throughput_optimizer --help`
 - `python -m cli.inference.video_generate --help`
+- `python -m cli.inference.image_generate --help`
 - `python -m cli.inference.model_adapter doctor --help`（`verify` / `export-evidence` 抽一个）
 - `msmodeling optix --help`
 
@@ -362,7 +364,7 @@ optix：`msmodeling optix --help`。若缺 `pydantic_settings` 直接报错，�
 6. 下列旧名**不应作为正式选项出现在 `--help`**：无 `-file` 的 `--chrome-trace`、`--load_breakpoint`、`-lb`、adapter 的 `--output`、`--ttft-limits`。`--tp-size`、`--disagg` **应**出现。
 7. optix help 测评工具取值仍是 `ais_bench`、`vllm_benchmark`，不要验收成 `ais-bench`。
 8. throughput-optimizer help 能看到 `--jobs` / `-j`，以及 `--device` / `--devices`。
-9. model-adapter doctor/verify help 同时出现 `--model-id` 与 `--model_id`。text-generate / throughput-optimizer / video-generate help 出现 `--model-id`，不把 `--model_id` 列为正式选项。
+9. model-adapter doctor/verify help 同时出现 `--model-id` 与 `--model_id`。text-generate / throughput-optimizer / video-generate / image-generate help 出现 `--model-id`，不把 `--model_id` 列为正式选项。
 
 #### B. 新写法功能抽测
 
@@ -469,6 +471,7 @@ python -m pytest tests/regression/cli/test_spec_cli.py tests/regression/cli/test
 | `cli/inference/throughput_optimizer.py` | `--ttft-limit`、`--jobs/-j`、`--device/--devices`、路径后缀 |
 | `cli/inference/model_adapter.py` | 子命令 help、`--output-file/-o`、双正式名 `--model-id/--model_id` |
 | `cli/inference/video_generate.py` | `--num-devices`（dest `world_size`）、log/version；`--ulysses-size` 保持正式名 |
+| `cli/inference/image_generate.py` | `--num-devices`（dest `world_size`）、`--chrome-trace-file`、`--model-id`、log/version；独立 parser |
 | `optix/optimizer/optimizer.py` | kebab 选项、`--load-breakpoint`、引擎/benchmark 取值、CLI/环境日志分流 |
 | `optix/logging.py` | `set_log_level`；无 CLI 开关时 `OPTIX_LOG_LEVEL` |
 | `tests/regression/cli/test_spec_cli.py` | 4.7 回归 |

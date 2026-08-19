@@ -185,9 +185,9 @@ python -m cli.inference.image_generate black-forest-labs/FLUX.1-dev \
   --quantize-linear-action W8A8_DYNAMIC
 ```
 
-**Key flags:** `model_id`, `--device`, `--batch-size`, `--output-image-size`, `--text-seq-len`, `--source-image-size`, `--sample-step`, `--use-cfg`, `--world-size`, `--ulysses-size`, `--cfg-parallel`, `--dit-cache`, `--chrome-trace`
+**Key flags:** `model_id` / `--model-id`, `--device`, `--batch-size`, `--output-image-size`, `--text-seq-len`, `--source-image-size`, `--sample-step`, `--use-cfg`, `--num-devices`, `--ulysses-size`, `--cfg-parallel`, `--dit-cache`, `--chrome-trace-file`
 
-**Output:** A performance summary table; optionally a Chrome trace file if `--chrome-trace` is set.
+**Output:** A performance summary table; optionally a Chrome trace file if `--chrome-trace-file` is set.
 
 ### 2.6 Result (Image Generation)
 
@@ -420,40 +420,16 @@ The first version only simulates the Transformer denoising stage that enters the
 Its general usage is shown below:
 
 ```text
-usage: image_generate.py [-h]
-                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
-                         --batch-size BATCH_SIZE
-                         --output-image-size HEIGHT WIDTH
-                         --text-seq-len TEXT_SEQ_LEN
-                         [--source-image-size HEIGHT WIDTH]
-                         [--sample-step SAMPLE_STEP]
-                         [--use-cfg]
-                         [--dtype {float16,float32,bfloat16}]
-                         [--remote-source {huggingface,modelscope}]
-                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
-                         [--mxfp4-group-size MXFP4_GROUP_SIZE]
-                         [--quantize-attention-action {DISABLED,INT8,FP8}]
-                         [--compile]
-                         [--compile-allow-graph-break]
-                         [--world-size WORLD_SIZE]
-                         [--ulysses-size ULYSSES_SIZE]
-                         [--cfg-parallel] [--dit-cache]
-                         [--cache-step-range CACHE_STEP_RANGE]
-                         [--cache-step-interval CACHE_STEP_INTERVAL]
-                         [--cache-block-range CACHE_BLOCK_RANGE]
-                         [--chrome-trace CHROME_TRACE]
-                         model_id
-
-Simulate image Transformer denoising workloads and report their critical path
-and logical measured work only. Prompt encoding, VAE, scheduler, and image I/O
-are excluded.
+msmodeling inference image-generate MODEL --batch-size <N> --output-image-size HEIGHT WIDTH --text-seq-len <N>
 ```
+
+Full `--help` also includes `--version/-V`, `--verbose/-v`, and `--quiet/-q`. Default `--log-level` is `error`. This command does not provide `--debug` or `--log-file`. The model source is the positional `model_id` or `--model-id`. `--num-devices` is the official parallel-size flag; `--world-size` and `--chrome-trace` remain hidden compatibility aliases.
 
 Main parameters:
 
 | Parameter | Category | Required/Optional | Description |
 | --- | --- | --- | --- |
-| `model_id` | positional arguments | Required | Image generation model ID or local model path.<br>1. Type: Str.<br>2. Reference values: Diffusers model directory or an exactly allowed remote repo ID, such as `black-forest-labs/FLUX.1-dev`, `Qwen/Qwen-Image-Edit`.<br>3. Default: none.<br>4. A reviewed local absolute path is recommended; remote model IDs are not security-guaranteed. |
+| `model_id` / `--model-id` | positional / options | Required (either) | Image generation model ID or local model path. Positional or `--model-id`.<br>1. Type: Str.<br>2. Reference values: Diffusers model directory or an exactly allowed remote repo ID, such as `black-forest-labs/FLUX.1-dev`, `Qwen/Qwen-Image-Edit`.<br>3. Default: none.<br>4. A reviewed local absolute path is recommended; remote model IDs are not security-guaranteed. |
 | `--device` | options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: registered `DeviceProfile` names, including `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: `TEST_DEVICE`. |
 | `--batch-size` | options | Required | Specifies the base batch size of the workload, not the prompt count or source image count.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--output-image-size` | options | Required | Specifies the output image size, provided exactly once; used only to derive the shape, does not output an image.<br>1. Type: Tuple[Int, Int] (`HEIGHT WIDTH`).<br>2. Valid range: two positive integers.<br>3. Default: none. |
@@ -468,14 +444,14 @@ Main parameters:
 | `--quantize-attention-action` | Quantization Options | Optional | Specifies attention computation quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `INT8`, `FP8`.<br>3. Default: `DISABLED`. |
 | `--compile` | Optimization Options | Optional | Compiles the primary transformer before simulation.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Uses `dynamic=False, fullgraph=True`; when DiT cache is active, the cache transformer uses the same policy. |
 | `--compile-allow-graph-break` | Optimization Options | Optional | Allows graph breaks during compilation.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Changes compilation to `fullgraph=False` for both the primary and DiT cache transformers. |
-| `--world-size` | Parallel Options | Optional | Specifies the total number of devices participating in distributed simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`.<br>4. Must equal `--ulysses-size` (`2 * --ulysses-size` when `--cfg-parallel` is enabled). |
+| `--num-devices` | Parallel Options | Optional | Specifies the total number of devices participating in distributed simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`.<br>4. Must equal `--ulysses-size` (`2 * --ulysses-size` when `--cfg-parallel` is enabled). Legacy `--world-size` is still accepted. |
 | `--ulysses-size` | Parallel Options | Optional | Specifies Ulysses parallel size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
-| `--cfg-parallel` | Parallel Options | Optional | Enables CFG parallel strategy.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Only enabled with `--use-cfg`; then `world-size` must equal `2 * --ulysses-size`. |
+| `--cfg-parallel` | Parallel Options | Optional | Enables CFG parallel strategy.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`.<br>4. Only enabled with `--use-cfg`; then `--num-devices` must equal `2 * --ulysses-size`. |
 | `--dit-cache` | Cache Options | Optional | Enables DiT block cache.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--cache-step-range` | Cache Options | Optional | Specifies sampling step range for cache.<br>1. Type: Str.<br>2. Format: `start,end`, inclusive interval.<br>3. Default: `None`.<br>4. Required when `--dit-cache` is set and `--cache-step-interval > 1`. |
 | `--cache-step-interval` | Cache Options | Optional | Specifies cache update step interval.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`, which disables cache update reuse. |
 | `--cache-block-range` | Cache Options | Optional | Specifies block range for cache.<br>1. Type: Str.<br>2. Format: `start,end`, start inclusive and end exclusive.<br>3. Default: `None`. |
-| `--chrome-trace` | options | Optional | Specifies the Chrome trace JSON output path for exporting the performance timeline.<br>1. Type: Str.<br>2. Valid range: file path.<br>3. Default: `None`.<br>4. Generated only after a successful Runtime run. |
+| `--chrome-trace-file` | options | Optional | Specifies the Chrome trace JSON output path for exporting the performance timeline.<br>1. Type: Str.<br>2. Valid range: file path.<br>3. Default: `None`.<br>4. Generated only after a successful Runtime run. Legacy `--chrome-trace` is still accepted. |
 
 > **Note:** The Core currently registers no production image model kind; support for models such as `black-forest-labs/FLUX.1-dev` and `Qwen/Qwen-Image-Edit` is provided by the corresponding model-extension PRs. Until then, passing a real model ID fails explicitly (fail-closed).
 

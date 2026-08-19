@@ -317,6 +317,59 @@ def test_throughput_optimizer_help_hides_legacy_flags() -> None:
     assert "--jobs" in result.stdout
 
 
+def test_image_generate_help_meets_spec() -> None:
+    result = run_module_main("cli.inference.image_generate", ["--help"])
+    assert result.returncode == 0
+    _assert_help_meets_spec(result.stdout)
+    assert "--num-devices" in result.stdout
+    assert "--world-size" not in result.stdout
+    assert "--chrome-trace-file" in result.stdout
+    assert "--chrome-trace" not in result.stdout.replace("--chrome-trace-file", "")
+    assert "--model-id" in result.stdout
+    assert "--model_id" not in result.stdout
+
+
+def test_image_generate_accepts_model_id_option() -> None:
+    from cli.inference import image_generate
+
+    captured: dict[str, object] = {}
+
+    def _capture(model_id: str, **kwargs: object) -> None:
+        captured["model_id"] = model_id
+
+    with (
+        patch.object(image_generate, "print_logo", lambda: None),
+        patch.object(image_generate, "run_inference", _capture),
+        patch.object(
+            sys,
+            "argv",
+            [
+                "image_generate",
+                "--model-id",
+                "black-forest-labs/FLUX.1-dev",
+                "--batch-size",
+                "1",
+                "--output-image-size",
+                "64",
+                "64",
+                "--text-seq-len",
+                "32",
+            ],
+        ),
+    ):
+        image_generate.main()
+    assert captured["model_id"] == "black-forest-labs/FLUX.1-dev"
+
+
+def test_image_generate_missing_model_id_mentions_option() -> None:
+    result = run_module_main(
+        "cli.inference.image_generate",
+        ["--batch-size", "1", "--output-image-size", "64", "64", "--text-seq-len", "32"],
+    )
+    assert result.returncode != 0
+    assert "model_id is required; pass a positional model id or use --model-id <MODEL_ID>." in result.stderr
+
+
 def test_video_generate_help_meets_spec() -> None:
     result = run_module_main("cli.inference.video_generate", ["--help"])
     assert result.returncode == 0

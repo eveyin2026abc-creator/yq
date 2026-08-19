@@ -185,9 +185,9 @@ python -m cli.inference.image_generate black-forest-labs/FLUX.1-dev \
   --quantize-linear-action W8A8_DYNAMIC
 ```
 
-**关键参数：** `model_id`、`--device`、`--batch-size`、`--output-image-size`、`--text-seq-len`、`--source-image-size`、`--sample-step`、`--use-cfg`、`--world-size`、`--ulysses-size`、`--cfg-parallel`、`--dit-cache`、`--chrome-trace`
+**关键参数：** `model_id` / `--model-id`、`--device`、`--batch-size`、`--output-image-size`、`--text-seq-len`、`--source-image-size`、`--sample-step`、`--use-cfg`、`--num-devices`、`--ulysses-size`、`--cfg-parallel`、`--dit-cache`、`--chrome-trace-file`
 
-**输出：** 性能汇总表；若设置了 `--chrome-trace`，还可选输出 Chrome trace 文件。
+**输出：** 性能汇总表；若设置了 `--chrome-trace-file`，还可选输出 Chrome trace 文件。
 
 ### 2.6 结果（图像生成）
 
@@ -414,40 +414,16 @@ BSA 行为与限制：
 其一般用法如下：
 
 ```text
-usage: image_generate.py [-h]
-                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
-                         --batch-size BATCH_SIZE
-                         --output-image-size HEIGHT WIDTH
-                         --text-seq-len TEXT_SEQ_LEN
-                         [--source-image-size HEIGHT WIDTH]
-                         [--sample-step SAMPLE_STEP]
-                         [--use-cfg]
-                         [--dtype {float16,float32,bfloat16}]
-                         [--remote-source {huggingface,modelscope}]
-                         [--quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}]
-                         [--mxfp4-group-size MXFP4_GROUP_SIZE]
-                         [--quantize-attention-action {DISABLED,INT8,FP8}]
-                         [--compile]
-                         [--compile-allow-graph-break]
-                         [--world-size WORLD_SIZE]
-                         [--ulysses-size ULYSSES_SIZE]
-                         [--cfg-parallel] [--dit-cache]
-                         [--cache-step-range CACHE_STEP_RANGE]
-                         [--cache-step-interval CACHE_STEP_INTERVAL]
-                         [--cache-block-range CACHE_BLOCK_RANGE]
-                         [--chrome-trace CHROME_TRACE]
-                         model_id
-
-Simulate image Transformer denoising workloads and report their critical path
-and logical measured work only. Prompt encoding, VAE, scheduler, and image I/O
-are excluded.
+msmodeling inference image-generate MODEL --batch-size <N> --output-image-size HEIGHT WIDTH --text-seq-len <N>
 ```
+
+完整 `--help` 还包含 `--version/-V`、`--verbose/-v`、`--quiet/-q`。默认 `--log-level error`。本工具不提供 `--debug` 或 `--log-file`。模型来源是位置参数 `model_id` 或 `--model-id`。`--num-devices` 为正式并行规模；`--world-size` 与 `--chrome-trace` 为隐藏兼容别名。
 
 主要参数说明如下：
 
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
-| `model_id` | positional arguments | 必选 | 图像生成模型 ID 或本地模型路径。<br>1. 类型：Str。<br>2. 参考值：Diffusers 模型目录或精确允许的远端 repo ID，例如 `black-forest-labs/FLUX.1-dev`、`Qwen/Qwen-Image-Edit`。<br>3. 默认值：无。<br>4. 推荐使用已审核的本地绝对路径；远端模型 ID 不提供安全保证。 |
+| `model_id` / `--model-id` | positional / options | 必选（二选一） | 图像生成模型 ID 或本地模型路径。可位置参数或 `--model-id`。<br>1. 类型：Str。<br>2. 参考值：Diffusers 模型目录或精确允许的远端 repo ID，例如 `black-forest-labs/FLUX.1-dev`、`Qwen/Qwen-Image-Edit`。<br>3. 默认值：无。<br>4. 推荐使用已审核的本地绝对路径；远端模型 ID 不提供安全保证。 |
 | `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--batch-size` | options | 必选 | 指定基础 workload 的 batch 大小，不是 prompt 数或源图数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--output-image-size` | options | 必选 | 指定输出图像尺寸，恰好出现一次；只用于推导 shape，不输出图片。<br>1. 类型：Tuple[Int, Int]（`HEIGHT WIDTH`）。<br>2. 取值范围：两个正整数。<br>3. 默认值：无。 |
@@ -462,14 +438,14 @@ are excluded.
 | `--quantize-attention-action` | Quantization Options | 可选 | 指定 attention 计算量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
 | `--compile` | Optimization Options | 可选 | 在仿真前编译主 transformer。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 使用 `dynamic=False, fullgraph=True`；启用 DiT cache 时，cache transformer 使用相同策略。 |
 | `--compile-allow-graph-break` | Optimization Options | 可选 | 允许编译期间发生 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 会将主 transformer 和 DiT cache transformer 的编译方式改为 `fullgraph=False`。 |
-| `--world-size` | Parallel Options | 可选 | 指定参与分布式仿真的总设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。<br>4. 必须等于 `--ulysses-size`（启用 `--cfg-parallel` 时为 `2 * --ulysses-size`）。 |
+| `--num-devices` | Parallel Options | 可选 | 指定参与分布式仿真的总设备数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。<br>4. 必须等于 `--ulysses-size`（启用 `--cfg-parallel` 时为 `2 * --ulysses-size`）。旧名 `--world-size` 仍可解析。 |
 | `--ulysses-size` | Parallel Options | 可选 | 指定 Ulysses 并行规模。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
-| `--cfg-parallel` | Parallel Options | 可选 | 启用 CFG 并行策略。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 仅在 `--use-cfg` 下启用，此时 `world-size` 必须等于 `2 * --ulysses-size`。 |
+| `--cfg-parallel` | Parallel Options | 可选 | 启用 CFG 并行策略。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。<br>4. 仅在 `--use-cfg` 下启用，此时 `--num-devices` 必须等于 `2 * --ulysses-size`。 |
 | `--dit-cache` | Cache Options | 可选 | 启用 DiT block cache。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--cache-step-range` | Cache Options | 可选 | 指定启用 cache 的采样步范围。<br>1. 类型：Str。<br>2. 格式：`start,end`，闭区间。<br>3. 默认值：`None`。<br>4. 设置 `--dit-cache` 且 `--cache-step-interval > 1` 时必填。 |
 | `--cache-step-interval` | Cache Options | 可选 | 指定 cache 更新步间隔。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`，表示不启用 cache 更新复用。 |
 | `--cache-block-range` | Cache Options | 可选 | 指定启用 cache 的 block 范围。<br>1. 类型：Str。<br>2. 格式：`start,end`，左闭右开。<br>3. 默认值：`None`。 |
-| `--chrome-trace` | options | 可选 | 指定 Chrome trace JSON 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。<br>4. 仅在 Runtime 成功后生成。 |
+| `--chrome-trace-file` | options | 可选 | 指定 Chrome trace JSON 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。<br>4. 仅在 Runtime 成功后生成。旧名 `--chrome-trace` 仍可解析。 |
 
 > **说明：** 当前 Core 未注册任何生产图像模型 kind；`black-forest-labs/FLUX.1-dev` 与 `Qwen/Qwen-Image-Edit` 等模型的支持由对应模型扩展 PR 提供。在此之前传入真实模型 ID 会明确报错（fail-closed）。
 
