@@ -135,7 +135,9 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar=METAVAR_N,
         help="Number of identical Transformer workload iterations.",
     )
-    parser.add_argument("--use-cfg", action="store_true", help="Enable classifier-free guidance workload approximation.")
+    parser.add_argument(
+        "--use-cfg", action="store_true", help="Enable classifier-free guidance workload approximation."
+    )
     parser.add_argument(
         "--dtype",
         choices=["float16", "float32", "bfloat16"],
