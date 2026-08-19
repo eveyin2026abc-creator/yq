@@ -248,7 +248,7 @@ Its general usage is shown below:
 usage: text_generate.py [-h]
                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
                         [--num-devices NUM_DEVICES] [--reserved-memory-gb RESERVED_MEMORY_GB]
-                        [--log-level {debug,info,warning,error}] --num-queries NUM_QUERIES
+                        [--log-level {debug,info,warning,error,critical}] --num-queries NUM_QUERIES
                         --query-length QUERY_LENGTH [--context-length CONTEXT_LENGTH] [--decode]
                         [--prefix-cache-hit-rate PREFIX_CACHE_HIT_RATE] [--num-mtp-tokens NUM_MTP_TOKENS]
                         [--no-repetition] [--compile] [--compile-allow-graph-break]
@@ -294,11 +294,11 @@ Main parameters:
 | `--compile` | Optimization Options | Optional | Invokes `torch.compile()` on the model before inference.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile-allow-graph-break` | Optimization Options | Optional | Allows graph breaks during `torch.compile()`.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compilation-config` | Optimization Options | Optional | Dynamically enable specified compilation features. Multiple options can be provided at once.<br>1. Type: List[Str] (`nargs="*"`).<br>2. Choices: `enable_multistream` (enable multi-stream scheduling), `enable_sequence_parallel` (enable sequence parallel graph rewrite pass), `enable_matmul_allreduce` (enable matmul-allreduce fusion), `enable_dispatch_ffn_combine` (enable dispatch_ffn_combine fusion).<br>3. Default: when omitted, all compilation features remain disabled (`False`).<br>4. Example: `--compilation-config enable_multistream enable_sequence_parallel`. |
-| `--quantize-linear-action` | Quantization Options | Optional | Specifies the linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
-| `--quantize-non-expert-linear-action` | Quantization Options | Optional | Specifies a separate quantization mode for non-expert linear layers, such as attention projections, dense MLP, and shared experts.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `disabled`. |
+| `--quantize-linear-action` | Quantization Options | Optional | Specifies the linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `W8A8_DYNAMIC`. |
+| `--quantize-non-expert-linear-action` | Quantization Options | Optional | Specifies a separate quantization mode for non-expert linear layers, such as attention projections, dense MLP, and shared experts.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `DISABLED`. |
 | `--quantize-lmhead` | Quantization Options | Optional | Enables quantization for lm head.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--mxfp4-group-size` | Quantization Options | Optional | Specifies the group size for mxfp4 quantization.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
-| `--quantize-attention-action` | Quantization Options | Optional | Specifies KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
+| `--quantize-attention-action` | Quantization Options | Optional | Specifies KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `INT8`, `FP8`.<br>3. Default: `DISABLED`. |
 | `--graph-log-path` | Debugging Options | Optional | Directory for compiled graph dumps when debugging the compile path. Each pass writes files under this directory.<br>1. Type: Str.<br>2. Valid range: directory path.<br>3. Default: `None`. |
 | `--dump-input-shapes` | Debugging Options | Optional | Dumps input shape information for troubleshooting model input configuration.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--dump-op-bound-results` | Debugging Options | Optional | Dumps per-operator memory, communication, MMA, and GP bound ratios in the result table.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
@@ -377,8 +377,8 @@ Main parameters:
 | `--log-level` | options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`, `critical`.<br>3. Default: `error`. |
 | `--dtype` | options | Optional | Specifies model compute data type.<br>1. Type: Str.<br>2. Reference values: `float16`, `float32`, `bfloat16`.<br>3. Default: `float16`. |
 | `--remote-source` | options | Optional | Specifies the remote source for non-local Diffusers repo IDs.<br>1. Type: Str.<br>2. Reference values: `huggingface`, `modelscope`.<br>3. Default: `huggingface`. |
-| `--quantize-linear-action` | options | Optional | Specifies linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
-| `--quantize-attention-action` | options | Optional | Specifies attention computation quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
+| `--quantize-linear-action` | options | Optional | Specifies linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `W8A8_DYNAMIC`. |
+| `--quantize-attention-action` | options | Optional | Specifies attention computation quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `INT8`, `FP8`.<br>3. Default: `DISABLED`. |
 | `--use-cfg` | options | Optional | Enables classifier-free guidance simulation path.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--attention-backend` | Attention Options | Optional | Selects the attention backend.<br>1. Type: Str.<br>2. Reference values: `dense`, `block_sparse_attention`.<br>3. Default: `dense`. |
 | `--attention-block-size` | Attention Options | Optional | Sets the BSA block size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `128`. |

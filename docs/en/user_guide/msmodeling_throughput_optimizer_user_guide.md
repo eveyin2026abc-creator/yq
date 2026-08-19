@@ -259,7 +259,7 @@ General Options:
   --reserved-memory-gb RESERVED_MEMORY_GB
                         Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. Set to 0 to disable
                         memory reservation. (default: 10.0)
-  --log-level {debug,info,warning,error}
+  --log-level {debug,info,warning,error,critical}
                         Specifies the verbosity level for log output. Available levels: 'debug' (most verbose), 'info', 'warning', 'error', 'critical' (least verbose). [default: error]
 
 Model & Quantization Options:
@@ -271,14 +271,14 @@ Model & Quantization Options:
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
                         TP x EP x MOE-DP x MTP. (default: None)
-  --quantize-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
+  --quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
                         Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: W8A8_DYNAMIC)
-  --quantize-non-expert-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
-                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: disabled)
+  --quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
+                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: DISABLED)
   --mxfp4-group-size mxfp4_GROUP_SIZE
                         Group size for mxfp4 quantization (default: 32)
-  --quantize-attention-action {disabled,int8,fp8}
-                        Quantize the KV cache with the given action (default: disabled)
+  --quantize-attention-action {DISABLED,INT8,FP8}
+                        Quantize the KV cache with the given action (default: DISABLED)
   --tp-sizes [TP_SIZES ...]
                         Enable TP search. Optional explicit TP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
   --ep-sizes [EP_SIZES ...]
@@ -350,10 +350,10 @@ Main parameters:
 | `--compile` | Model & Quantization Options | Optional | Invokes `torch.compile()` before inference.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile-allow-graph-break` | Model & Quantization Options | Optional | Allows graph breaks during `torch.compile()`.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--num-mtp-tokens` | Model & Quantization Options | Optional | MTP token count candidates. Pass one or more values to search; `0` means disabled.<br>1. Type: List[Int] (`nargs="+"`).<br>2. Valid range: each candidate is an integer from `0` to `9`; multiple values are allowed, for example `--num-mtp-tokens 0 1 2`.<br>3. Default: if omitted, equivalent to `0` (MTP disabled).<br>4. A single value fixes the MTP configuration; multiple values are swept during throughput optimization and multiply with TP / EP / MOE-DP search combinations.<br>5. Only models with MTP support benefit from non-zero values; each candidate value must not exceed `len(--mtp-acceptance-rates) + 1` (default acceptance-rate list length is `4`, so the limit is `5`; exceeding it triggers a runtime error: `exceed the supported mtp_acceptance_rate length`). |
-| `--quantize-linear-action` | Model & Quantization Options | Optional | Linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `W8A8_DYNAMIC`. |
-| `--quantize-non-expert-linear-action` | Model & Quantization Options | Optional | Separate quantization mode for non-expert linear layers.<br>1. Type: Str.<br>2. Reference values: `disabled`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `fp8`, `mxfp4`.<br>3. Default: `disabled`.<br>4. Mainly intended for DeepSeek V4-style MoE models. Routed MoE experts still use `--quantize-linear-action`. |
+| `--quantize-linear-action` | Model & Quantization Options | Optional | Linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `W8A8_DYNAMIC`. |
+| `--quantize-non-expert-linear-action` | Model & Quantization Options | Optional | Separate quantization mode for non-expert linear layers.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `DISABLED`.<br>4. Mainly intended for DeepSeek V4-style MoE models. Routed MoE experts still use `--quantize-linear-action`. |
 | `--mxfp4-group-size` | Model & Quantization Options | Optional | mxfp4 quantization group size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
-| `--quantize-attention-action` | Model & Quantization Options | Optional | KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `disabled`, `int8`, `fp8`.<br>3. Default: `disabled`. |
+| `--quantize-attention-action` | Model & Quantization Options | Optional | KV cache quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `INT8`, `FP8`.<br>3. Default: `DISABLED`. |
 | `--tp-sizes` | Model & Quantization Options | Optional | Enables TP search and optionally specifies TP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
 | `--ep-sizes` | Model & Quantization Options | Optional | Enables EP search and optionally specifies EP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |
 | `--moe-dp-sizes` | Model & Quantization Options | Optional | Enables MOE-DP search and optionally specifies MOE-DP candidates.<br>1. Type: List[Int].<br>2. Valid range: positive integer list.<br>3. Default: `None`; when provided without values, searches powers of 2 up to `world_size`. |

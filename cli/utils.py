@@ -248,7 +248,11 @@ def _parser_has_option(parser: argparse.ArgumentParser, option: str) -> bool:
 
 
 def require_model_id(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    model_id = getattr(args, "model_id", None) or getattr(args, "model_id_positional", None)
+    option = getattr(args, "model_id", None)
+    positional = getattr(args, "model_id_positional", None)
+    if option and positional:
+        parser.error("pass either a positional model id or --model-id, not both")
+    model_id = option or positional
     if not model_id:
         if _parser_has_option(parser, "--model-id"):
             parser.error("model_id is required; pass a positional model id or use --model-id <MODEL_ID>.")

@@ -227,6 +227,18 @@ def test_require_model_id_error_lists_option_when_registered(capsys: pytest.Capt
     assert "model_id is required; pass a positional model id or use --model-id <MODEL_ID>." in err
 
 
+def test_require_model_id_rejects_positional_and_option_together(capsys: pytest.CaptureFixture[str]) -> None:
+    parser = argparse.ArgumentParser(prog="text-generate")
+    add_model_id_source(parser, positional_help="Model source.")
+    args = parser.parse_args(["Qwen/Qwen3-32B", "--model-id", "Qwen/Other"])
+
+    with pytest.raises(SystemExit):
+        require_model_id(parser, args)
+
+    err = capsys.readouterr().err
+    assert "pass either a positional model id or --model-id, not both" in err
+
+
 def test_add_model_id_source_option_only_merges_into_model_id() -> None:
     parser = argparse.ArgumentParser()
     add_model_id_source(parser, positional_help="Model source.")

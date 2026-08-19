@@ -242,7 +242,7 @@ Python 代码，msmodeling 不对远端代码安全性做保证；运行时会�
 usage: text_generate.py [-h]
                         [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
                         [--num-devices NUM_DEVICES] [--reserved-memory-gb RESERVED_MEMORY_GB]
-                        [--log-level {debug,info,warning,error}] --num-queries NUM_QUERIES
+                        [--log-level {debug,info,warning,error,critical}] --num-queries NUM_QUERIES
                         --query-length QUERY_LENGTH [--context-length CONTEXT_LENGTH] [--decode]
                         [--prefix-cache-hit-rate PREFIX_CACHE_HIT_RATE] [--num-mtp-tokens NUM_MTP_TOKENS]
                         [--no-repetition] [--compile] [--compile-allow-graph-break]
@@ -288,11 +288,11 @@ Run a simulated LLM inference pass and dump the perf result.
 | `--compile` | Optimization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Optimization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compilation-config` | Optimization Options | 可选 | 动态启用指定的编译特性，可一次指定多个选项。<br>1. 类型：List[Str]（`nargs="*"`）。<br>2. 可选值：`enable_multistream`（启用多 stream 调度）、`enable_sequence_parallel`（启用 sequence parallel 图改写 pass）、`enable_matmul_allreduce`（启用 matmul-allreduce 融合）、`enable_dispatch_ffn_combine`（启用 dispatch_ffn_combine 融合）。<br>3. 默认值：不指定时所有编译特性均保持关闭（`False`）。<br>4. 示例：`--compilation-config enable_multistream enable_sequence_parallel`。 |
-| `--quantize-linear-action` | Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-non-expert-linear-action` | Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`disabled`。 |
+| `--quantize-linear-action` | Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-non-expert-linear-action` | Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`DISABLED`。 |
 | `--quantize-lmhead` | Quantization Options | 可选 | 对 lm head 启用量化。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--mxfp4-group-size` | Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
-| `--quantize-attention-action` | Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
+| `--quantize-attention-action` | Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
 | `--graph-log-path` | Debugging Options | 可选 | 指定编译图日志输出**目录**，仅在 compile 路径调试时使用。各 pass 会在该目录下写出多个 dump 文件。<br>1. 类型：Str。<br>2. 取值范围：目录路径。<br>3. 默认值：`None`。 |
 | `--dump-input-shapes` | Debugging Options | 可选 | 输出输入 shape 信息，便于排查模型输入配置。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--dump-op-bound-results` | Debugging Options | 可选 | 在结果表中输出算子级 memory、communication、MMA、GP bound 比例。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
@@ -371,8 +371,8 @@ Run a simulated diffusion transformer forward and dump perf stats.
 | `--log-level` | options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
 | `--dtype` | options | 可选 | 指定模型计算数据类型。<br>1. 类型：Str。<br>2. 参考值：`float16`、`float32`、`bfloat16`。<br>3. 默认值：`float16`。 |
 | `--remote-source` | options | 可选 | 指定非本地 Diffusers repo ID 的远端模型来源。<br>1. 类型：Str。<br>2. 参考值：`huggingface`、`modelscope`。<br>3. 默认值：`huggingface`。 |
-| `--quantize-linear-action` | options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-attention-action` | options | 可选 | 指定 attention 计算量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
+| `--quantize-linear-action` | options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-attention-action` | options | 可选 | 指定 attention 计算量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
 | `--use-cfg` | options | 可选 | 启用 classifier-free guidance 相关仿真路径。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--attention-backend` | Attention Options | 可选 | 选择 attention 后端。<br>1. 类型：Str。<br>2. 参考值：`dense`、`block_sparse_attention`。<br>3. 默认值：`dense`。 |
 | `--attention-block-size` | Attention Options | 可选 | 设置 BSA block size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`128`。 |

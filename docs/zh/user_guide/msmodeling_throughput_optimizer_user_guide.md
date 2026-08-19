@@ -305,7 +305,7 @@ General Options:
   --reserved-memory-gb RESERVED_MEMORY_GB
                         Amount of device memory (in gigabytes) reserved for system usage and unavailable for application. Set to 0 to disable
                         memory reservation. (default: 10.0)
-  --log-level {debug,info,warning,error}
+  --log-level {debug,info,warning,error,critical}
                         Specifies the verbosity level for log output. Available levels: 'debug' (most verbose), 'info', 'warning', 'error', 'critical' (least verbose). [default: error]
 
 Model & Quantization Options:
@@ -317,14 +317,14 @@ Model & Quantization Options:
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
                         TP x EP x MOE-DP x MTP. (default: None)
-  --quantize-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
+  --quantize-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
                         Quantize all linear layers in the model from choices (currently only support symmetric quant) (default: W8A8_DYNAMIC)
-  --quantize-non-expert-linear-action {disabled,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,fp8,mxfp4}
-                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: disabled)
+  --quantize-non-expert-linear-action {DISABLED,W8A16_STATIC,W8A8_STATIC,W4A8_STATIC,W8A16_DYNAMIC,W8A8_DYNAMIC,W4A8_DYNAMIC,FP8,MXFP4}
+                        Set a separate quantization type for non-expert linear layers, such as attention projections, dense MLP layers, and shared experts, while routed MoE experts keep --quantize-linear-action. This option is mainly intended for DeepSeek V4-style MoE models. (default: DISABLED)
   --mxfp4-group-size mxfp4_GROUP_SIZE
                         Group size for mxfp4 quantization (default: 32)
-  --quantize-attention-action {disabled,int8,fp8}
-                        Quantize the KV cache with the given action (default: disabled)
+  --quantize-attention-action {DISABLED,INT8,FP8}
+                        Quantize the KV cache with the given action (default: DISABLED)
   --tp-sizes [TP_SIZES ...]
                         Enable TP search. Optional explicit TP sizes. If no value is provided, defaults to powers of 2 up to world_size. (default: None)
   --ep-sizes [EP_SIZES ...]
@@ -408,10 +408,10 @@ PD Ratio Optimization Options:
 | `--compile` | Model & Quantization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Model & Quantization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rates) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。 |
-| `--quantize-linear-action` | Model & Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
-| `--quantize-non-expert-linear-action` | Model & Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`fp8`、`mxfp4`。<br>3. 默认值：`disabled`。<br>4. 主要用于 DeepSeek V4 风格 MoE 模型；路由 MoE experts 仍使用 `--quantize-linear-action`。 |
+| `--quantize-linear-action` | Model & Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。 |
+| `--quantize-non-expert-linear-action` | Model & Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`DISABLED`。<br>4. 主要用于 DeepSeek V4 风格 MoE 模型；路由 MoE experts 仍使用 `--quantize-linear-action`。 |
 | `--mxfp4-group-size` | Model & Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
-| `--quantize-attention-action` | Model & Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`disabled`、`int8`、`fp8`。<br>3. 默认值：`disabled`。 |
+| `--quantize-attention-action` | Model & Quantization Options | 可选 | 指定 KV cache 量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`INT8`、`FP8`。<br>3. 默认值：`DISABLED`。 |
 | `--tp-sizes` | Model & Quantization Options | 可选 | 启用 TP 搜索，并可显式指定 TP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
 | `--ep-sizes` | Model & Quantization Options | 可选 | 启用 EP 搜索，并可显式指定 EP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |
 | `--moe-dp-sizes` | Model & Quantization Options | 可选 | 启用 MOE-DP 搜索，并可显式指定 MOE-DP 取值范围。<br>1. 类型：List[Int]。<br>2. 取值范围：正整数列表。<br>3. 默认值：`None`；仅传入参数但不指定取值时，默认搜索不超过 `world_size` 的 2 的幂。 |

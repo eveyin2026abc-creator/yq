@@ -411,6 +411,15 @@ def test_video_generate_accepts_model_id_option() -> None:
     assert captured["model_id"] == "Wan-AI/Wan2.1-T2V-1.3B"
 
 
+def test_video_generate_rejects_positional_and_model_id_together() -> None:
+    result = run_module_main(
+        "cli.inference.video_generate",
+        ["Wan-AI/Wan2.1-T2V-1.3B", "--model-id", "Wan-AI/Other", "--batch-size", "1", "--seq-len", "8"],
+    )
+    assert result.returncode != 0
+    assert "pass either a positional model id or --model-id, not both" in result.stderr
+
+
 def test_video_generate_missing_model_id_mentions_option() -> None:
     result = run_module_main(
         "cli.inference.video_generate",
