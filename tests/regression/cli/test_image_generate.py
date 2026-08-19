@@ -67,6 +67,17 @@ def test_help_exposes_public_contract_without_legacy_flags() -> None:
     assert "--chrome-trace" not in result.stdout.replace("--chrome-trace-file", "")
 
 
+def test_startup_prints_mindstudio_logo() -> None:
+    with patch("cli.inference.image_generate.run_inference") as runner:
+        result = run_module_main("cli.inference.image_generate", minimum_args())
+
+    assert result.returncode == 0
+    assert "MindStudio" in result.stderr
+    assert "THE END-TO-END TOOLCHAIN TO UNLEASH HUAWEI ASCEND COMPUTE" in result.stderr
+    assert result.stdout == ""
+    runner.assert_called_once()
+
+
 @pytest.mark.parametrize(
     ("extra_args", "error"),
     [
@@ -75,10 +86,10 @@ def test_help_exposes_public_contract_without_legacy_flags() -> None:
             "--output-image-size must be provided exactly once",
         ),
         (["--cfg-parallel"], "cfg_parallel requires use_cfg"),
-        (["--world-size", "2"], "world_size must equal U"),
+        (["--world-size", "2"], "world_size must equal 1"),
         (
             ["--use-cfg", "--cfg-parallel", "--world-size", "4", "--ulysses-size", "3"],
-            "world_size must equal 2U",
+            "world_size must equal 6",
         ),
         (
             ["--dit-cache", "--cache-step-interval", "2"],
