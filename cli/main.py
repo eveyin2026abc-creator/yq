@@ -41,6 +41,10 @@ def _handle_inference_command(
         from cli.inference.video_generate import main as video_generate_main
 
         return _dispatch(video_generate_main, remaining)
+    if args.inference_command == "image-generate":
+        from cli.inference.image_generate import main as image_generate_main
+
+        return _dispatch(image_generate_main, remaining)
     if args.inference_command is None:
         inference_parser.print_help()
         return 0
@@ -63,6 +67,8 @@ def main() -> int:
             "msmodeling inference model-adapter doctor --model-id MODEL\n"
             "# Video generate\n"
             "msmodeling inference video-generate MODEL --batch-size 1 --seq-len 512\n"
+            "# Image generate\n"
+            "msmodeling inference image-generate MODEL --batch-size 1\n"
             "# OptiX service parameter optimizer\n"
             "msmodeling optix -e vllm -b ais_bench"
         ),
@@ -81,7 +87,9 @@ def main() -> int:
             "msmodeling inference text-generate MODEL --num-queries 1 --query-length 128 --device DEV\n"
             "# Throughput search\n"
             "msmodeling inference throughput-optimizer MODEL --device DEV --num-devices 8 "
-            "--input-length 1024 --output-length 512"
+            "--input-length 1024 --output-length 512\n"
+            "# Image generate\n"
+            "msmodeling inference image-generate MODEL --batch-size 1"
         ),
     )
     add_version_option(inference_parser)
@@ -90,6 +98,13 @@ def main() -> int:
     inference_sub.add_parser("throughput-optimizer", help="Search serving throughput strategies")
     inference_sub.add_parser("model-adapter", help="Model adaptation doctor, verify, and export-evidence")
     inference_sub.add_parser("video-generate", help="Run a simulated video generation pass")
+    inference_sub.add_parser(
+        "image-generate",
+        help="Run a simulated image generation pass",
+        # Defer --help to cli.inference.image_generate's own parser so the full
+        # image-specific flag list is rendered instead of just this help line.
+        add_help=False,
+    )
 
     args, remaining = parser.parse_known_args()
 
