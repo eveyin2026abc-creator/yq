@@ -27,6 +27,7 @@ class SimpleArgs:
         self.image_width = 520
         self.prefill_devices_per_instance = None
         self.decode_devices_per_instance = None
+        self.serving_cost = 0
         self.enable_optimize_prefill_decode_ratio = False
         self.prefix_cache_hit_rate = 0.0
         self.concurrency_search_strategy = "exponential"

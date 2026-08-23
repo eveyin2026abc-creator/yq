@@ -40,6 +40,8 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_BATCH_SIZE = 512
+
 
 class BaseThroughputOptimizer(ABC):
     """
@@ -147,7 +149,7 @@ class BaseThroughputOptimizer(ABC):
 
     def _run_once(self, optimizer_data: OptimizerData, batch_range: list[int]) -> OptimizerSummary | None:
         self._last_run_early_stop_reason = None
-        left, right = 1, 512
+        left, right = 1, DEFAULT_MAX_BATCH_SIZE
         result = []
         result_df = pd.DataFrame(columns=AGG_COLUMNS)
         last_valid_summary = None
@@ -359,6 +361,51 @@ class BaseThroughputOptimizer(ABC):
             image_width=optimizer_data.image_width,
         )
 
+    def get_compile_calibration_probe(
+        self,
+        optimizer_data: OptimizerData,
+        batch_range: list[int],
+        *,
+        is_decode: bool,
+    ) -> tuple[ForwardShapeKey, RequestInfo]:
+        """Return the high-concurrency request used to calibrate compile mode.
+
+        The optimizer's regular search starts with the upper batch candidate
+        before binary search.  Reusing that candidate keeps calibration aligned
+        with the existing search contract instead of introducing a second
+        concurrency heuristic.
+        """
+        probe_batch_size = max(batch_range) if batch_range else DEFAULT_MAX_BATCH_SIZE
+        concurrency = probe_batch_size * self.dp * self.pp
+        key = self._make_forward_shape_key(concurrency, optimizer_data, is_decode)
+        request = RequestInfo(
+            query_len=key.query_len,
+            seq_len=key.seq_len,
+            image_batch_size=key.image_batch_size,
+            image_height=key.image_height,
+            image_width=key.image_width,
+            concurrency=key.model_concurrency,
+            is_decode=is_decode,
+        )
+        return key, request
+
+    def cache_compile_calibration_metrics(
+        self,
+        key: ForwardShapeKey,
+        metrics: ModelRunnerMetrics,
+    ) -> None:
+        """Seed the selected runner's latency cache with its calibration result."""
+        self._cache_forward_latency_record(key, self._build_forward_latency_record(metrics))
+
+    def _build_forward_latency_record(self, metrics: ModelRunnerMetrics) -> ForwardLatencyRecord:
+        return ForwardLatencyRecord(
+            latency_ms=self._select_latency_s(metrics.execution_time_s) * 1000,
+            memory_left_gb=metrics.device_memory_available_gb,
+            breakdowns=format_breakdowns(metrics.breakdowns),
+            memory_info=build_memory_info(metrics),
+            raw_breakdowns=metrics.breakdowns,
+        )
+
     def _compute_forward_latency_record(
         self,
         key: ForwardShapeKey,
@@ -376,13 +423,7 @@ class BaseThroughputOptimizer(ABC):
             seq_len=key.seq_len,
         )
 
-        record = ForwardLatencyRecord(
-            latency_ms=self._select_latency_s(batch_result.execution_time_s) * 1000,
-            memory_left_gb=batch_result.device_memory_available_gb,
-            breakdowns=format_breakdowns(batch_result.breakdowns),
-            memory_info=build_memory_info(batch_result),
-            raw_breakdowns=batch_result.breakdowns,
-        )
+        record = self._build_forward_latency_record(batch_result)
         self._cache_forward_latency_record(key, record)
         return record
 

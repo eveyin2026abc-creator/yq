@@ -249,6 +249,38 @@ class TestWorkloadCache(TestCase):
         state, _, _ = cache.claim_workload("stale")
         self.assertEqual(state, "owner")
 
+    def test_compile_mode_decision_is_single_flight(self):
+        cache = WorkloadCache()
+        decision = SimpleNamespace(dynamic_shapes=False)
+        decision_key = "compile-key"
+
+        state, _, owner_token = cache.claim_compile_mode_decision(decision_key)
+        self.assertEqual(state, "owner")
+        state, _, _ = cache.claim_compile_mode_decision(decision_key)
+        self.assertEqual(state, "wait")
+        self.assertTrue(cache.publish_compile_mode_decision(decision_key, decision, owner_token))
+
+        state, cached, _ = cache.claim_compile_mode_decision(decision_key)
+        self.assertEqual(state, "hit")
+        self.assertEqual(cached, decision)
+
+    def test_compile_mode_decisions_are_isolated_by_key(self):
+        cache = WorkloadCache()
+        first_key = "compile-key-a"
+        second_key = "compile-key-b"
+        first_decision = SimpleNamespace(dynamic_shapes=False)
+
+        state, _, owner_token = cache.claim_compile_mode_decision(first_key)
+        self.assertEqual(state, "owner")
+        self.assertTrue(cache.publish_compile_mode_decision(first_key, first_decision, owner_token))
+
+        state, cached, _ = cache.claim_compile_mode_decision(first_key)
+        self.assertEqual(state, "hit")
+        self.assertEqual(cached, first_decision)
+        state, _, second_owner_token = cache.claim_compile_mode_decision(second_key)
+        self.assertEqual(state, "owner")
+        self.assertIsNotNone(second_owner_token)
+
     def test_owner_slot_is_released_for_process_level_interruptions(self):
         runner = WorkloadReuseModelRunner.__new__(WorkloadReuseModelRunner)
         runner._cache = MagicMock()
