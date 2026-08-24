@@ -222,6 +222,65 @@ def test_deepseek_v3_spec_expands_dense_prefix_and_moe_layers() -> None:
     assert [operator.operator_name for operator in theory.operators] == ["unpermute_tokens", "mul", "sum"]
 
 
+def test_deepseek_v3_moe_gate_validates_fused_topk() -> None:
+    from tools.model_diagnostics.builtin import create_stage_comparison_registry
+    from tools.model_diagnostics.specification.builtin_activation import create_builtin_operator_activation_registry
+    from tools.model_diagnostics.specification.loader import YamlModelDiagnosticsSpecLoader
+    from tools.model_diagnostics.specification.source_options import create_builtin_source_options_parsers
+    from tools.model_diagnostics.specification.theory_fragments import load_builtin_theory_fragment_registry
+
+    fragments = load_builtin_theory_fragment_registry()
+    loader = YamlModelDiagnosticsSpecLoader(
+        comparison_registry=create_stage_comparison_registry(),
+        activation_registry=create_builtin_operator_activation_registry(),
+        source_options_parsers=create_builtin_source_options_parsers(fragment_registry=fragments),
+        fragment_registry=fragments,
+    )
+    spec = loader.materialize(
+        loader.load("deepseek_v3_v1"),
+        _context(config={**_DEEPSEEK_CONFIG, "model_type": "deepseek_v3", "effective_num_hidden_layers": 4}),
+    )
+    language = next(region for region in spec.regions if region.region_id == "language")
+    moe_layer = language.layer_specs["moe"]
+    moe_gate = next(stage for stage in moe_layer.stages if stage.stage_id == "moe_gate")
+
+    theory = moe_gate.source_options[SourceKind.THEORY]
+    assert [operator.operator_name for operator in theory.operators] == ["mm", "moe_gating_top_k_softmax"]
+    fused = theory.operators[1]
+    assert set(fused.tensors) == {INPUT[0], OUTPUT[0], OUTPUT[1]}
+    assert fused.tensors[INPUT[0]].shape.expression == "[Tmoe, E]"
+    assert fused.tensors[OUTPUT[0]].dtype.expression == "float32"
+    assert fused.tensors[OUTPUT[1]].dtype.expression == "int64"
+    runtime = moe_gate.source_options[SourceKind.RUNTIME]
+    assert "moe_gating_top_k_softmax" not in runtime.ignored_operators
+
+
+def test_deepseek_v32_moe_gate_omits_fused_topk() -> None:
+    from tools.model_diagnostics.builtin import create_stage_comparison_registry
+    from tools.model_diagnostics.specification.builtin_activation import create_builtin_operator_activation_registry
+    from tools.model_diagnostics.specification.loader import YamlModelDiagnosticsSpecLoader
+    from tools.model_diagnostics.specification.source_options import create_builtin_source_options_parsers
+    from tools.model_diagnostics.specification.theory_fragments import load_builtin_theory_fragment_registry
+
+    fragments = load_builtin_theory_fragment_registry()
+    loader = YamlModelDiagnosticsSpecLoader(
+        comparison_registry=create_stage_comparison_registry(),
+        activation_registry=create_builtin_operator_activation_registry(),
+        source_options_parsers=create_builtin_source_options_parsers(fragment_registry=fragments),
+        fragment_registry=fragments,
+    )
+    spec = loader.materialize(
+        loader.load("deepseek_v3_v1"),
+        _context(config={**_DEEPSEEK_CONFIG, "effective_num_hidden_layers": 4}),
+    )
+    language = next(region for region in spec.regions if region.region_id == "language")
+    moe_layer = language.layer_specs["moe"]
+    moe_gate = next(stage for stage in moe_layer.stages if stage.stage_id == "moe_gate")
+
+    theory = moe_gate.source_options[SourceKind.THEORY]
+    assert [operator.operator_name for operator in theory.operators] == ["mm"]
+
+
 def test_deepseek_v3_spec_omits_dsa_stage_without_dsa_config() -> None:
     from tools.model_diagnostics.builtin import create_stage_comparison_registry
     from tools.model_diagnostics.specification.builtin_activation import create_builtin_operator_activation_registry

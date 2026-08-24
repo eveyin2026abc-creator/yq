@@ -29,6 +29,7 @@ from tools.model_diagnostics.domain.specification import (
     LayerSpec,
     ModelDiagnosticsSpec,
     RegionSpec,
+    RuntimeStageOptions,
     SourceStageOptions,
     SpecMatchCriteria,
     StageSpec,
@@ -87,6 +88,180 @@ class _LayerLayoutRule:
     prefix_layer_kind: str | None = None
     repeated_layer_kind: str | None = None
     prefix_count_from: str | None = None
+    kinds_from: str | None = None
+    last_kind_from: str | None = None
+
+
+class LayerLayoutStrategy(Protocol):
+    """One layer-layout generation strategy (parse + materialize)."""
+
+    strategy_id: str
+
+    def parse(self, raw_rule: Mapping[str, object]) -> _LayerLayoutRule: ...
+
+    def materialize(self, rule: _LayerLayoutRule, context: ModelRunContext) -> tuple[str, ...]: ...
+
+    def required_layer_kinds(self, rule: _LayerLayoutRule) -> tuple[str, ...]: ...
+
+
+class _RepeatLayoutStrategy:
+    """Repeat one layer kind ``count_from`` times.
+
+    The repeated kind is either the literal ``layer_kind`` or, when
+    ``last_kind_from`` is set, the last element of the referenced config list
+    (used by MTP predictors whose layer kind mirrors the last language layer).
+    """
+
+    strategy_id = "repeat"
+
+    def parse(self, raw_rule: Mapping[str, object]) -> _LayerLayoutRule:
+        _exact_keys(
+            raw_rule,
+            required={"strategy", "count_from"},
+            optional={"layer_kind", "last_kind_from"},
+            label="layer_layout_rule",
+        )
+        has_literal = "layer_kind" in raw_rule
+        has_last = "last_kind_from" in raw_rule
+        if has_literal == has_last:
+            raise SpecificationLoadError(
+                "layer_layout_rule.repeat must declare exactly one of "
+                "layer_kind or last_kind_from"
+            )
+        return _LayerLayoutRule(
+            strategy=self.strategy_id,
+            count_from=_as_str(raw_rule.get("count_from"), "layer_layout_rule.count_from"),
+            layer_kind=(
+                _as_str(raw_rule.get("layer_kind"), "layer_layout_rule.layer_kind")
+                if has_literal
+                else None
+            ),
+            last_kind_from=(
+                _as_str(raw_rule.get("last_kind_from"), "layer_layout_rule.last_kind_from")
+                if has_last
+                else None
+            ),
+        )
+
+    def materialize(self, rule: _LayerLayoutRule, context: ModelRunContext) -> tuple[str, ...]:
+        if rule.layer_kind is not None:
+            layer_kind = rule.layer_kind
+        elif rule.last_kind_from is not None:
+            kinds = _resolve_string_list_from(context, rule.last_kind_from)
+            if not kinds:
+                raise SpecificationLoadError(
+                    f"layer_layout_rule.last_kind_from resolved to an empty list: "
+                    f"{rule.last_kind_from!r}"
+                )
+            layer_kind = kinds[-1]
+        else:
+            raise SpecificationLoadError(
+                "layer_layout_rule.repeat requires layer_kind or last_kind_from"
+            )
+        count = _resolve_count_from(context, rule.count_from)
+        return tuple(layer_kind for _ in range(count))
+
+    def required_layer_kinds(self, rule: _LayerLayoutRule) -> tuple[str, ...]:
+        if rule.layer_kind is not None:
+            return (rule.layer_kind,)
+        # last_kind_from values are only known with a run context; layer_specs
+        # completeness is enforced at materialize by RegionSpec construction.
+        return ()
+
+
+class _PrefixThenRepeatLayoutStrategy:
+    """First ``prefix_count_from`` layers use the prefix kind, the rest repeat."""
+
+    strategy_id = "prefix_then_repeat"
+
+    def parse(self, raw_rule: Mapping[str, object]) -> _LayerLayoutRule:
+        _exact_keys(
+            raw_rule,
+            required={
+                "strategy", "count_from", "prefix_layer_kind", "repeated_layer_kind", "prefix_count_from",
+            },
+            label="layer_layout_rule",
+        )
+        return _LayerLayoutRule(
+            strategy=self.strategy_id,
+            count_from=_as_str(raw_rule.get("count_from"), "layer_layout_rule.count_from"),
+            prefix_layer_kind=_as_str(raw_rule.get("prefix_layer_kind"), "layer_layout_rule.prefix_layer_kind"),
+            repeated_layer_kind=_as_str(raw_rule.get("repeated_layer_kind"), "layer_layout_rule.repeated_layer_kind"),
+            prefix_count_from=_as_str(raw_rule.get("prefix_count_from"), "layer_layout_rule.prefix_count_from"),
+        )
+
+    def materialize(self, rule: _LayerLayoutRule, context: ModelRunContext) -> tuple[str, ...]:
+        missing_fields = [
+            field_name
+            for field_name, value in (
+                ("prefix_layer_kind", rule.prefix_layer_kind),
+                ("repeated_layer_kind", rule.repeated_layer_kind),
+                ("prefix_count_from", rule.prefix_count_from),
+            )
+            if value is None
+        ]
+        if missing_fields:
+            raise SpecificationLoadError(
+                "layer_layout_rule field(s) required for prefix_then_repeat strategy: "
+                + ", ".join(missing_fields)
+            )
+        count = _resolve_count_from(context, rule.count_from)
+        prefix_count = _resolve_count_from(context, rule.prefix_count_from)
+        return tuple(
+            rule.prefix_layer_kind if index < prefix_count else rule.repeated_layer_kind
+            for index in range(count)
+        )
+
+    def required_layer_kinds(self, rule: _LayerLayoutRule) -> tuple[str, ...]:
+        return tuple(value for value in (rule.prefix_layer_kind, rule.repeated_layer_kind) if value is not None)
+
+
+class _SequenceLayoutStrategy:
+    """Use the per-layer config list (``kinds_from``) directly as layer kinds."""
+
+    strategy_id = "sequence"
+
+    def parse(self, raw_rule: Mapping[str, object]) -> _LayerLayoutRule:
+        _exact_keys(
+            raw_rule,
+            required={"strategy", "count_from", "kinds_from"},
+            label="layer_layout_rule",
+        )
+        return _LayerLayoutRule(
+            strategy=self.strategy_id,
+            count_from=_as_str(raw_rule.get("count_from"), "layer_layout_rule.count_from"),
+            kinds_from=_as_str(raw_rule.get("kinds_from"), "layer_layout_rule.kinds_from"),
+        )
+
+    def materialize(self, rule: _LayerLayoutRule, context: ModelRunContext) -> tuple[str, ...]:
+        if rule.kinds_from is None:
+            raise SpecificationLoadError(
+                "layer_layout_rule.kinds_from is required for sequence strategy"
+            )
+        count = _resolve_count_from(context, rule.count_from)
+        kinds = _resolve_string_list_from(context, rule.kinds_from)
+        if len(kinds) != count:
+            raise SpecificationLoadError(
+                f"layer_layout_rule.kinds_from list length {len(kinds)} must equal count {count}"
+            )
+        return kinds
+
+    def required_layer_kinds(self, rule: _LayerLayoutRule) -> tuple[str, ...]:
+        # Config values are only known with a run context; layer_specs
+        # completeness is enforced at materialize by RegionSpec construction.
+        return ()
+
+
+_LAYOUT_STRATEGIES: Mapping[str, LayerLayoutStrategy] = MappingProxyType(
+    {
+        strategy.strategy_id: strategy
+        for strategy in (
+            _RepeatLayoutStrategy(),
+            _PrefixThenRepeatLayoutStrategy(),
+            _SequenceLayoutStrategy(),
+        )
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +309,19 @@ def _materialize_stage(
     context: ModelRunContext,
     activation_registry: OperatorActivationRegistry,
 ) -> StageSpec | None:
+    if stage.activation is not None:
+        policy = activation_registry.resolve(stage.activation)
+        if not policy.is_active(
+            OperatorActivationRequest(
+                spec_id=spec.spec_id,
+                model_category=spec.model_category,
+                region_id=region_id,
+                stage_id=stage.stage_id,
+                operator=None,
+                context=context,
+            )
+        ):
+            return None
     source_options = dict(stage.source_options)
     theory = source_options.get(SourceKind.THEORY)
     if isinstance(theory, TheoryStageOptions):
@@ -183,6 +371,26 @@ def _resolve_count_from(context: ModelRunContext, count_from: str) -> int:
     if isinstance(current, bool) or not isinstance(current, int) or current < 0:
         raise SpecificationLoadError(f"count_from must resolve to a non-negative int: {count_from!r}")
     return current
+
+
+def _resolve_string_list_from(context: ModelRunContext, path: str) -> tuple[str, ...]:
+    parts = path.split(".")
+    if not parts or any(not part for part in parts):
+        raise SpecificationLoadError(f"invalid kinds_from path: {path!r}")
+    root = parts[0]
+    if root == "model_config":
+        current: object = dict(context.model_config)
+    elif root == "quantization_config":
+        current = dict(context.quantization_config)
+    else:
+        raise SpecificationLoadError(f"kinds_from root must be model_config or quantization_config: {path!r}")
+    for part in parts[1:]:
+        if not isinstance(current, Mapping) or part not in current:
+            raise SpecificationLoadError(f"kinds_from path not found in context: {path!r}")
+        current = current[part]
+    if not isinstance(current, (list, tuple)):
+        raise SpecificationLoadError(f"kinds_from must resolve to a list: {path!r}")
+    return tuple(_as_str(item, f"{path} item") for item in current)
 
 
 class YamlModelDiagnosticsSpecLoader:
@@ -371,35 +579,10 @@ class YamlModelDiagnosticsSpecLoader:
             rule = rules.get(region.region_id)
             layer_layout = region.layer_layout
             if rule is not None:
-                count = _resolve_count_from(materialize_context, rule.count_from)
-                if rule.strategy == "repeat":
-                    if rule.layer_kind is None:
-                        raise SpecificationLoadError(
-                            "layer_layout_rule.layer_kind is required for repeat strategy"
-                        )
-                    layer_layout = tuple(rule.layer_kind for _ in range(count))
-                elif rule.strategy == "prefix_then_repeat":
-                    missing_fields = [
-                        field_name
-                        for field_name, value in (
-                            ("prefix_layer_kind", rule.prefix_layer_kind),
-                            ("repeated_layer_kind", rule.repeated_layer_kind),
-                            ("prefix_count_from", rule.prefix_count_from),
-                        )
-                        if value is None
-                    ]
-                    if missing_fields:
-                        raise SpecificationLoadError(
-                            "layer_layout_rule field(s) required for prefix_then_repeat strategy: "
-                            + ", ".join(missing_fields)
-                        )
-                    prefix_count = _resolve_count_from(materialize_context, rule.prefix_count_from)
-                    layer_layout = tuple(
-                        rule.prefix_layer_kind if index < prefix_count else rule.repeated_layer_kind
-                        for index in range(count)
-                    )
-                else:
+                layout_strategy = _LAYOUT_STRATEGIES.get(rule.strategy)
+                if layout_strategy is None:
                     raise SpecificationLoadError(f"unsupported layer_layout_rule.strategy: {rule.strategy}")
+                layer_layout = layout_strategy.materialize(rule, materialize_context)
             materialized_stages = tuple(
                 stage
                 for stage in (
@@ -478,12 +661,22 @@ class YamlModelDiagnosticsSpecLoader:
             label=f"region {region_id}",
         )
         if "compose" in region:
-            conflicting = {"stages", "include_fragment", "layer_specs"}.intersection(region)
+            conflicting = {"stages", "include_fragment"}.intersection(region)
             if conflicting:
                 raise SpecificationLoadError(
                     f"region {region_id} compose cannot be combined with "
                     f"{sorted(conflicting)[0]}"
                 )
+            if "layer_specs" in region:
+                compose_map = _require_mapping(
+                    region.get("compose"),
+                    f"region {region_id}.compose",
+                )
+                if "predictor" in compose_map or "predictors" in compose_map:
+                    raise SpecificationLoadError(
+                        f"region {region_id} compose.predictor(s) cannot be combined with "
+                        "layer_specs; use compose.predictors or layer_specs, not both"
+                    )
             if "layer_layout_rule" not in region:
                 raise SpecificationLoadError(
                     f"region {region_id} compose requires layer_layout_rule"
@@ -533,119 +726,17 @@ class YamlModelDiagnosticsSpecLoader:
                 for item in _require_list(stages_raw, "region.stages")
             )
 
-        layer_specs: dict[str, LayerSpec] = {}
-        layer_specs_raw = region.get("layer_specs", {})
-        for layer_kind, layer_body in _require_mapping(layer_specs_raw, "layer_specs").items():
-            layer_name = _as_str(layer_kind, "layer kind")
-            layer_map = _require_mapping(layer_body, f"layer_specs.{layer_name}")
-            _exact_keys(
-                layer_map,
-                required=set(),
-                optional={
-                    "stages",
-                    "include_fragment",
-                    "compose",
-                    "runtime_options",
-                    "comparisons",
-                },
-                label=f"layer_specs.{layer_name}",
-            )
-            declarations = {
-                key
-                for key in ("stages", "include_fragment", "compose")
-                if key in layer_map
-            }
-            if len(declarations) != 1:
-                raise SpecificationLoadError(
-                    f"layer_specs.{layer_name} must declare exactly one of "
-                    "stages, include_fragment, or compose"
-                )
-            if "compose" in layer_map:
-                layer_stages = self._parse_composed_mtp_layer(
-                    layer_map.get("compose"),
-                    label=f"layer_specs.{layer_name}.compose",
-                )
-                layer_stages = self._apply_fragment_stage_overrides(
-                    layer_stages,
-                    runtime_raw=layer_map.get("runtime_options"),
-                    comparisons_raw=layer_map.get("comparisons"),
-                    label=f"layer_specs.{layer_name}",
-                )
-            elif "include_fragment" in layer_map:
-                fragment_id = _as_str(
-                    layer_map.get("include_fragment"),
-                    f"layer_specs.{layer_name}.include_fragment",
-                )
-                fragment = self._fragment_registry.get(fragment_id)
-                if not fragment.stages:
-                    raise SpecificationLoadError(
-                        f"included fragment {fragment_id!r} must declare stages"
-                    )
-                layer_stages = tuple(
-                    self._fragment_stage_to_stage_spec(stage)
-                    for stage in fragment.stages
-                )
-                layer_stages = self._apply_fragment_stage_overrides(
-                    layer_stages,
-                    runtime_raw=layer_map.get("runtime_options"),
-                    comparisons_raw=layer_map.get("comparisons"),
-                    label=f"layer_specs.{layer_name}",
-                )
-            elif "stages" in layer_map:
-                if "runtime_options" in layer_map or "comparisons" in layer_map:
-                    raise SpecificationLoadError(
-                        f"layer_specs.{layer_name} runtime_options/comparisons require compose"
-                    )
-                layer_stages = tuple(
-                    self._parse_stage(item)
-                    for item in _require_list(
-                        layer_map.get("stages"),
-                        f"layer_specs.{layer_name}.stages",
-                    )
-                )
-            else:
-                raise SpecificationLoadError(
-                    f"layer_specs.{layer_name} must declare stages, include_fragment, or compose"
-                )
-            if not layer_stages:
-                raise SpecificationLoadError(f"layer_specs.{layer_name}.stages must not be empty")
-            layer_specs[layer_name] = LayerSpec(
-                layer_kind=layer_name,
-                stages=layer_stages,
-            )
+        layer_specs = self._parse_layer_specs(region)
 
         rule: _LayerLayoutRule | None = None
         if "layer_layout_rule" in region:
             raw_rule = _require_mapping(region.get("layer_layout_rule"), "layer_layout_rule")
             strategy = _as_str(raw_rule.get("strategy"), "layer_layout_rule.strategy")
-            if strategy == "repeat":
-                _exact_keys(raw_rule, required={"strategy", "layer_kind", "count_from"}, label="layer_layout_rule")
-                rule = _LayerLayoutRule(
-                    strategy=strategy,
-                    count_from=_as_str(raw_rule.get("count_from"), "layer_layout_rule.count_from"),
-                    layer_kind=_as_str(raw_rule.get("layer_kind"), "layer_layout_rule.layer_kind"),
-                )
-                required_kinds = (rule.layer_kind,)
-            elif strategy == "prefix_then_repeat":
-                _exact_keys(
-                    raw_rule,
-                    required={
-                        "strategy", "count_from", "prefix_layer_kind", "repeated_layer_kind",
-                        "prefix_count_from",
-                    },
-                    label="layer_layout_rule",
-                )
-                rule = _LayerLayoutRule(
-                    strategy=strategy,
-                    count_from=_as_str(raw_rule.get("count_from"), "layer_layout_rule.count_from"),
-                    prefix_layer_kind=_as_str(raw_rule.get("prefix_layer_kind"), "layer_layout_rule.prefix_layer_kind"),
-                    repeated_layer_kind=_as_str(raw_rule.get("repeated_layer_kind"), "layer_layout_rule.repeated_layer_kind"),
-                    prefix_count_from=_as_str(raw_rule.get("prefix_count_from"), "layer_layout_rule.prefix_count_from"),
-                )
-                required_kinds = (rule.prefix_layer_kind, rule.repeated_layer_kind)
-            else:
+            layout_strategy = _LAYOUT_STRATEGIES.get(strategy)
+            if layout_strategy is None:
                 raise SpecificationLoadError(f"unsupported layer_layout_rule.strategy: {strategy}")
-            missing_kinds = set(required_kinds).difference(layer_specs)
+            rule = layout_strategy.parse(raw_rule)
+            missing_kinds = set(layout_strategy.required_layer_kinds(rule)).difference(layer_specs)
             if missing_kinds:
                 raise SpecificationLoadError(
                     f"layer_layout_rule layer kind(s) missing from layer_specs: {sorted(missing_kinds)}"
@@ -683,18 +774,38 @@ class YamlModelDiagnosticsSpecLoader:
         )
         _exact_keys(
             compose,
-            required={"framework", "predictor"},
-            optional={"predictor_adapter"},
+            required={"framework"},
+            optional={"predictor", "predictors", "predictor_adapter"},
             label=f"region {region_id}.compose",
         )
+        if "predictor" in compose and "predictors" in compose:
+            raise SpecificationLoadError(
+                f"region {region_id} compose must declare predictor or predictors, not both"
+            )
         framework_id = _as_str(
             compose.get("framework"),
             f"region {region_id}.compose.framework",
         )
-        predictor_id = _as_str(
-            compose.get("predictor"),
-            f"region {region_id}.compose.predictor",
+        predictor_id = (
+            None
+            if "predictor" not in compose
+            else _as_str(
+                compose.get("predictor"),
+                f"region {region_id}.compose.predictor",
+            )
         )
+        predictors = (
+            {}
+            if "predictors" not in compose
+            else _string_mapping(
+                compose.get("predictors"),
+                f"region {region_id}.compose.predictors",
+            )
+        )
+        if "predictors" in compose and not predictors:
+            raise SpecificationLoadError(
+                f"region {region_id} compose.predictors must not be empty"
+            )
         adapter_id = (
             None
             if "predictor_adapter" not in compose
@@ -711,15 +822,18 @@ class YamlModelDiagnosticsSpecLoader:
             self._fragment_stage_to_stage_spec(stage)
             for stage in framework.stage_group("request")
         )
-        proposal_stages = tuple(
-            self._fragment_stage_to_stage_spec(stage)
-            for stage in compose_mtp_layer_stages(
-                self._fragment_registry,
-                framework_id=framework_id,
-                predictor_id=predictor_id,
-                predictor_adapter_id=adapter_id,
+        if predictor_id is not None:
+            proposal_stages = tuple(
+                self._fragment_stage_to_stage_spec(stage)
+                for stage in compose_mtp_layer_stages(
+                    self._fragment_registry,
+                    framework_id=framework_id,
+                    predictor_id=predictor_id,
+                    predictor_adapter_id=adapter_id,
+                )
             )
-        )
+        else:
+            proposal_stages = ()
         request_count = len(request_stages)
         combined = self._apply_fragment_stage_overrides(
             request_stages + proposal_stages,
@@ -734,25 +848,41 @@ class YamlModelDiagnosticsSpecLoader:
             region.get("layer_layout_rule"),
             f"region {region_id}.layer_layout_rule",
         )
-        _exact_keys(
-            raw_rule,
-            required={"strategy", "layer_kind", "count_from"},
-            label=f"region {region_id}.layer_layout_rule",
-        )
-        rule = _LayerLayoutRule(
-            strategy=_as_str(
-                raw_rule.get("strategy"),
-                f"region {region_id}.layer_layout_rule.strategy",
-            ),
-            layer_kind=_as_str(
-                raw_rule.get("layer_kind"),
-                f"region {region_id}.layer_layout_rule.layer_kind",
-            ),
-            count_from=_as_str(
-                raw_rule.get("count_from"),
-                f"region {region_id}.layer_layout_rule.count_from",
-            ),
-        )
+        strategy = _as_str(raw_rule.get("strategy"), "layer_layout_rule.strategy")
+        layout_strategy = _LAYOUT_STRATEGIES.get(strategy)
+        if layout_strategy is None:
+            raise SpecificationLoadError(f"unsupported layer_layout_rule.strategy: {strategy}")
+        rule = layout_strategy.parse(raw_rule)
+
+        layer_specs = self._parse_layer_specs(region)
+        if predictors:
+            layer_specs = {
+                layer_kind: LayerSpec(
+                    layer_kind=layer_kind,
+                    stages=tuple(
+                        self._fragment_stage_to_stage_spec(stage)
+                        for stage in compose_mtp_layer_stages(
+                            self._fragment_registry,
+                            framework_id=framework_id,
+                            predictor_id=predictor_fragment,
+                            predictor_adapter_id=adapter_id,
+                        )
+                    ),
+                )
+                for layer_kind, predictor_fragment in predictors.items()
+            }
+        elif proposal_stages and not layer_specs:
+            layer_specs = {
+                rule.layer_kind: LayerSpec(
+                    layer_kind=rule.layer_kind,
+                    stages=proposal_stages,
+                )
+            }
+        if not layer_specs:
+            raise SpecificationLoadError(
+                f"region {region_id} MTP compose requires layer_specs, "
+                "compose.predictor, or compose.predictors"
+            )
         activation = None
         if "activation" in region:
             activation = _as_str(
@@ -767,16 +897,100 @@ class YamlModelDiagnosticsSpecLoader:
             RegionSpec(
                 region_id=region_id,
                 stages=request_stages,
-                layer_specs={
-                    rule.layer_kind: LayerSpec(
-                        layer_kind=rule.layer_kind,
-                        stages=proposal_stages,
-                    )
-                },
+                layer_specs=layer_specs,
             ),
             rule,
             activation,
         )
+
+    def _parse_layer_specs(self, region: Mapping[str, object]) -> dict[str, LayerSpec]:
+        """Parse a region's ``layer_specs`` mapping into ``LayerSpec`` values."""
+
+        layer_specs: dict[str, LayerSpec] = {}
+        layer_specs_raw = region.get("layer_specs", {})
+        for layer_kind, layer_body in _require_mapping(layer_specs_raw, "layer_specs").items():
+            layer_name = _as_str(layer_kind, "layer kind")
+            layer_map = _require_mapping(layer_body, f"layer_specs.{layer_name}")
+            _exact_keys(
+                layer_map,
+                required=set(),
+                optional={
+                    "stages",
+                    "include_fragment",
+                    "include_fragments",
+                    "compose",
+                    "runtime_options",
+                    "comparisons",
+                    "activations",
+                },
+                label=f"layer_specs.{layer_name}",
+            )
+            if "include_fragment" in layer_map and "include_fragments" in layer_map:
+                raise SpecificationLoadError(
+                    f"layer_specs.{layer_name} must not declare both include_fragment "
+                    "and include_fragments"
+                )
+            if "compose" in layer_map and any(
+                key in layer_map for key in ("stages", "include_fragment", "include_fragments")
+            ):
+                raise SpecificationLoadError(
+                    f"layer_specs.{layer_name} compose cannot mix with stages or include_fragment(s)"
+                )
+            has_includes = "include_fragment" in layer_map or "include_fragments" in layer_map
+            if "compose" not in layer_map and not has_includes and "stages" not in layer_map:
+                raise SpecificationLoadError(
+                    f"layer_specs.{layer_name} must declare stages, include_fragment(s), or compose"
+                )
+            if "compose" in layer_map:
+                layer_stages = self._parse_composed_mtp_layer(
+                    layer_map.get("compose"),
+                    label=f"layer_specs.{layer_name}.compose",
+                )
+            else:
+                included = self._stages_from_included_fragments(
+                    layer_map,
+                    label=f"layer_specs.{layer_name}",
+                )
+                extra = ()
+                if "stages" in layer_map:
+                    extra = tuple(
+                        self._parse_stage(item)
+                        for item in _require_list(
+                            layer_map.get("stages"),
+                            f"layer_specs.{layer_name}.stages",
+                        )
+                    )
+                if not has_includes:
+                    if any(
+                        key in layer_map
+                        for key in ("runtime_options", "comparisons", "activations")
+                    ):
+                        raise SpecificationLoadError(
+                            f"layer_specs.{layer_name} runtime_options/comparisons/activations "
+                            "require include_fragment(s) or compose"
+                        )
+                    layer_stages = extra
+                else:
+                    layer_stages = included + extra
+            layer_stages = self._apply_fragment_stage_overrides(
+                layer_stages,
+                runtime_raw=layer_map.get("runtime_options"),
+                comparisons_raw=layer_map.get("comparisons"),
+                activations_raw=layer_map.get("activations"),
+                label=f"layer_specs.{layer_name}",
+            )
+            seen_layer_stage_ids = [stage.stage_id for stage in layer_stages]
+            if len(seen_layer_stage_ids) != len(set(seen_layer_stage_ids)):
+                raise SpecificationLoadError(
+                    f"layer_specs.{layer_name} contains duplicate stage ids"
+                )
+            if not layer_stages:
+                raise SpecificationLoadError(f"layer_specs.{layer_name}.stages must not be empty")
+            layer_specs[layer_name] = LayerSpec(
+                layer_kind=layer_name,
+                stages=layer_stages,
+            )
+        return layer_specs
 
     def _parse_composed_mtp_layer(self, raw: object, *, label: str) -> tuple[StageSpec, ...]:
         compose = _require_mapping(raw, label)
@@ -804,9 +1018,68 @@ class YamlModelDiagnosticsSpecLoader:
             for fragment_stage in composed
         )
 
+    def _stages_from_included_fragments(
+        self,
+        layer_map: Mapping[str, object],
+        *,
+        label: str,
+    ) -> tuple[StageSpec, ...]:
+        refs: tuple[tuple[str, str | None], ...] = ()
+        if "include_fragment" in layer_map:
+            refs = ((_as_str(layer_map.get("include_fragment"), f"{label}.include_fragment"), None),)
+        elif "include_fragments" in layer_map:
+            refs = tuple(
+                self._parse_include_fragment_item(item, label=f"{label}.include_fragments[{index}]")
+                for index, item in enumerate(
+                    _require_list(layer_map.get("include_fragments"), f"{label}.include_fragments")
+                )
+            )
+            if not refs:
+                raise SpecificationLoadError(f"{label}.include_fragments must not be empty")
+            fragment_ids = tuple(fragment_id for fragment_id, _activation in refs)
+            if len(fragment_ids) != len(set(fragment_ids)):
+                raise SpecificationLoadError(f"{label}.include_fragments contains duplicates")
+        stages: list[StageSpec] = []
+        seen: set[str] = set()
+        for fragment_id, fragment_activation in refs:
+            fragment = self._fragment_registry.get(fragment_id)
+            if not fragment.stages:
+                raise SpecificationLoadError(
+                    f"included fragment {fragment_id!r} must declare stages"
+                )
+            for fragment_stage in fragment.stages:
+                if fragment_stage.stage_id in seen:
+                    raise SpecificationLoadError(
+                        f"{label} include_fragments repeats stage id {fragment_stage.stage_id!r}"
+                    )
+                seen.add(fragment_stage.stage_id)
+                stages.append(
+                    self._fragment_stage_to_stage_spec(
+                        fragment_stage,
+                        activation=fragment_activation,
+                    )
+                )
+        return tuple(stages)
+
+    @staticmethod
+    def _parse_include_fragment_item(raw: object, *, label: str) -> tuple[str, str | None]:
+        if isinstance(raw, str):
+            return _as_str(raw, label), None
+        payload = _require_mapping(raw, label)
+        _exact_keys(payload, required={"fragment"}, optional={"activation"}, label=label)
+        fragment_id = _as_str(payload.get("fragment"), f"{label}.fragment")
+        activation = (
+            None
+            if "activation" not in payload
+            else _as_str(payload.get("activation"), f"{label}.activation")
+        )
+        return fragment_id, activation
+
     def _fragment_stage_to_stage_spec(
         self,
         fragment_stage: TheoryFragmentStage,
+        *,
+        activation: str | None = None,
     ) -> StageSpec:
         operators = fragment_stage.operators
         for operator in operators:
@@ -814,6 +1087,12 @@ class YamlModelDiagnosticsSpecLoader:
                 continue
             try:
                 self._activation_registry.resolve(operator.activation)
+            except KeyError as error:
+                raise SpecificationLoadError(str(error)) from error
+        resolved_activation = activation if activation is not None else fragment_stage.activation
+        if resolved_activation is not None:
+            try:
+                self._activation_registry.resolve(resolved_activation)
             except KeyError as error:
                 raise SpecificationLoadError(str(error)) from error
         source_options: dict[SourceKind, SourceStageOptions] = {
@@ -833,6 +1112,40 @@ class YamlModelDiagnosticsSpecLoader:
             stage_id=fragment_stage.stage_id,
             source_options=source_options,
             comparisons=comparisons,
+            activation=resolved_activation,
+        )
+
+    @staticmethod
+    def _merge_runtime_override(
+        base: SourceStageOptions | None,
+        raw: Mapping[str, object],
+        *,
+        runtime_parser: object,
+        label: str,
+    ) -> RuntimeStageOptions:
+        parse_override = getattr(runtime_parser, "parse_override", None)
+        if parse_override is None:
+            raise SpecificationLoadError("unregistered source options parser: 'runtime'")
+        boundaries, extra_ignored = parse_override(raw, label=label)
+        inherited: RuntimeStageOptions | None = (
+            base if isinstance(base, RuntimeStageOptions) else None
+        )
+        if boundaries is None:
+            if inherited is None:
+                raise SpecificationLoadError(
+                    f"{label} ignored_operators require an included Runtime stage"
+                )
+            boundaries = inherited.boundary_operators
+        ignored = list(inherited.ignored_operators if inherited is not None else ())
+        seen = set(ignored)
+        for operator in extra_ignored:
+            if operator in seen:
+                continue
+            ignored.append(operator)
+            seen.add(operator)
+        return RuntimeStageOptions(
+            boundary_operators=boundaries,
+            ignored_operators=tuple(ignored),
         )
 
     def _apply_fragment_stage_overrides(
@@ -841,6 +1154,7 @@ class YamlModelDiagnosticsSpecLoader:
         *,
         runtime_raw: object,
         comparisons_raw: object,
+        activations_raw: object = None,
         label: str,
     ) -> tuple[StageSpec, ...]:
         stage_ids = {stage.stage_id for stage in stages}
@@ -854,7 +1168,12 @@ class YamlModelDiagnosticsSpecLoader:
             if comparisons_raw is None
             else _require_mapping(comparisons_raw, f"{label}.comparisons")
         )
-        configured_ids = set(runtime_by_stage).union(comparisons_by_stage)
+        activations_by_stage = (
+            {}
+            if activations_raw is None
+            else _require_mapping(activations_raw, f"{label}.activations")
+        )
+        configured_ids = set(runtime_by_stage).union(comparisons_by_stage).union(activations_by_stage)
         unknown_ids = configured_ids.difference(stage_ids)
         if unknown_ids:
             raise SpecificationLoadError(
@@ -870,11 +1189,14 @@ class YamlModelDiagnosticsSpecLoader:
             source_options = dict(stage.source_options)
             raw_runtime = runtime_by_stage.get(stage.stage_id)
             if raw_runtime is not None:
-                source_options[SourceKind.RUNTIME] = runtime_parser.parse(
+                source_options[SourceKind.RUNTIME] = self._merge_runtime_override(
+                    source_options.get(SourceKind.RUNTIME),
                     _require_mapping(
                         raw_runtime,
                         f"{label}.runtime_options.{stage.stage_id}",
-                    )
+                    ),
+                    runtime_parser=runtime_parser,
+                    label=f"{label}.runtime_options.{stage.stage_id}",
                 )
 
             comparisons = dict(stage.comparisons)
@@ -887,11 +1209,24 @@ class YamlModelDiagnosticsSpecLoader:
                     )
                 )
 
+            activation = stage.activation
+            raw_activation = activations_by_stage.get(stage.stage_id)
+            if raw_activation is not None:
+                activation = _as_str(
+                    raw_activation,
+                    f"{label}.activations.{stage.stage_id}",
+                )
+                try:
+                    self._activation_registry.resolve(activation)
+                except KeyError as error:
+                    raise SpecificationLoadError(str(error)) from error
+
             configured.append(
                 StageSpec(
                     stage_id=stage.stage_id,
                     source_options=source_options,
                     comparisons=comparisons,
+                    activation=activation,
                 )
             )
         return tuple(configured)
@@ -900,59 +1235,31 @@ class YamlModelDiagnosticsSpecLoader:
         stage = _require_mapping(raw, "stage")
         _exact_keys(
             stage,
-            required={"id"},
-            optional={"source_options", "include_stage", "runtime_options", "comparisons"},
+            required={"id", "source_options"},
+            optional={
+                "comparisons",
+                "activation",
+            },
             label="stage",
         )
         stage_id = _as_str(stage.get("id"), "stage.id")
+        activation = None
+        if "activation" in stage:
+            activation = _as_str(stage.get("activation"), "stage.activation")
+            try:
+                self._activation_registry.resolve(activation)
+            except KeyError as error:
+                raise SpecificationLoadError(str(error)) from error
         source_options: dict[SourceKind, SourceStageOptions] = {}
         comparisons: dict[tuple[SourceKind, SourceKind], ComparisonSpec] = {}
-        if ("source_options" in stage) == ("include_stage" in stage):
-            raise SpecificationLoadError(
-                "stage must declare exactly one of source_options or include_stage"
+        source_raw = _require_mapping(stage.get("source_options"), "source_options")
+        for yaml_key, raw_options in source_raw.items():
+            parser = self._source_options_parsers.get(str(yaml_key))
+            if parser is None:
+                raise SpecificationLoadError(f"unregistered source options parser: {yaml_key!r}")
+            source_options[parser.source_kind] = parser.parse(
+                _require_mapping(raw_options, f"source_options.{yaml_key}")
             )
-        if "include_stage" in stage:
-            ref = _require_mapping(stage.get("include_stage"), "stage.include_stage")
-            _exact_keys(
-                ref,
-                required={"fragment", "stage"},
-                label="stage.include_stage",
-            )
-            fragment_id = _as_str(ref.get("fragment"), "stage.include_stage.fragment")
-            fragment_stage_id = _as_str(ref.get("stage"), "stage.include_stage.stage")
-            fragment_stage = self._fragment_registry.get(fragment_id).stage(fragment_stage_id)
-            source_options[SourceKind.THEORY] = TheoryStageOptions(
-                operators=fragment_stage.operators
-            )
-            if fragment_stage.runtime_options is not None:
-                source_options[SourceKind.RUNTIME] = fragment_stage.runtime_options
-            if "runtime_options" in stage:
-                runtime_parser = self._source_options_parsers.get("runtime")
-                if runtime_parser is None:
-                    raise SpecificationLoadError("unregistered source options parser: 'runtime'")
-                source_options[SourceKind.RUNTIME] = runtime_parser.parse(
-                    _require_mapping(stage.get("runtime_options"), "stage.runtime_options")
-                )
-            if fragment_stage.comparisons is not None:
-                comparisons.update(
-                    self._parse_comparisons_mapping(
-                        fragment_stage.comparisons,
-                        label=f"fragment stage {fragment_stage.stage_id}.comparisons",
-                    )
-                )
-        else:
-            if "runtime_options" in stage:
-                raise SpecificationLoadError(
-                    "stage.runtime_options requires include_stage"
-                )
-            source_raw = _require_mapping(stage.get("source_options"), "source_options")
-            for yaml_key, raw_options in source_raw.items():
-                parser = self._source_options_parsers.get(str(yaml_key))
-                if parser is None:
-                    raise SpecificationLoadError(f"unregistered source options parser: {yaml_key!r}")
-                source_options[parser.source_kind] = parser.parse(
-                    _require_mapping(raw_options, f"source_options.{yaml_key}")
-                )
         if not source_options:
             raise SpecificationLoadError(f"stage {stage_id!r} must declare source_options")
         theory = source_options.get(SourceKind.THEORY)
@@ -977,6 +1284,7 @@ class YamlModelDiagnosticsSpecLoader:
             stage_id=stage_id,
             source_options=source_options,
             comparisons=comparisons,
+            activation=activation,
         )
 
     def _parse_comparisons_mapping(

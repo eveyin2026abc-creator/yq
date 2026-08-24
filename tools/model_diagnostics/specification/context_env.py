@@ -266,7 +266,13 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
     config = context.model_config
     hidden = _config_int(config, "hidden_size")
     vocab = _config_int(config, "vocab_size")
-    intermediate = _config_int(config, "intermediate_size")
+    if "intermediate_size" in config:
+        intermediate = _config_int(config, "intermediate_size")
+    elif "moe_intermediate_size" in config:
+        # Pure-MoE models (e.g. Qwen3.5 MoE) expose no dense FFN width.
+        intermediate = _config_int(config, "moe_intermediate_size")
+    else:
+        raise SpecificationLoadError("model_config.intermediate_size must be a positive integer")
     num_heads = _config_int(config, "num_attention_heads")
     num_kv_heads = _config_int(config, "num_key_value_heads")
     head_dim = config.get("head_dim")
@@ -276,6 +282,10 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
         head_dim = hidden // num_heads
     elif isinstance(head_dim, bool) or not isinstance(head_dim, int) or head_dim <= 0:
         raise SpecificationLoadError("model_config.head_dim must be a positive integer")
+    # Qwen3.5/Qwen3-Next full-attention layers double the query head dim
+    # (nope + rope halves) while K/V keep head_dim; other families use 1x.
+    model_type = config.get("model_type")
+    q_head_dim = head_dim * 2 if model_type in {"qwen3_5_text", "qwen3_5_moe_text", "qwen3_next"} else head_dim
 
     tp = context.parallel.tensor_parallel_size
     dp = context.parallel.data_parallel_size
@@ -425,9 +435,12 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
         # models with raw-logits gating (DeepSeek V3/V3.1, GLM-5/5.1,
         # Kimi-K2-Base) run the gate on the full sequence when EP>1 and only
         # then exchange tokens (ParallelMoELayer._forward_ep_raw_logits); all
-        # other layouts/models gate on the post-transform domain Tmoe.
+        # other layouts/models gate on the post-transform domain Tmoe. Qwen3.5
+        # MoE also gates on the full sequence under TP>1.
         model_type = config.get("model_type")
-        if model_type in {"deepseek_v3", "glm_moe_dsa"} and ep > 1:
+        if (model_type in {"deepseek_v3", "glm_moe_dsa"} and ep > 1) or (
+            model_type == "qwen3_5_moe_text" and tp > 1
+        ):
             moe_env["MOE_GATE_TOKENS"] = tokens
         else:
             moe_env["MOE_GATE_TOKENS"] = tmoe
@@ -452,6 +465,32 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
     if "index_topk" in config:
         dsa_env = {"Dsa_k": min(_config_int(config, "index_topk"), seq)}
 
+    # Classification-4 hybrid linear-attention (Qwen3.5/Qwen3-Next): the
+    # linear layer owns its own K/V head counts and head dims, sharded by TP.
+    # Mirror the Runtime constraints: linear_key_head_dim == linear_value_head_dim
+    # and TP divides both linear head counts (see qwen3_5 transformations).
+    linear_env: dict[str, object] = {}
+    if "linear_num_key_heads" in config or "linear_key_head_dim" in config:
+        linear_k_heads = _config_int(config, "linear_num_key_heads")
+        linear_v_heads = _config_int(config, "linear_num_value_heads")
+        linear_k_dim = _config_int(config, "linear_key_head_dim")
+        linear_v_dim = _config_int(config, "linear_value_head_dim")
+        if linear_k_dim != linear_v_dim:
+            raise SpecificationLoadError("linear_key_head_dim must equal linear_value_head_dim")
+        if linear_k_heads % tp != 0 or linear_v_heads % tp != 0:
+            raise SpecificationLoadError(
+                "tensor_parallel_size must divide linear_num_key_heads and linear_num_value_heads"
+            )
+        linear_env = {
+            "Lk_lin": linear_k_heads // tp,
+            "Lv_lin": linear_v_heads // tp,
+            "Klin": linear_k_dim,
+            "Vlin": linear_v_dim,
+        }
+        conv_kernel = config.get("linear_conv_kernel_dim")
+        if conv_kernel is not None:
+            linear_env["LCONV"] = _config_int(config, "linear_conv_kernel_dim")
+
     shared_env: dict[str, object] = {}
     n_shared = config.get("n_shared_experts")
     if n_shared is not None:
@@ -462,6 +501,9 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
                 "Nshared": n_shared,
                 "Fshared": _config_int(config, "moe_intermediate_size") * n_shared,
             }
+    elif "shared_expert_intermediate_size" in config:
+        # Single shared-expert FFN width (e.g. Qwen3.5 MoE).
+        shared_env = {"Fshared": _config_int(config, "shared_expert_intermediate_size")}
 
     return {
         "B": local_batch,
@@ -475,6 +517,7 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
         "Nh": num_heads,
         "Nkv": num_kv_heads,
         "Dh": head_dim,
+        "QH": q_head_dim,
         "TP": tp,
         "DP": dp,
         "EP": ep,
@@ -508,5 +551,6 @@ def build_theory_env(context: ModelRunContext) -> dict[str, object]:
         **moe_env,
         **mla_env,
         **dsa_env,
+        **linear_env,
         **shared_env,
     }

@@ -174,9 +174,12 @@ class StageSpec:
     stage_id: str
     source_options: Mapping[SourceKind, SourceStageOptions]
     comparisons: Mapping[tuple[SourceKind, SourceKind], ComparisonSpec] = field(default_factory=dict)
+    activation: str | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.stage_id, "stage_id")
+        if self.activation is not None:
+            _require_text(self.activation, "stage activation")
         for source_kind, options in self.source_options.items():
             expected_type = TheoryStageOptions if source_kind is SourceKind.THEORY else RuntimeStageOptions
             if not isinstance(options, expected_type):

@@ -177,6 +177,110 @@ def test_qwen3_dense_yaml_loads_and_expands_layers() -> None:
     assert attention.comparisons == {}
 
 
+def test_qwen3_decoder_fragments_compose_shared_attention_and_ffn() -> None:
+    registry = load_builtin_theory_fragment_registry()
+    attention = [stage.stage_id for stage in registry.get("qwen3_attention_v1").stages]
+    dense_ffn = [stage.stage_id for stage in registry.get("qwen3_dense_ffn_v1").stages]
+    moe_ffn = [stage.stage_id for stage in registry.get("qwen3_moe_ffn_v1").stages]
+    assert attention == ["attention_qkv", "attention"]
+    assert dense_ffn == ["dense_ffn"]
+    assert moe_ffn == ["moe_gate", "moe_dispatch", "moe_experts", "moe_combine", "shared_ffn"]
+    assert [stage.stage_id for stage in registry.get("qwen3_dense_decoder_v1").stages] == [
+        *attention,
+        *dense_ffn,
+    ]
+    assert [stage.stage_id for stage in registry.get("qwen3_moe_decoder_v1").stages] == [
+        *attention,
+        *moe_ffn,
+    ]
+    gdn = [stage.stage_id for stage in registry.get("qwen3_5_linear_gdn_v1").stages]
+    assert gdn == ["linear_projection", "linear_delta_rule", "linear_output"]
+
+
+def test_include_fragments_drop_stages_whose_activation_is_inactive() -> None:
+    loader = _loader()
+    raw = {
+        "schema_version": "1",
+        "spec_id": "fragment_activation",
+        "spec_version": "1.0.0",
+        "model_category": "test",
+        "matches": {"model_types": ["qwen3"]},
+        "regions": {
+            "language": {
+                "layer_layout_rule": {
+                    "strategy": "repeat",
+                    "layer_kind": "dense",
+                    "count_from": "model_config.effective_num_hidden_layers",
+                },
+                "layer_specs": {
+                    "dense": {
+                        "include_fragments": [
+                            "qwen3_attention_v1",
+                            {"fragment": "qwen3_dense_ffn_v1", "activation": "qwen3_5_dense_ffn"},
+                        ]
+                    }
+                },
+            }
+        },
+    }
+    spec = loader.materialize(loader.load_mapping(raw), _qwen3_context(layers=1))
+    stages = spec.regions[0].layer_specs["dense"].stages
+    assert [stage.stage_id for stage in stages] == ["attention_qkv", "attention"]
+    assert all(stage.activation is None for stage in stages)
+
+
+def test_included_runtime_override_replaces_boundary_and_appends_ignored() -> None:
+    loader = _loader()
+    raw = {
+        "schema_version": "1",
+        "spec_id": "runtime_override_merge",
+        "spec_version": "1.0.0",
+        "model_category": "test",
+        "matches": {"model_types": ["qwen3"]},
+        "regions": {
+            "language": {
+                "layer_layout_rule": {
+                    "strategy": "repeat",
+                    "layer_kind": "dense",
+                    "count_from": "model_config.effective_num_hidden_layers",
+                },
+                "layer_specs": {
+                    "dense": {
+                        "include_fragment": "qwen3_dense_decoder_v1",
+                        "runtime_options": {
+                            "attention": {
+                                "ignored_operators": ["mean", "clone"],
+                            },
+                            "dense_ffn": {
+                                "boundary_operators": ["rms_norm"],
+                                # Use an operator that is not part of the base
+                                # fragment's ignored list so the append
+                                # semantics stay observable after dedupe.
+                                "ignored_operators": ["custom_ignore_marker"],
+                            },
+                        },
+                    }
+                },
+            }
+        },
+    }
+    spec = loader.materialize(loader.load_mapping(raw), _qwen3_context(layers=1))
+    language = spec.regions[0]
+    stages = {stage.stage_id: stage for stage in language.layer_specs["dense"].stages}
+    attention = stages["attention"]
+    dense_ffn = stages["dense_ffn"]
+    attention_runtime = attention.source_options[SourceKind.RUNTIME]
+    ffn_runtime = dense_ffn.source_options[SourceKind.RUNTIME]
+    fragment = load_builtin_theory_fragment_registry().get("qwen3_dense_decoder_v1")
+
+    assert attention_runtime.boundary_operators == fragment.stage("attention").runtime_options.boundary_operators
+    assert "apply_rope" in attention_runtime.ignored_operators
+    assert attention_runtime.ignored_operators[-2:] == ("mean", "clone")
+    assert ffn_runtime.boundary_operators == ("rms_norm",)
+    assert "add_rms_norm2" in ffn_runtime.ignored_operators
+    assert ffn_runtime.ignored_operators[-1] == "custom_ignore_marker"
+
+
 def test_loader_expands_prefix_then_repeat_layer_layout() -> None:
     loader = _loader()
     context = _qwen3_context(layers=8)
@@ -203,6 +307,75 @@ def test_loader_expands_prefix_then_repeat_layer_layout() -> None:
     materialized = next(region for region in spec.regions if region.region_id == "language")
 
     assert materialized.layer_layout == ("dense", "dense", "dense", "moe", "moe", "moe", "moe", "moe")
+
+
+def _sequence_raw_rule() -> dict[str, object]:
+    specs_dir = Path(__file__).resolve().parents[4] / "tools" / "model_diagnostics" / "specs"
+    raw = yaml.safe_load((specs_dir / "qwen3_dense_v1.yaml").read_text(encoding="utf-8"))
+    language = raw["regions"]["language"]
+    language["layer_specs"]["full_attention"] = language["layer_specs"]["dense"]
+    language["layer_specs"]["linear_attention"] = language["layer_specs"]["dense"]
+    language["layer_layout_rule"] = {
+        "strategy": "sequence",
+        "count_from": "model_config.effective_num_hidden_layers",
+        "kinds_from": "model_config.layer_types",
+    }
+    return raw
+
+
+def test_loader_expands_sequence_layer_layout() -> None:
+    loader = _loader()
+    context = replace(
+        _qwen3_context(layers=6),
+        model_config={
+            **_qwen3_context(layers=6).model_config,
+            "layer_types": [
+                "full_attention",
+                "linear_attention",
+                "linear_attention",
+                "full_attention",
+                "linear_attention",
+                "linear_attention",
+            ],
+        },
+    )
+
+    spec = loader.materialize(loader.load_mapping(_sequence_raw_rule()), context)
+    materialized = next(region for region in spec.regions if region.region_id == "language")
+
+    assert materialized.layer_layout == (
+        "full_attention",
+        "linear_attention",
+        "linear_attention",
+        "full_attention",
+        "linear_attention",
+        "linear_attention",
+    )
+
+
+def test_loader_sequence_rejects_layer_type_length_mismatch() -> None:
+    loader = _loader()
+    context = replace(
+        _qwen3_context(layers=4),
+        model_config={**_qwen3_context(layers=4).model_config, "layer_types": ["full_attention"]},
+    )
+
+    with pytest.raises(SpecificationLoadError, match="list length 1 must equal count 4"):
+        loader.materialize(loader.load_mapping(_sequence_raw_rule()), context)
+
+
+def test_loader_sequence_rejects_unknown_layer_type() -> None:
+    loader = _loader()
+    context = replace(
+        _qwen3_context(layers=2),
+        model_config={
+            **_qwen3_context(layers=2).model_config,
+            "layer_types": ["full_attention", "unknown_kind"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="unknown layer_kind in layer_layout"):
+        loader.materialize(loader.load_mapping(_sequence_raw_rule()), context)
 
 
 def test_qwen3_dense_yaml_leaves_operator_naming_to_comparison_defaults() -> None:
@@ -352,6 +525,115 @@ def test_loader_rejects_unregistered_operator_activation() -> None:
         loader.load_mapping(raw)
 
 
+class _InactiveStagePolicy:
+    """Always-inactive policy for stage-level activation filtering tests."""
+
+    policy_id = "stage_never"
+
+    def is_active(self, request) -> bool:
+        return False
+
+
+def test_loader_rejects_unregistered_stage_activation() -> None:
+    loader = _loader()
+    raw = {
+        "schema_version": "1",
+        "spec_id": "bad_stage_activation",
+        "spec_version": "1.0.0",
+        "model_category": "test",
+        "matches": {"model_types": ["test"]},
+        "regions": {
+            "input": {
+                "stages": [
+                    {
+                        "id": "embedding",
+                        "activation": "missing",
+                        "source_options": {
+                            "theory": {
+                                "modules": [
+                                    {
+                                        "name": "embedding",
+                                        "tensors": {"OUTPUT[0]": {"shape": "[T, H]"}},
+                                    }
+                                ]
+                            },
+                            "runtime": {"boundary_operators": ["embedding"]},
+                        },
+                    }
+                ]
+            }
+        },
+    }
+
+    with pytest.raises(SpecificationLoadError, match="unregistered operator activation policy_id"):
+        loader.load_mapping(raw)
+
+
+def test_materialize_drops_inactive_stage_by_activation() -> None:
+    fragment_registry = load_builtin_theory_fragment_registry()
+    activation_registry = create_builtin_operator_activation_registry()
+    activation_registry.register(_InactiveStagePolicy())
+    loader = YamlModelDiagnosticsSpecLoader(
+        comparison_registry=create_stage_comparison_registry(),
+        activation_registry=activation_registry,
+        source_options_parsers=create_builtin_source_options_parsers(
+            fragment_registry=fragment_registry,
+        ),
+        fragment_registry=fragment_registry,
+    )
+    raw = {
+        "schema_version": "1",
+        "spec_id": "stage_activation",
+        "spec_version": "1.0.0",
+        "model_category": "test",
+        "matches": {"model_types": ["test"]},
+        "regions": {
+            "input": {
+                "stages": [
+                    {
+                        "id": "dropped",
+                        "activation": "stage_never",
+                        "source_options": {
+                            "theory": {
+                                "modules": [
+                                    {
+                                        "name": "embedding",
+                                        "tensors": {"OUTPUT[0]": {"shape": "[T, H]"}},
+                                    }
+                                ]
+                            },
+                            "runtime": {"boundary_operators": ["embedding"]},
+                        },
+                    },
+                    {
+                        "id": "kept",
+                        "source_options": {
+                            "theory": {
+                                "modules": [
+                                    {
+                                        "name": "mm",
+                                        "tensors": {
+                                            "INPUT[0]": {"shape": "[T, H]"},
+                                            "OUTPUT[0]": {"shape": "[T, H]"},
+                                        },
+                                    }
+                                ]
+                            },
+                            "runtime": {"boundary_operators": ["mm"]},
+                        },
+                    },
+                ]
+            }
+        },
+    }
+
+    loaded = loader.load_mapping(raw)
+    spec = loader.materialize(loaded, _qwen3_context(layers=1))
+    input_region = next(region for region in spec.regions if region.region_id == "input")
+
+    assert [stage.stage_id for stage in input_region.stages] == ["kept"]
+
+
 def test_load_protocol_defers_layout_until_materialize() -> None:
     loader = _loader()
     loaded = loader.load("qwen3_dense_v1")
@@ -384,7 +666,7 @@ def test_materialize_rejects_a_bare_spec() -> None:
                 strategy="repeat",
                 count_from="model_config.effective_num_hidden_layers",
             ),
-            "layer_kind is required for repeat strategy",
+            "requires layer_kind or last_kind_from",
         ),
         (
             _LayerLayoutRule(
@@ -410,6 +692,43 @@ def test_materialize_rejects_incomplete_internal_layout_rule(
 
     with pytest.raises(SpecificationLoadError, match=expected_message):
         loader.materialize(invalid, _qwen3_context(layers=2))
+
+
+def test_repeat_layout_uses_last_kind_from_last_config_element() -> None:
+    from tools.model_diagnostics.specification.loader import _RepeatLayoutStrategy
+
+    rule = _RepeatLayoutStrategy().parse(
+        {
+            "strategy": "repeat",
+            "last_kind_from": "model_config.layer_types",
+            "count_from": "model_config.effective_num_hidden_layers",
+        }
+    )
+    context = _qwen3_context(layers=1)
+    context = replace(
+        context,
+        model_config={
+            **context.model_config,
+            "layer_types": ["linear_attention", "full_attention", "linear_attention"],
+            "num_mtp_tokens": 2,
+        },
+    )
+
+    assert _RepeatLayoutStrategy().materialize(rule, context) == ("linear_attention",) * 1
+
+
+def test_repeat_layout_rejects_both_layer_kind_and_last_kind_from() -> None:
+    from tools.model_diagnostics.specification.loader import _RepeatLayoutStrategy
+
+    with pytest.raises(SpecificationLoadError, match="exactly one of"):
+        _RepeatLayoutStrategy().parse(
+            {
+                "strategy": "repeat",
+                "layer_kind": "dense",
+                "last_kind_from": "model_config.layer_types",
+                "count_from": "model_config.effective_num_hidden_layers",
+            }
+        )
 
 
 def test_materialize_activates_lm_head_selection_from_run_context() -> None:

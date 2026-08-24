@@ -1,0 +1,61 @@
+# Qwen3 / Qwen3.5 / Qwen3-Next Dense MLP stages (full- and linear-attention
+# decoder layers). Runtime starts at add_rms_norm2* (full-attention) or
+# rms_norm* (linear-attention / Qwen3.5), so both boundaries are declared.
+fragment_id: qwen3_dense_ffn_v1
+fragment_kind: model_decoder
+stages:
+  - id: dense_ffn
+    modules:
+      - name: gate_up_projection
+        tensors:
+          INPUT[0]: {shape: "[T, H]", dtype: LINEAR_IN}
+          OUTPUT[0]: {shape: "[T, 2 * Ftp]", dtype: OUT}
+      - name: swiglu
+        tensors:
+          INPUT[0]: {shape: "[B, Q, Ftp]", dtype: ACT}
+          INPUT[1]: {shape: "[B, Q, Ftp]", dtype: ACT}
+          OUTPUT[0]: {shape: "[B, Q, Ftp]", dtype: ACT}
+      - name: down_projection
+        tensors:
+          INPUT[0]: {shape: "[T, Ftp]", dtype: LINEAR_IN}
+          OUTPUT[0]: {shape: "[T, H]", dtype: OUT}
+    runtime:
+      boundary_operators:
+        - add_rms_norm2
+        - add_rms_norm_dynamic_quant2_symmetric
+        - add_rms_norm_quant2
+        - rms_norm
+        - rms_norm_dynamic_quant_symmetric
+        - rms_norm_quant
+      ignored_operators:
+        - add_rms_norm2
+        - add_rms_norm_dynamic_quant2_symmetric
+        - add_rms_norm_quant2
+        - rms_norm
+        - rms_norm_dynamic_quant_symmetric
+        - rms_norm_quant
+        - add
+        - slice
+        - select
+        - device_put
+        - view
+        - split_with_sizes
+        - dynamic_quantize_symmetric
+        - quantize
+        - copy_
+        - all_reduce
+        - all_gather
+        - convert_element_type
+        - mean
+        - pow
+        - rsqrt
+        - mul
+        - expand
+        - clone
+        - neg
+        - sigmoid
+        - cat
+        - permute
+        - split
+        - unsqueeze
+        - index

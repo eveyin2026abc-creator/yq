@@ -61,9 +61,21 @@ stages:
           # domain). See context_env._moe_input_token_count / MOE_GATE_TOKENS.
           INPUT[0]: {shape: "[MOE_GATE_TOKENS, H]", dtype: float32}
           OUTPUT[0]: {shape: "[MOE_GATE_TOKENS, E]", dtype: float32}
+      - name: moe_gating_top_k_softmax
+        activation: moe_fused_topk
+        tensors:
+          # Fused top-k + softmax over the router logits. Runs on the
+          # post-transform Tmoe domain in every layout (the raw-logits EP path
+          # slices the logits by TP before this kernel; confirmed by probe).
+          INPUT[0]: {shape: "[Tmoe, E]", dtype: float32}
+          OUTPUT[0]: {shape: "[Tmoe, Ktop]", dtype: float32}
+          OUTPUT[1]: {shape: "[Tmoe, Ktop]", dtype: int64}
     runtime:
       boundary_operators: [add_rms_norm2]
-      ignored_operators: [add_rms_norm2, view, dynamic_quantize_symmetric, convert_element_type, sigmoid, add, topk, sum, scatter, unsqueeze, expand, clone, bitwise_not, where, gather, div, mul, constant_pad_nd, slice, all_gather, moe_gating_top_k_softmax]
+      # The fused moe_gating_top_k_softmax is the validated top-k contract; the
+      # unfused expansion ops (topk/sum/scatter/bitwise_not/where/gather/...) only
+      # appear on alternate compile/quant paths and remain mechanical.
+      ignored_operators: [add_rms_norm2, view, dynamic_quantize_symmetric, convert_element_type, sigmoid, add, topk, sum, scatter, unsqueeze, expand, clone, bitwise_not, where, gather, div, mul, constant_pad_nd, slice, all_gather]
 
   - id: moe_dispatch
     modules:

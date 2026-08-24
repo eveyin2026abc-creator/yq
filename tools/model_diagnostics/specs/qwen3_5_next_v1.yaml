@@ -1,0 +1,132 @@
+schema_version: "1"
+spec_id: qwen3_5_next_v1
+spec_version: 1.0.0
+model_category: qwen3_5
+matches:
+  entrypoints: [text_generate]
+  model_types: [qwen3_5_text, qwen3_5_moe_text, qwen3_next]
+
+operator_aliases:
+  # Decode executes the GatedDeltaNet delta rule via the recurrent kernel and
+  # the causal conv via its update kernel; both share the chunked Theory
+  # contract (fast-path libraries are absent in the locked environment, so
+  # prefill/decode use the torch fallback traces).
+  tensor_cast.linear_attn_recurrent_gated_delta_rule.default: linear_attn_chunk_gated_delta_rule
+
+# Classification-4 hybrid decoders (Qwen3.5 Dense/MoE, Qwen3-Next):
+# full-attention layers reuse category 1/2 fragments, linear-attention
+# (GatedDeltaNet) layers use the linear fragments. Stage-level activation
+# selects the per-model variant inside one Spec:
+#   qwen3_5_dense_ffn / qwen3_5_moe_ffn       -> Dense FFN vs MoE + shared FFN
+#   qwen3_5_linear_gdn / qwen3_next_linear_attn -> GDN stage chain vs fused op
+# The per-layer kind sequence comes from model_config.layer_types
+# (strategy: sequence).
+regions:
+  input:
+    stages:
+      - id: embedding
+        source_options:
+          theory:
+            modules:
+              - name: embedding
+                tensors:
+                  INPUT[0]: {shape: "[EV, EH]", dtype: WEIGHT}
+                  INPUT[1]: {shape: "[B, Q]", dtype: int64}
+                  OUTPUT[0]: {shape: "[B, Q, EO]", dtype: ACT}
+          runtime:
+            boundary_operators: [embedding]
+            ignored_operators:
+              - view
+              - index
+              - alias
+              - slice
+              - unsqueeze
+              - bitwise_not
+              - where
+              - masked_fill_
+              - all_gather
+              - all_reduce
+              - mean
+              - pow
+              - rsqrt
+              - mul
+              - add
+              - convert_element_type
+              - expand
+              - clone
+              - neg
+              - sigmoid
+              - select
+              - cat
+              - permute
+              - split
+              - split_with_sizes
+              - copy_
+
+  language:
+    layer_layout_rule:
+      strategy: sequence
+      count_from: model_config.effective_num_hidden_layers
+      kinds_from: model_config.layer_types
+    layer_specs:
+      full_attention:
+        include_fragment: qwen3_5_full_decoder_v1
+      linear_attention:
+        include_fragment: qwen3_5_linear_decoder_v1
+
+  # MTP predictor layers mirror the last language layer's kind: the layout
+  # rule takes layer_types[-1] (full_attention or linear_attention) and repeats
+  # it for every MTP layer. Each kind provides the framework proposal wrapper
+  # plus the matching decoder stages (full-attention or GatedDeltaNet/fused).
+  mtp:
+    activation: mtp_enabled
+    layer_layout_rule:
+      strategy: repeat
+      count_from: model_config.effective_num_mtp_layers
+      last_kind_from: model_config.layer_types
+    compose:
+      framework: mtp_framework_v1
+      predictors:
+        full_attention: qwen3_5_full_decoder_v1
+        linear_attention: qwen3_5_linear_decoder_v1
+
+  output:
+    stages:
+      - id: lm_head
+        source_options:
+          theory:
+            modules:
+              - name: lm_head
+                activation: non_mtp_lm_head
+                tensors:
+                  INPUT[0]: {shape: "[Rout, H]", dtype: ACT}
+                  OUTPUT[0]: {shape: "[Rout, Vtp]", dtype: OUT}
+          runtime:
+            boundary_operators: [rms_norm]
+            ignored_operators:
+              - rms_norm
+              - view
+              - slice
+              - alias
+              - copy_
+              - dynamic_quantize_symmetric
+              - device_put
+              - select
+              - argmax
+              - index
+              - all_gather
+              - mean
+              - pow
+              - rsqrt
+              - mul
+              - add
+              - convert_element_type
+              - expand
+              - clone
+              - neg
+              - sigmoid
+              - cat
+              - permute
+              - split
+              - split_with_sizes
+              - unsqueeze

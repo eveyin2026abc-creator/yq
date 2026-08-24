@@ -123,24 +123,54 @@ class RuntimeSourceOptionsParser:
             optional={"ignored_operators"},
             label="runtime options",
         )
-        boundaries = tuple(
-            _as_str(item, "runtime boundary operator")
-            for item in _require_list(
+        return RuntimeStageOptions(
+            boundary_operators=self._operator_names(
                 raw.get("boundary_operators"),
                 "runtime.boundary_operators",
-            )
-        )
-        ignored = tuple(
-            _as_str(item, "runtime ignored operator")
-            for item in _require_list(
+            ),
+            ignored_operators=self._operator_names(
                 raw.get("ignored_operators", []),
                 "runtime.ignored_operators",
+            ),
+        )
+
+    def parse_override(
+        self,
+        raw: Mapping[str, object],
+        *,
+        label: str,
+    ) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
+        _exact_keys(
+            raw,
+            required=set(),
+            optional={"boundary_operators", "ignored_operators"},
+            label=label,
+        )
+        if "boundary_operators" not in raw and "ignored_operators" not in raw:
+            raise SpecificationLoadError(
+                f"{label} must declare boundary_operators and/or ignored_operators"
+            )
+        boundaries = (
+            None
+            if "boundary_operators" not in raw
+            else self._operator_names(
+                raw.get("boundary_operators"),
+                f"{label}.boundary_operators",
             )
         )
-        return RuntimeStageOptions(
-            boundary_operators=boundaries,
-            ignored_operators=ignored,
+        ignored = (
+            ()
+            if "ignored_operators" not in raw
+            else self._operator_names(
+                raw.get("ignored_operators"),
+                f"{label}.ignored_operators",
+            )
         )
+        return boundaries, ignored
+
+    @staticmethod
+    def _operator_names(raw: object, label: str) -> tuple[str, ...]:
+        return tuple(_as_str(item, "runtime operator") for item in _require_list(raw, label))
 
 
 def create_builtin_source_options_parsers(

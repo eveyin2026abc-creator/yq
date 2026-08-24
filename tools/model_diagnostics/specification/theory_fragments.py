@@ -58,6 +58,7 @@ class TheoryFragmentStage:
     operators: tuple[TheoryOperatorSpec, ...]
     runtime_options: RuntimeStageOptions | None = None
     comparisons: Mapping[str, object] | None = None
+    activation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,35 +119,80 @@ class TheoryFragmentRegistry:
         return fragment
 
 
+@dataclass(frozen=True)
+class _ParsedFragmentFile:
+    fragment_id: str
+    fragment_kind: str
+    source: str
+    include_fragments: tuple[tuple[str, str | None], ...]
+    runtime_options: Mapping[str, Mapping[str, object]]
+    module_groups: Mapping[str, tuple[TheoryOperatorSpec, ...]]
+    stages: tuple[TheoryFragmentStage, ...]
+    stage_groups: Mapping[str, tuple[str, ...]]
+
+
 def load_builtin_theory_fragment_registry(
     fragments_dir: Path | None = None,
 ) -> TheoryFragmentRegistry:
     root = fragments_dir or _DEFAULT_FRAGMENTS_DIR
     if not root.is_dir():
         raise SpecificationLoadError(f"theory fragments directory not found: {root}")
-    fragments: dict[str, TheoryFragment] = {}
+    parsed: dict[str, _ParsedFragmentFile] = {}
     for path in sorted(root.glob("*.yaml")):
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as error:
             raise SpecificationLoadError(f"invalid theory fragment YAML {path}") from error
-        fragment = _parse_fragment(raw, source=path.name)
-        if fragment.fragment_id in fragments:
-            raise SpecificationLoadError(f"duplicate theory fragment id: {fragment.fragment_id!r}")
-        fragments[fragment.fragment_id] = fragment
-    return TheoryFragmentRegistry(fragments)
+        document = _parse_fragment_file(raw, source=path.name)
+        if document.fragment_id in parsed:
+            raise SpecificationLoadError(f"duplicate theory fragment id: {document.fragment_id!r}")
+        parsed[document.fragment_id] = document
+    return TheoryFragmentRegistry(_resolve_fragment_includes(parsed))
 
 
-def _parse_fragment(raw: object, *, source: str) -> TheoryFragment:
+def _parse_fragment_file(raw: object, *, source: str) -> _ParsedFragmentFile:
     payload = _require_mapping(raw, f"theory fragment {source}")
     _exact_keys(
         payload,
         required={"fragment_id", "fragment_kind"},
-        optional={"module_groups", "stages", "stage_groups"},
+        optional={"module_groups", "stages", "stage_groups", "include_fragments", "runtime_options"},
         label=f"theory fragment {source}",
     )
     fragment_id = _as_str(payload.get("fragment_id"), "fragment_id")
     fragment_kind = _as_str(payload.get("fragment_kind"), "fragment_kind")
+    include_refs: tuple[tuple[str, str | None], ...] = ()
+    if "include_fragments" in payload:
+        include_refs = tuple(
+            _parse_fragment_include_ref(
+                item,
+                label=f"{fragment_id}.include_fragments[{index}]",
+            )
+            for index, item in enumerate(
+                _require_list(payload.get("include_fragments"), "include_fragments")
+            )
+        )
+        if not include_refs:
+            raise SpecificationLoadError(
+                f"theory fragment {fragment_id!r} include_fragments must not be empty"
+            )
+        child_ids = tuple(child_id for child_id, _activation in include_refs)
+        if len(child_ids) != len(set(child_ids)):
+            raise SpecificationLoadError(
+                f"theory fragment {fragment_id!r} include_fragments contains duplicates"
+            )
+    fragment_runtime_options: Mapping[str, Mapping[str, object]] = {}
+    if "runtime_options" in payload:
+        runtime_options_raw = _require_mapping(
+            payload.get("runtime_options"),
+            "runtime_options",
+        )
+        fragment_runtime_options = {
+            _as_str(stage_id, "runtime_options key"): _require_mapping(
+                options,
+                f"runtime_options.{stage_id}",
+            )
+            for stage_id, options in runtime_options_raw.items()
+        }
     if fragment_kind not in _FRAGMENT_KINDS:
         raise SpecificationLoadError(
             f"unsupported theory fragment_kind {fragment_kind!r}; "
@@ -174,7 +220,7 @@ def _parse_fragment(raw: object, *, source: str) -> TheoryFragment:
             _exact_keys(
                 stage_map,
                 required={"id", "modules"},
-                optional={"runtime", "comparisons"},
+                optional={"runtime", "comparisons", "activation"},
                 label=f"stages[{index}]",
             )
             stage_id = _as_str(stage_map.get("id"), f"stages[{index}].id")
@@ -192,6 +238,12 @@ def _parse_fragment(raw: object, *, source: str) -> TheoryFragment:
             )
             if not operators:
                 raise SpecificationLoadError(f"stages[{index}].modules must not be empty")
+            activation = None
+            if "activation" in stage_map:
+                activation = _as_str(
+                    stage_map.get("activation"),
+                    f"stages[{index}].activation",
+                )
             runtime_options = None
             if "runtime" in stage_map:
                 try:
@@ -219,6 +271,7 @@ def _parse_fragment(raw: object, *, source: str) -> TheoryFragment:
                             f"stages[{index}].comparisons",
                         )
                     ),
+                    activation=activation,
                 )
             )
 
@@ -247,16 +300,160 @@ def _parse_fragment(raw: object, *, source: str) -> TheoryFragment:
                 )
             stage_groups[group_name] = stage_ids
 
-    if not module_groups and not stages:
+    if include_refs and stage_groups:
         raise SpecificationLoadError(
-            f"theory fragment {fragment_id!r} must declare module_groups and/or stages"
+            f"theory fragment {fragment_id!r} stage_groups require locally declared stages"
         )
-    return TheoryFragment(
+    if not module_groups and not stages and not include_refs:
+        raise SpecificationLoadError(
+            f"theory fragment {fragment_id!r} must declare module_groups, stages, or include_fragments"
+        )
+    return _ParsedFragmentFile(
         fragment_id=fragment_id,
         fragment_kind=fragment_kind,
+        source=source,
+        include_fragments=include_refs,
+        runtime_options=fragment_runtime_options,
         module_groups=module_groups,
         stages=tuple(stages),
         stage_groups=stage_groups,
+    )
+
+
+def _parse_fragment_include_ref(raw: object, *, label: str) -> tuple[str, str | None]:
+    if isinstance(raw, str):
+        return _as_str(raw, label), None
+    payload = _require_mapping(raw, label)
+    _exact_keys(payload, required={"fragment"}, optional={"activation"}, label=label)
+    fragment_id = _as_str(payload.get("fragment"), f"{label}.fragment")
+    activation = (
+        None
+        if "activation" not in payload
+        else _as_str(payload.get("activation"), f"{label}.activation")
+    )
+    return fragment_id, activation
+
+
+def _resolve_fragment_includes(
+    parsed: Mapping[str, _ParsedFragmentFile],
+) -> dict[str, TheoryFragment]:
+    resolved: dict[str, TheoryFragment] = {}
+    visiting: set[str] = set()
+
+    def resolve(fragment_id: str) -> TheoryFragment:
+        cached = resolved.get(fragment_id)
+        if cached is not None:
+            return cached
+        document = parsed.get(fragment_id)
+        if document is None:
+            raise SpecificationLoadError(f"unregistered theory fragment id: {fragment_id!r}")
+        if fragment_id in visiting:
+            raise SpecificationLoadError(
+                f"theory fragment include_fragments cycle involving {fragment_id!r}"
+            )
+        if not document.include_fragments:
+            stages = tuple(
+                _apply_fragment_runtime_override(stage, document.runtime_options)
+                for stage in document.stages
+            )
+            fragment = TheoryFragment(
+                fragment_id=document.fragment_id,
+                fragment_kind=document.fragment_kind,
+                module_groups=document.module_groups,
+                stages=stages,
+                stage_groups=document.stage_groups,
+            )
+            resolved[fragment_id] = fragment
+            return fragment
+        visiting.add(fragment_id)
+        stages: list[TheoryFragmentStage] = []
+        seen_ids: set[str] = set()
+        for child_id, fragment_activation in document.include_fragments:
+            child = resolve(child_id)
+            if not child.stages:
+                raise SpecificationLoadError(
+                    f"included fragment {child_id!r} must declare stages"
+                )
+            for stage in child.stages:
+                if stage.stage_id in seen_ids:
+                    raise SpecificationLoadError(
+                        f"theory fragment {fragment_id!r} include_fragments repeats "
+                        f"stage id {stage.stage_id!r}"
+                    )
+                seen_ids.add(stage.stage_id)
+                if fragment_activation is not None and stage.activation is None:
+                    stage = TheoryFragmentStage(
+                        stage_id=stage.stage_id,
+                        operators=stage.operators,
+                        runtime_options=stage.runtime_options,
+                        comparisons=stage.comparisons,
+                        activation=fragment_activation,
+                    )
+                stages.append(_apply_fragment_runtime_override(stage, document.runtime_options))
+        for stage in document.stages:
+            if stage.stage_id in seen_ids:
+                raise SpecificationLoadError(
+                    f"theory fragment {fragment_id!r} local stage repeats included "
+                    f"stage id {stage.stage_id!r}"
+                )
+            seen_ids.add(stage.stage_id)
+            stages.append(_apply_fragment_runtime_override(stage, document.runtime_options))
+        visiting.remove(fragment_id)
+        fragment = TheoryFragment(
+            fragment_id=document.fragment_id,
+            fragment_kind=document.fragment_kind,
+            module_groups=document.module_groups,
+            stages=tuple(stages),
+            stage_groups=document.stage_groups,
+        )
+        resolved[fragment_id] = fragment
+        return fragment
+
+    for fragment_id in parsed:
+        resolve(fragment_id)
+    return resolved
+
+
+def _apply_fragment_runtime_override(
+    stage: TheoryFragmentStage,
+    runtime_options: Mapping[str, Mapping[str, object]],
+) -> TheoryFragmentStage:
+    """Apply a fragment-level per-stage Runtime override onto an included stage.
+
+    Boundary operators replace the stage defaults; ignored operators are
+    appended after the inherited set (deduplicated), mirroring the layer-level
+    runtime override semantics used by the loader.
+    """
+
+    raw_override = runtime_options.get(stage.stage_id)
+    if raw_override is None:
+        return stage
+    parser = RuntimeSourceOptionsParser()
+    boundaries, extra_ignored = parser.parse_override(raw_override, label=stage.stage_id)
+    inherited = stage.runtime_options
+    if boundaries is None:
+        if inherited is None:
+            raise SpecificationLoadError(
+                f"fragment runtime_options for stage {stage.stage_id!r} require an "
+                "included Runtime stage"
+            )
+        boundaries = inherited.boundary_operators
+    ignored = list(inherited.ignored_operators if inherited is not None else ())
+    seen = set(ignored)
+    for operator in extra_ignored:
+        if operator in seen:
+            continue
+        ignored.append(operator)
+        seen.add(operator)
+    return TheoryFragmentStage(
+        stage_id=stage.stage_id,
+        operators=stage.operators,
+        runtime_options=RuntimeStageOptions(
+            boundary_operators=boundaries,
+            ignored_operators=tuple(ignored),
+        ),
+        comparisons=stage.comparisons,
+        activation=stage.activation,
     )
 
 

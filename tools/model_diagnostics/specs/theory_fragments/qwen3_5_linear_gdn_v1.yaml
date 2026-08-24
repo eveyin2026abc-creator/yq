@@ -1,0 +1,103 @@
+fragment_id: qwen3_5_linear_gdn_v1
+fragment_kind: model_decoder
+# Qwen3.5 GatedDeltaNet stage chain (projection -> delta rule -> output).
+# Theory symbols (bound in context_env when linear fields exist):
+#   Lk_lin / Lv_lin = TP-local linear K/V heads (may differ; TP must divide both)
+#   Klin / Vlin     = linear key/value head dims (must be equal)
+#   LCONV           = linear causal-conv kernel dim
+stages:
+  - id: linear_projection
+    modules:
+      - name: mm
+        tensors:
+          # Fused q/k/v/g/z projection width (Qwen3.5 GatedDeltaNet): two K
+          # projections, two V projections, plus g/beta per V head.
+          INPUT[0]: {shape: "[T, H]", dtype: LINEAR_IN}
+          OUTPUT[0]: {shape: "[T, 2 * Lk_lin * Klin + 2 * Lv_lin * Vlin + 2 * Lv_lin]", dtype: ACT}
+      - name: linear_attn_fused_gdn_gating
+        tensors:
+          INPUT[0]: {shape: "[T, Lk_lin, Klin]", dtype: ACT}
+          INPUT[1]: {shape: "[T, Lk_lin, Klin]", dtype: ACT}
+          INPUT[2]: {shape: "[T, Lv_lin]", dtype: ACT}
+          OUTPUT[0]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+          OUTPUT[1]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+    runtime:
+      boundary_operators: [rms_norm, rms_norm_dynamic_quant_symmetric, rms_norm_quant]
+      ignored_operators:
+        - view
+        - permute
+        - split_with_sizes
+        - mul
+        - add
+        - linear_attn_causal_conv
+        - linear_attn_causal_conv_update
+        - convert_element_type
+        - mean
+        - pow
+        - rsqrt
+        - expand
+        - clone
+        - neg
+        - sigmoid
+        - select
+        - cat
+        - slice
+        - index
+        - split
+        - unsqueeze
+        - copy_
+        - dynamic_quantize_symmetric
+  - id: linear_delta_rule
+    modules:
+      - name: linear_attn_chunk_gated_delta_rule
+        tensors:
+          INPUT[0]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+          OUTPUT[0]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+    runtime:
+      boundary_operators: [linear_attn_chunk_gated_delta_rule, linear_attn_recurrent_gated_delta_rule]
+      ignored_operators:
+        - view
+        - permute
+        - split_with_sizes
+        - mul
+        - add
+        - clone
+        - convert_element_type
+        - cat
+        - slice
+        - select
+        - index
+        - split
+        - copy_
+  - id: linear_output
+    modules:
+      - name: linear_attn_gated_rmsnorm
+        tensors:
+          INPUT[0]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+          OUTPUT[0]: {shape: "[T, Lv_lin, Vlin]", dtype: ACT}
+      - name: o_projection
+        tensors:
+          INPUT[0]: {shape: "[T, Lv_lin * Vlin]", dtype: LINEAR_IN}
+          OUTPUT[0]: {shape: "[T, H]", dtype: OUT}
+    runtime:
+      boundary_operators: [linear_attn_gated_rmsnorm]
+      ignored_operators:
+        - view
+        - permute
+        - mul
+        - add
+        - copy_
+        - convert_element_type
+        - reshape_and_cache
+        - all_reduce
+        - mean
+        - pow
+        - rsqrt
+        - clone
+        - cat
+        - slice
+        - select
+        - expand
+        - neg
+        - sigmoid
+        - dynamic_quantize_symmetric

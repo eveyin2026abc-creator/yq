@@ -370,6 +370,14 @@ def _run_context_after_model_load(profile: object, model_runner: object) -> Mode
         "qk_rope_head_dim",
         "v_head_dim",
         "index_topk",
+        # Classification-4 hybrid linear attention (Qwen3.5 / Qwen3-Next).
+        "linear_num_key_heads",
+        "linear_num_value_heads",
+        "linear_key_head_dim",
+        "linear_value_head_dim",
+        "linear_conv_kernel_dim",
+        "layer_types",
+        "shared_expert_intermediate_size",
     ):
         value = getattr(hf_config, key, None)
         if value is not None:
@@ -408,6 +416,12 @@ def _run_context_after_model_load(profile: object, model_runner: object) -> Mode
         layers = model_config.get("num_hidden_layers")
         if isinstance(layers, int) and layers > 0:
             model_config["effective_num_hidden_layers"] = layers
+    # Hybrid layer_types describe the full model; trim them to the executed
+    # layer count so the sequence layout rule matches the captured slice.
+    layer_types = model_config.get("layer_types")
+    effective = model_config.get("effective_num_hidden_layers")
+    if isinstance(layer_types, list) and isinstance(effective, int) and len(layer_types) > effective:
+        model_config["layer_types"] = layer_types[:effective]
     user_input = getattr(model_runner, "user_input", None)
     num_mtp_tokens = getattr(user_input, "num_mtp_tokens", None)
     if isinstance(num_mtp_tokens, int) and not isinstance(num_mtp_tokens, bool) and num_mtp_tokens >= 0:

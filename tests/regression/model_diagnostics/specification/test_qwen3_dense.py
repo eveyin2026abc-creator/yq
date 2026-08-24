@@ -94,6 +94,9 @@ def test_qwen3_yaml_declares_runtime_stage_boundaries() -> None:
         "add_rms_norm2",
         "add_rms_norm_dynamic_quant2_symmetric",
         "add_rms_norm_quant2",
+        "rms_norm",
+        "rms_norm_dynamic_quant_symmetric",
+        "rms_norm_quant",
     )
     output = next(region for region in spec.regions if region.region_id == "output")
     assert [stage.stage_id for stage in output.stages] == ["lm_head"]

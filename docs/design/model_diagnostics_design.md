@@ -569,9 +569,9 @@ mtp:
 
 1. framework、adapter 与 decoder fragment 都可携带 Theory、Runtime 和 comparisons
    默认值；公共 Runtime 规则是可覆盖的默认值，不被解释为所有后端永远相同。
-2. layer-level `include_fragment` 按 fragment 顺序导入全部 stage 的 Theory、Runtime 和
-   comparisons 默认值；stage-level `include_stage` 用于只引用其中一个 stage。同一
-   `model_decoder` 也可作为 MTP `compose.predictor`，保证 decoder 定义单一权威来源。
+2. layer-level `include_fragment` / `include_fragments` 按 fragment 顺序导入全部
+   stage 的 Theory、Runtime 和 comparisons 默认值。同一 `model_decoder` 也可作为
+   MTP `compose.predictor`，保证 decoder 定义单一权威来源。
 3. Region-level MTP `compose` 同时导入 framework request stages，并按 framework
    proposal prefix → adapter before predictor → model decoder → adapter after
    predictor → framework proposal suffix 生成 proposal layer template。组合层的

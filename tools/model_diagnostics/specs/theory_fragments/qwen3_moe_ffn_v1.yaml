@@ -1,0 +1,227 @@
+# Qwen3 MoE FFN stages (no attention).
+# Theory symbols (bound in context_env when MoE HF fields exist):
+#   E     = num_experts (routed expert count)
+#   Ktop  = num_experts_per_tok (MoE top-k)
+#   Fmoe  = moe_intermediate_size (MoE FFN width; do not use dense intermediate_size)
+#   MTPt  = fixed at 1 (--moe-tp-size > 1 unsupported by this module)
+#   MDP   = parallel.moe_data_parallel_size (--moe-dp-size)
+#   Tmoe  = token count after ParallelMoELayer._dp_transform_enter:
+#           EP>1 and DP!=EP -> ceil(T/TP); EP==1 and DP!=1 -> T*DP; otherwise T
+#   Fe    = Fmoe (MTPt is fixed at 1)
+#   Te    = EP-local tokens after dispatch (EP=1: Tmoe*Ktop; EP>1: get_split_sizes
+#           over routing+redundant experts, optional external shared ranks;
+#           never T*Ktop/EP). Counts follow enable_external_shared_experts /
+#           enable_redundant_experts (or explicit num_* overrides).
+# Gate path: moe_gate_returns_raw_logits=False => gate-internal top-k (no moe_gating_top_k_softmax).
+# In-model shared expert: only Qwen3.5-MoE / Qwen3-Next (shared_ffn below is
+# activation-gated); Qwen3 MoE Runtime has no shared expert.
+fragment_id: qwen3_moe_ffn_v1
+fragment_kind: model_decoder
+stages:
+  - id: moe_gate
+    modules:
+      - name: moe_gate_linear
+        tensors:
+          # Gate-internal top-k: router input stays model ACT dtype, not LINEAR_IN.
+          # MOE_GATE_TOKENS accounts for the gate token domain (Tmoe or full T).
+          INPUT[0]: {shape: "[MOE_GATE_TOKENS, H]", dtype: ACT}
+          OUTPUT[0]: {shape: "[MOE_GATE_TOKENS, E]", dtype: ACT}
+      - name: topk
+        tensors:
+          INPUT[0]: {shape: "[MOE_GATE_TOKENS, E]", dtype: float32}
+          OUTPUT[0]: {shape: "[MOE_GATE_TOKENS, Ktop]", dtype: float32}
+          OUTPUT[1]: {shape: "[MOE_GATE_TOKENS, Ktop]", dtype: int64}
+    runtime:
+      boundary_operators:
+        - add_rms_norm2
+        - add_rms_norm_dynamic_quant2_symmetric
+        - add_rms_norm_quant2
+        - rms_norm
+        - rms_norm_dynamic_quant_symmetric
+        - rms_norm_quant
+      ignored_operators:
+        - add_rms_norm2
+        - add_rms_norm_dynamic_quant2_symmetric
+        - add_rms_norm_quant2
+        - rms_norm
+        - rms_norm_dynamic_quant_symmetric
+        - rms_norm_quant
+        - add
+        - view
+        - reshape
+        - alias
+        - copy_
+        - slice
+        - select
+        - constant_pad_nd
+        - device_put
+        - to
+        - _to_copy
+        - convert_element_type
+        - amax
+        - sub
+        - exp
+        - div
+        - sum
+        - mean
+        - pow
+        - rsqrt
+        - mul
+        - permute
+        - cat
+        - split
+        - unsqueeze
+        - expand
+        - clone
+        - neg
+        - sigmoid
+        - index
+        - dynamic_quantize_symmetric
+        # MoE-DP>1 gathers tokens onto the MoE group before the gate mm.
+        - all_gather
+  - id: moe_dispatch
+    modules:
+      # Flat [Tmoe,H] (or leading-product-equivalent [B,Q,H] when MDP=1);
+      # OUTPUT is always [Tmoe*Ktop, H]. EP>1 then all_to_all -> [Te, H].
+      - name: init_routing_v2
+        tensors:
+          INPUT[0]: {shape: "[Tmoe, H]", dtype: ACT}
+          INPUT[1]: {shape: "[Tmoe, Ktop]", dtype: int64}
+          OUTPUT[0]: {shape: "[Tmoe * Ktop, H]", dtype: ACT}
+    runtime:
+      boundary_operators: [init_routing_v2]
+      ignored_operators:
+        - view
+        - reshape
+        - alias
+        - copy_
+        - cat
+        - split
+        - split_with_sizes
+        - slice
+        - select
+        - pad
+        - permute
+        - transpose
+        - dynamic_quantize_symmetric
+        - quantize
+        # EP>1 dispatch all_to_all sits between init_routing_v2 and experts.
+        - all_to_all
+  - id: moe_experts
+    modules:
+      # Fe = Fmoe (MTPt fixed at 1); Te is EP-local routed tokens (EP=1: Te=Tmoe*Ktop)
+      - name: grouped_matmul_swiglu
+        tensors:
+          OUTPUT[0]: {shape: "[Te, Fe]", dtype: OUT}
+      - name: grouped_matmul
+        tensors:
+          OUTPUT[0]: {shape: "[Te, H]", dtype: OUT}
+    runtime:
+      # Quant variants keep the same stage boundary; comparison aliases map them
+      # back to the Theory semantic names grouped_matmul_swiglu / grouped_matmul.
+      boundary_operators:
+        - grouped_matmul_swiglu
+        - grouped_matmul_quant_swiglu
+        - grouped_matmul_quant_int4_swiglu
+        - grouped_matmul_fp8_swiglu
+        - grouped_matmul_mxfp4_swiglu
+      ignored_operators:
+        - view
+        - reshape
+        - alias
+        - copy_
+        - cat
+        - split
+        - split_with_sizes
+        - slice
+        - select
+        - pad
+        - dynamic_quantize_symmetric
+        - quantize
+        # EP>1 combine all_to_all sits before unpermute, so it falls in this
+        # stage window (experts start .. combine boundary), not moe_combine.
+        - all_to_all
+  - id: moe_combine
+    modules:
+      # EP>1: all_to_all combine precedes unpermute; EP=1 starts at unpermute_tokens.
+      - name: unpermute_tokens
+        tensors:
+          INPUT[0]: {shape: "[Tmoe * Ktop, H]", dtype: ACT}
+          INPUT[1]: {shape: "[Tmoe, Ktop]", dtype: int64}
+          OUTPUT[0]: {shape: "[Tmoe, Ktop, H]", dtype: ACT}
+      - name: mul
+        tensors:
+          INPUT[0]: {shape: "[Tmoe, Ktop, H]", dtype: ACT}
+          INPUT[1]: {shape: "[Tmoe, Ktop, 1]", dtype: ACT}
+          OUTPUT[0]: {shape: "[Tmoe, Ktop, H]", dtype: ACT}
+      - name: sum
+        tensors:
+          INPUT[0]: {shape: "[Tmoe, Ktop, H]", dtype: ACT}
+          OUTPUT[0]: {shape: "[Tmoe, H]", dtype: ACT}
+    runtime:
+      boundary_operators: [unpermute_tokens]
+      ignored_operators:
+        - view
+        - reshape
+        - alias
+        - copy_
+        - unsqueeze
+        - squeeze
+        - slice
+        - select
+        - to
+        - _to_copy
+        # EP>1 combine all_to_all precedes unpermute_tokens.
+        - all_to_all
+        # EP>1 with DP!=EP restores the original token domain after combine.
+        - all_gather
+        # Residual add after MoE block (post-combine); not part of combine contract.
+        - add
+        # MTP: final rms_norm + device_put sit before target_selection when
+        # non_mtp lm_head is inactive; mirror dense_ffn mechanical ignores.
+        - rms_norm
+        - device_put
+  - id: shared_ffn
+    activation: qwen3_5_moe_ffn
+    modules:
+      - name: mm
+        tensors:
+          INPUT[0]: {shape: "[Tmoe, H]", dtype: LINEAR_IN}
+          # Qwen3.5 / Qwen3-Next shared expert appends a 1-wide gating logit
+          # to gate/up.
+          OUTPUT[0]: {shape: "[Tmoe, 2 * Fshared + 1]", dtype: OUT}
+      - name: swiglu
+        tensors:
+          OUTPUT[0]: {shape: "[Tmoe, Fshared]", dtype: ACT}
+      - name: mm
+        tensors:
+          INPUT[0]: {shape: "[Tmoe, Fshared]", dtype: LINEAR_IN}
+          OUTPUT[0]: {shape: "[Tmoe, H]", dtype: OUT}
+    runtime:
+      boundary_operators: [mm, static_quant_linear, static_quant_linear_int4, fp8_linear, mxfp4_linear]
+      ignored_operators:
+        - view
+        - split_with_sizes
+        - add
+        - copy_
+        - convert_element_type
+        - dynamic_quantize_symmetric
+        - rms_norm
+        - device_put
+        - select
+        - all_reduce
+        - all_gather
+        - slice
+        - mean
+        - pow
+        - rsqrt
+        - mul
+        - sigmoid
+        - unsqueeze
+        - permute
+        - cat
+        - split
+        - expand
+        - clone
+        - neg
+        - index

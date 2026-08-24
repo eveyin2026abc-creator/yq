@@ -79,6 +79,51 @@ class ExplicitMoeGateActivation:
         return request.context.model_config.get("model_type") != "kimi_k2"
 
 
+class MoEFusedTopkActivation:
+    """Fused ``moe_gating_top_k_softmax`` exists only on the raw-logits gate path."""
+
+    policy_id = "moe_fused_topk"
+
+    def is_active(self, request: OperatorActivationRequest) -> bool:
+        return request.context.model_config.get("model_type") in {"deepseek_v3", "glm_moe_dsa"}
+
+
+class Qwen35DenseFfnActivation:
+    """Qwen3.5 Dense uses the category-1 dense FFN for every layer."""
+
+    policy_id = "qwen3_5_dense_ffn"
+
+    def is_active(self, request: OperatorActivationRequest) -> bool:
+        return request.context.model_config.get("model_type") == "qwen3_5_text"
+
+
+class Qwen35MoeFfnActivation:
+    """Qwen3.5-MoE and Qwen3-Next route every layer through the category-2 MoE FFN."""
+
+    policy_id = "qwen3_5_moe_ffn"
+
+    def is_active(self, request: OperatorActivationRequest) -> bool:
+        return request.context.model_config.get("model_type") in {"qwen3_5_moe_text", "qwen3_next"}
+
+
+class Qwen35LinearGdnActivation:
+    """Qwen3.5 GatedDeltaNet expands linear attention into projection/rule/output stages."""
+
+    policy_id = "qwen3_5_linear_gdn"
+
+    def is_active(self, request: OperatorActivationRequest) -> bool:
+        return request.context.model_config.get("model_type") != "qwen3_next"
+
+
+class Qwen3NextLinearAttnActivation:
+    """Qwen3-Next emits linear attention as one fused ``linear_attention`` op."""
+
+    policy_id = "qwen3_next_linear_attn"
+
+    def is_active(self, request: OperatorActivationRequest) -> bool:
+        return request.context.model_config.get("model_type") == "qwen3_next"
+
+
 def create_builtin_operator_activation_registry() -> OperatorActivationRegistry:
     registry = OperatorActivationRegistry()
     registry.register(LmHeadTokenSelectionActivation())
@@ -86,4 +131,9 @@ def create_builtin_operator_activation_registry() -> OperatorActivationRegistry:
     registry.register(NonMtpLmHeadActivation())
     registry.register(DsaEnabledActivation())
     registry.register(ExplicitMoeGateActivation())
+    registry.register(MoEFusedTopkActivation())
+    registry.register(Qwen35DenseFfnActivation())
+    registry.register(Qwen35MoeFfnActivation())
+    registry.register(Qwen35LinearGdnActivation())
+    registry.register(Qwen3NextLinearAttnActivation())
     return registry

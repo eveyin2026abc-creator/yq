@@ -259,6 +259,10 @@ def _parse_profile(raw: Mapping[str, Any]) -> DiagnosticsRunProfile:
             + ", ".join(unsupported_parallel)
             + ". MoE tensor parallel is fixed at 1 by this module; sizes greater than 1 are unsupported."
         )
+    if "moe_data_parallel_size" in parallel_raw and "moe_dp_size" in parallel_raw:
+        raise SpecificationLoadError(
+            "parallel.moe_data_parallel_size and parallel.moe_dp_size are aliases; provide only one of them"
+        )
     stage_regions = raw.get("selected_stage_regions")
     if stage_regions is None:
         selected_stage_regions: tuple[str, ...] = ()

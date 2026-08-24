@@ -8,14 +8,6 @@ from ..custom_model_registry import ModelProfile, register_model_profile
 logger = logging.getLogger(__name__)
 
 
-def _get_local_linear_attn_heads(self):
-    from transformers.models.qwen3_next import modeling_qwen3_next
-
-    if isinstance(self, modeling_qwen3_next.Qwen3NextGatedDeltaNet):
-        return self.num_k_heads, self.num_v_heads
-    return 0, 0
-
-
 def patch_method_for_qwen3_next(_model):
     from transformers.models.qwen3_next import modeling_qwen3_next
 
@@ -78,7 +70,7 @@ def patch_method_for_qwen3_next(_model):
         # TensorCast can model mixed full/linear attention explicitly.
         del kwargs
         del cache_params
-        local_num_k_heads, local_num_v_heads = _get_local_linear_attn_heads(self)
+        local_num_k_heads, local_num_v_heads = self.num_k_heads, self.num_v_heads
 
         return torch.ops.tensor_cast.linear_attention(
             hidden_states,

@@ -27,6 +27,10 @@ from tools.model_diagnostics.specification.builtin_activation import (
     LmHeadTokenSelectionActivation,
     MtpEnabledActivation,
     NonMtpLmHeadActivation,
+    Qwen35DenseFfnActivation,
+    Qwen35LinearGdnActivation,
+    Qwen35MoeFfnActivation,
+    Qwen3NextLinearAttnActivation,
 )
 from tools.model_diagnostics.specification.errors import SpecificationLoadError
 from tools.model_diagnostics.specification.mtp_window import parse_num_mtp_tokens
@@ -42,6 +46,7 @@ def _request(
     query_length: int,
     num_mtp_tokens: object,
     model_config: dict[str, object] | None = None,
+    parallel: ParallelContext | None = None,
 ) -> OperatorActivationRequest:
     context = ModelRunContext(
         model_name="test",
@@ -50,7 +55,7 @@ def _request(
         batch_size=1,
         query_length=query_length,
         context_length=None,
-        parallel=ParallelContext(),
+        parallel=parallel or ParallelContext(),
         model_config={"num_mtp_tokens": num_mtp_tokens, **(model_config or {})},
         quantization_config={},
     )
@@ -166,6 +171,55 @@ def test_explicit_moe_gate_activation(model_type: str, expected: bool) -> None:
     )
 
     assert ExplicitMoeGateActivation().is_active(request) is expected
+
+
+@pytest.mark.parametrize(
+    ("model_type", "dense_ffn", "moe_ffn"),
+    (
+        ("qwen3_5_text", True, False),
+        ("qwen3_5_moe_text", False, True),
+        ("qwen3_next", False, True),
+        ("qwen3", False, False),
+    ),
+)
+def test_qwen35_ffn_stage_activation(
+    model_type: str,
+    dense_ffn: bool,
+    moe_ffn: bool,
+) -> None:
+    request = _request(
+        phase=ExecutionPhase.PREFILL,
+        query_length=2,
+        num_mtp_tokens=0,
+        model_config={"model_type": model_type},
+    )
+
+    assert Qwen35DenseFfnActivation().is_active(request) is dense_ffn
+    assert Qwen35MoeFfnActivation().is_active(request) is moe_ffn
+
+
+@pytest.mark.parametrize(
+    ("model_type", "gdn", "fused_linear"),
+    (
+        ("qwen3_5_text", True, False),
+        ("qwen3_5_moe_text", True, False),
+        ("qwen3_next", False, True),
+    ),
+)
+def test_qwen35_linear_stage_activation(
+    model_type: str,
+    gdn: bool,
+    fused_linear: bool,
+) -> None:
+    request = _request(
+        phase=ExecutionPhase.PREFILL,
+        query_length=2,
+        num_mtp_tokens=0,
+        model_config={"model_type": model_type},
+    )
+
+    assert Qwen35LinearGdnActivation().is_active(request) is gdn
+    assert Qwen3NextLinearAttnActivation().is_active(request) is fused_linear
 
 
 @pytest.mark.parametrize("invalid", (-1, True, "2"))

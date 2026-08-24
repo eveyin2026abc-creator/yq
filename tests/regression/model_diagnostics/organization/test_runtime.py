@@ -404,3 +404,25 @@ def test_real_runtime_artifact_flows_directly_into_stage_organization() -> None:
         ["aten.mm.default"],
         ["aten.relu.default"],
     ]
+
+
+def test_runtime_boundary_matches_aten_rmsnorm_sequence() -> None:
+    from types import SimpleNamespace
+
+    from tools.model_diagnostics.organization.runtime import _matches_composite_boundary
+
+    calls = [
+        SimpleNamespace(operator_name="prims.convert_element_type.default"),
+        SimpleNamespace(operator_name="aten.pow.Tensor_Scalar"),
+        SimpleNamespace(operator_name="aten.mean.dim"),
+        SimpleNamespace(operator_name="aten.add.Tensor"),
+        SimpleNamespace(operator_name="aten.rsqrt.default"),
+        SimpleNamespace(operator_name="aten.mul.Tensor"),
+        SimpleNamespace(operator_name="aten.mul.Tensor"),
+        SimpleNamespace(operator_name="prims.convert_element_type.default"),
+    ]
+
+    assert _matches_composite_boundary(calls, 1, "rms_norm") is True
+    assert _matches_composite_boundary(calls, 0, "rms_norm") is False
+    assert _matches_composite_boundary(calls, 3, "rms_norm") is False
+    assert _matches_composite_boundary(calls, 0, "attention") is False

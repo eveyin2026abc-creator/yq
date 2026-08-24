@@ -217,7 +217,7 @@ parallel:
   pipeline_parallel_size: 1
   data_parallel_size: 1
   expert_parallel_size: 1
-  moe_data_parallel_size: 1    # --moe-dp-size；别名 moe_dp_size
+  moe_data_parallel_size: 1    # --moe-dp-size；别名 moe_dp_size（两者互斥，只写其一）
 ```
 
 > MoE 张量并行 `--moe-tp-size`（MTPt）**本模块固定为 1**，不支持配置。
@@ -447,18 +447,26 @@ layer_specs:
 `first_k_dense_replace` 来自捕获后的 HF/model config。TensorCast 的 DeepSeek V3.2
 实现同样以 `layer_idx < first_k_dense_replace` 选择 Dense 层，之后选择 MoE 层。
 
-一个 `layer_specs.<kind>` 必须且只能选择一种定义方式：
+一个 `layer_specs.<kind>` 必须声明下列来源之一（可组合规则见下）：
 
 ```text
-stages | include_fragment | compose
+stages | include_fragment | include_fragments | compose
 ```
 
-优先级建议是：能整包复用 `include_fragment` 就不要逐 stage 重写；只有新模型确实改变
-decoder 结构时才新增 decoder fragment。
+- `include_fragment` 与 `include_fragments` 互斥。
+- `compose` 不能与 `stages` / `include_fragment(s)` 混用。
+- `include_fragment` 或 `include_fragments` 可以再写 `stages`：导入的
+  fragment stage 在前，宿主 `stages` 追加在后；stage id 不得重复。
+- 仅写 `stages` 时不能带 `runtime_options` / `comparisons` / `activations`
+  override（那些只作用于已导入的 fragment / compose）。
+
+优先级建议是：能整包复用 `include_fragment(s)` 就不要逐 stage 重写；只有新模型
+确实改变 decoder 结构时才新增 decoder fragment。追加 `stages` 只用于宿主多出来
+的少量 stage（例如分类 4 full-attention 的 `shared_ffn`）。
 
 ### 5.3 Stage 与 Theory Tensor 声明
 
-直接 stage 必须包含 `id`，并且必须且只能选择 `source_options` 或 `include_stage`：
+直接 stage 必须包含 `id` 和 `source_options`：
 
 ```yaml
 - id: example
@@ -724,7 +732,7 @@ fragment schema 是严格的：
 
 1. `include_fragment`：导入 fragment 全部 stage，首选方式；
 2. region `include_fragment: {fragment, stage_group}`：导入一个完整 stage group；
-3. `include_stage`：只导入单个 stage；仅在宿主 region 需要重新组织少量 stage 时使用；
+3. `include_fragments`：一层导入多个叶子 pack，可选包级 `activation`；
 4. `theory.include_module_groups/include_stages`：只复用 Theory operators，不复用完整
    Runtime/comparison 契约；谨慎使用；
 5. 全量重写：只有结构和现有 fragment 实质不同才采用。
@@ -732,18 +740,17 @@ fragment schema 是严格的：
 三种引用形式不要混淆：
 
 ```yaml
-# layer：导入整个 decoder fragment
+# layer：导入整个 decoder fragment，或一次导入多个 fragment
 include_fragment: qwen3_dense_decoder_v1
+include_fragments:
+  - qwen3_attention_v1
+  - {fragment: qwen3_dense_ffn_v1, activation: qwen3_5_dense_ffn}
+  - {fragment: qwen3_moe_ffn_v1, activation: qwen3_5_moe_ffn}
 
 # region：导入 fragment 中一个 stage group
 include_fragment:
   fragment: mtp_framework_v1
   stage_group: request
-
-# stage：导入一个 stage，可在宿主 stage 覆盖 runtime/comparison
-include_stage:
-  fragment: some_fragment_v1
-  stage: attention
 ```
 
 fragment stage 可以携带 `runtime` 和 `comparisons` 默认值。模型 Spec 对已导入 stage 的
@@ -763,7 +770,9 @@ layer_specs:
 ```
 
 override 只能引用 fragment 已有 stage id；未知 id 直接加载失败。默认字段正确时不要重复
-写 override。
+写 override。`include_fragments` 列表项可以是 fragment id，或
+`{fragment, activation}`：activation 会套到该 fragment 展开的每一个 stage。
+`include_fragment` 后的 `stages` 追加在导入 stage 之后。
 
 ### 8.2 示例：decoder 相同，仅 Runtime kernel 名不同
 
@@ -796,22 +805,10 @@ regions:
         # 继承 attention_qkv/attention/dense_ffn 的 Theory、默认 Runtime 和 comparison。
         include_fragment: qwen3_dense_decoder_v1
 
-        # 只替换 attention stage 的完整 RuntimeStageOptions。
+        # 按 stage id 覆盖：boundary 出现则替换；ignored 追加到 fragment 默认值。
         runtime_options:
           attention:
             boundary_operators: [new_attention]
-            ignored_operators:
-              - view
-              - index
-              - reshape_and_cache
-              - split_with_sizes
-              - alias
-              - copy_
-              - slice
-              - select
-              - apply_rope
-              - dynamic_quantize_symmetric
-              - quantize
 ```
 
 上述配置的实际效果是：
@@ -821,13 +818,15 @@ regions:
 | `attention_qkv` 与 `dense_ffn` 全部配置 | 原 `qwen3_dense_decoder_v1` fragment |
 | `attention` Theory modules/shape/dtype | 原 fragment |
 | `attention` comparison | 原 fragment；未显式配置时仍走默认 `one_to_one` |
-| `attention` Runtime boundary/ignored operators | 新模型 Spec 的 `runtime_options.attention` |
+| `attention` Runtime boundary | 新模型 Spec 的 `runtime_options.attention.boundary_operators` |
+| `attention` Runtime ignored | fragment 默认 ignored ∪ Spec 追加项（本例未追加） |
 | `new_attention -> attention` 名称对齐 | 顶层 `operator_aliases` |
 
-需要特别注意：`runtime_options.<stage_id>` 是**整段替换**，不是字段级深度合并。只写新的
-`boundary_operators` 会令继承的 `ignored_operators` 变为空；如果新 kernel 仍需要原来的
-ignored 集合，就像示例一样完整保留。相反，如果 Runtime 边界没有变化、只是比较时的算子
-语义名称不同，则只增加 `operator_aliases`，不要覆盖 `runtime_options`。
+`runtime_options.<stage_id>` 按字段合并，不是整段 Runtime 替换。只写
+`boundary_operators` 时沿用 fragment 的 `ignored_operators`；只写
+`ignored_operators` 时沿用 fragment 的 boundary，并把新名字追加到 ignored。
+如果 Runtime 边界和 ignored 都没有变化、只是比较时的算子语义名称不同，则只增加
+`operator_aliases`，不要写 `runtime_options`。
 
 如果新模型同时复用这个 decoder 作为 MTP predictor，`compose.predictor` 仍引用同一个
 `qwen3_dense_decoder_v1`。当前 override 位于 language layer，只影响 language；MTP 的
@@ -860,6 +859,25 @@ model decoder predictor
 [adapter.after_predictor]
 framework.proposal_suffix                 -> repeated MTP layer stages
 ```
+
+混合注意力模型（多种 MTP predictor kind）用 `compose.predictors`，framework 只写一次：
+
+```yaml
+mtp:
+  activation: mtp_enabled
+  layer_layout_rule:
+    strategy: repeat
+    count_from: model_config.effective_num_mtp_layers
+    last_kind_from: model_config.full_layer_types
+  compose:
+    framework: mtp_framework_v1
+    predictors:
+      full_attention: qwen3_5_full_decoder_v1
+      linear_attention: qwen3_5_linear_decoder_v1
+```
+
+`last_kind_from` 取完整 `layer_types` 的最后一项并重复 MTP 层数。`compose.predictor`
+与 `compose.predictors`、以及二者与 `layer_specs` 均互斥。
 
 普通模型只替换 `predictor`，不复制公共 MTP YAML。只有真实模型代码在 predictor 前后存在
 额外语义适配时才新增 `mtp_predictor_adapter`，并在 compose 中增加

@@ -358,6 +358,28 @@ def test_run_profile_rejects_moe_tp_field(tmp_path: Path) -> None:
         load_diagnostics_run_profile(path)
 
 
+def test_run_profile_rejects_moe_dp_alias_conflict(tmp_path: Path) -> None:
+    """moe_data_parallel_size and moe_dp_size are aliases: both must not be set."""
+
+    path = tmp_path / "reject_moe_dp_alias.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "model_name: Qwen/Qwen3-30B-A3B",
+                "phase: prefill",
+                "batch_size: 1",
+                "query_length: 2",
+                "parallel:",
+                "  moe_data_parallel_size: 2",
+                "  moe_dp_size: 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SpecificationLoadError, match="aliases; provide only one"):
+        load_diagnostics_run_profile(path)
+
+
 def test_run_profile_rejects_unknown_word_embedding_tp_mode(tmp_path: Path) -> None:
     path = tmp_path / "embedding_invalid.yaml"
     path.write_text(

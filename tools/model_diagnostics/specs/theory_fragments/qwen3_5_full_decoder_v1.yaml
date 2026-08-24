@@ -1,0 +1,112 @@
+fragment_id: qwen3_5_full_decoder_v1
+fragment_kind: model_decoder
+include_fragments:
+  - qwen3_attention_v1
+  - {fragment: qwen3_dense_ffn_v1, activation: qwen3_5_dense_ffn}
+  - {fragment: qwen3_moe_ffn_v1, activation: qwen3_5_moe_ffn}
+runtime_options:
+  attention_qkv:
+    ignored_operators:
+    - mean
+    - pow
+    - rsqrt
+    - mul
+    - add
+    - convert_element_type
+    - expand
+    - clone
+    - neg
+    - sigmoid
+    - cat
+    - split
+    - unsqueeze
+  attention:
+    ignored_operators:
+    - mean
+    - pow
+    - rsqrt
+    - mul
+    - add
+    - convert_element_type
+    - sigmoid
+    - clone
+  dense_ffn:
+    boundary_operators:
+    - rms_norm
+    - rms_norm_dynamic_quant_symmetric
+    - rms_norm_quant
+    ignored_operators:
+    - copy_
+    - all_reduce
+    - mean
+    - pow
+    - rsqrt
+    - mul
+    - convert_element_type
+    - expand
+    - clone
+    - neg
+    - sigmoid
+    - cat
+    - permute
+    - split
+    - unsqueeze
+    - index
+  moe_gate:
+    boundary_operators:
+    - add_rms_norm2
+    - add_rms_norm_dynamic_quant2_symmetric
+    - add_rms_norm_quant2
+    - rms_norm
+    ignored_operators:
+    - mean
+    - pow
+    - rsqrt
+    - mul
+    - permute
+    - cat
+    - split
+    - unsqueeze
+    - expand
+    - clone
+    - neg
+    - sigmoid
+    - index
+    - dynamic_quantize_symmetric
+  moe_dispatch:
+    ignored_operators:
+    - index
+    - expand
+    - clone
+    - mul
+    - neg
+    - convert_element_type
+    - constant_pad_nd
+  moe_experts:
+    boundary_operators:
+    - grouped_matmul_swiglu
+    - grouped_matmul_quant_swiglu
+    - grouped_matmul_quant_int4_swiglu
+    - grouped_matmul_fp8_swiglu
+    - grouped_matmul_mxfp4_swiglu
+    - mm
+    - static_quant_linear
+    - static_quant_linear_int4
+    - fp8_linear
+    - mxfp4_linear
+    ignored_operators:
+    - constant_pad_nd
+  moe_combine:
+    ignored_operators:
+    - mean
+    - pow
+    - rsqrt
+    - convert_element_type
+    - sigmoid
+    - expand
+    - clone
+    - neg
+    - permute
+    - cat
+    - split
+    - index
