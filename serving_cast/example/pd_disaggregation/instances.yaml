@@ -1,0 +1,56 @@
+# PD 分离（Prefill / Decode disaggregation）实例拓扑示例
+#
+# serving_cast 根据 instance_groups 中出现的 pd_role 组合推断部署形态：
+#   - 仅出现 both                 -> pd_aggregation（PD 融合，见 serving_cast/example/instances.yaml）
+#   - 同时出现 prefill 和 decode  -> pd_disaggregation（本示例）
+#   - 其它组合（例如 both 与 prefill 混用、只有 prefill 没有 decode）
+#     -> serving_cast/main.py 抛出 ValueError("check instance's pd_role")
+#
+# 本示例使用单机 8 卡的典型 PD 分离切分：
+#   Prefill 池：1 个实例 x 4 卡（TP=4），计算密集，用较大 TP 压低 TTFT
+#   Decode  池：2 个实例 x 2 卡（TP=2），访存密集，用较小 TP + 多实例提高吞吐
+#   P:D 实例配比 = 1:2，由两组的 num_instances 决定
+instance_groups:
+  # ------------------------------ Prefill 资源池 ------------------------------
+  - num_instances: 1                 # Prefill 实例个数；与 decode 组共同决定 P:D 配比
+    num_devices_per_instance: 4      # 单个实例占用的设备数，需与 parallel_config.world_size 一致
+    device_type: TEST_DEVICE         # 设备画像名，取值来自 tensor_cast 的 DeviceProfile 注册表
+    pd_role: prefill                 # 该组只承担 prefill 阶段
+    parallel_config:
+      world_size: 4                  # 实例内并行总规模，等于 tp_size * dp_size
+      tp_size: 4                     # 张量并行度
+      dp_size: 1                     # 数据并行度；每个 dp rank 对应一个独立调度的 Engine
+      mlp_tp_size: null              # MLP 单独的 TP/DP 切分，null 表示复用 tp_size / dp_size
+      mlp_dp_size: null
+      lmhead_tp_size: null           # LM Head 单独的 TP/DP 切分，null 表示复用 tp_size / dp_size
+      lmhead_dp_size: null
+      ep_size: 1                     # 专家并行度，稠密模型保持 1
+      moe_tp_size: 4                 # MoE 部分的 TP；需满足 moe_tp_size * moe_dp_size * ep_size == world_size
+      moe_dp_size: 1                 # MoE 部分的 DP，稠密模型保持 1
+    communication_config:
+      host2device_bandwidth: 10000000000  # 10 GB/s，输入预处理阶段 Host -> Device 的拷贝带宽
+      host2device_rate: 0.5               # Host -> Device 有效带宽折算系数
+      device2device_bandwidth: 4000000000 # 4 GB/s，Prefill -> Decode 的 KV Cache 传输带宽
+      device2device_rate: 0.5             # KV 传输有效带宽折算系数
+
+  # ------------------------------ Decode 资源池 ------------------------------
+  - num_instances: 2                 # Decode 实例个数，2 个实例承接同一个 Prefill 池的输出
+    num_devices_per_instance: 2
+    device_type: TEST_DEVICE
+    pd_role: decode                  # 该组只承担 decode 阶段
+    parallel_config:
+      world_size: 2
+      tp_size: 2
+      dp_size: 1
+      mlp_tp_size: null
+      mlp_dp_size: null
+      lmhead_tp_size: null
+      lmhead_dp_size: null
+      ep_size: 1
+      moe_tp_size: 2                 # 需满足 moe_tp_size * moe_dp_size * ep_size == world_size
+      moe_dp_size: 1
+    communication_config:
+      host2device_bandwidth: 10000000000  # 10 GB/s
+      host2device_rate: 0.5
+      device2device_bandwidth: 4000000000 # 4 GB/s，Decode 侧接收 KV Cache 的带宽
+      device2device_rate: 0.5

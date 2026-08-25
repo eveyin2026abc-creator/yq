@@ -74,6 +74,16 @@ optional arguments:
 python -m serving_cast.main --instance_config_path=./serving_cast/example/instances.yaml --common_config_path=./serving_cast/example/common.yaml
 ```
 
+- PD 分离用法
+
+`serving_cast/example/pd_disaggregation/` 提供了 Prefill 与 Decode 拆分部署的完整案例（实例拓扑、资源配置、请求负载、KV 传输参数与结果解释），可用一条命令运行：
+
+```bash
+bash serving_cast/example/pd_disaggregation/run_pd_disaggregation.sh
+```
+
+字段含义、P:D 配比调整方式与常见失败原因详见《[PD 分离仿真示例](../../../serving_cast/example/pd_disaggregation/README.md)》。
+
 ### 4.1 结果
 
 仿真结束后，控制台会打印类似以下的性能摘要：

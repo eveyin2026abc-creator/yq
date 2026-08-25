@@ -371,8 +371,11 @@ class ModelRunner:
     def get_kv_cache_num_bytes(self, num_tokens) -> int:
         result = self.tensor_cast_model_runner.get_kv_cache_num_bytes(num_tokens)
         if isinstance(result, tuple):
-            return result[1] * num_tokens
-        return result
+            # TensorCast reports the per-token KV footprint as a float, so round it up:
+            # a transfer never moves a fraction of a byte, and CommunicationManager
+            # only accepts positive integers.
+            result = result[1] * num_tokens
+        return math.ceil(result)
 
     def get_inputs_num_bytes(self, batch: List[Request]) -> int:
         batch = self.request2info(batch)

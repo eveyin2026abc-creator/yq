@@ -880,7 +880,11 @@ class TestModelRunnerIntegration(unittest.TestCase):
         runner.shutdown()
 
     def test_model_runner_get_kv_cache_num_bytes(self):
-        """Test get_kv_cache_num_bytes method."""
+        """Test get_kv_cache_num_bytes method.
+
+        CommunicationManager.device2device_async rejects non-int byte counts, so the
+        PD disaggregation KV transfer path breaks unless a positive int is returned.
+        """
         parallel_config = ParallelConfig(
             world_size=1,
             tp_size=1,
@@ -888,7 +892,8 @@ class TestModelRunnerIntegration(unittest.TestCase):
         )
         runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
         num_bytes = runner.get_kv_cache_num_bytes(100)
-        self.assertIsNotNone(num_bytes)
+        self.assertIsInstance(num_bytes, int)
+        self.assertGreater(num_bytes, 0)
         runner.shutdown()
 
     def test_model_runner_get_inputs_num_bytes(self):
