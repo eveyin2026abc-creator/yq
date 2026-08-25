@@ -49,4 +49,4 @@ CI 全绿（以 `ci-pipeline-passed` label 为准），或存在证据充分、�
 
 ## 后台服务与通知
 
-PR 流水线状态与阻塞流转通知由常驻服务 后台合入管理服务 统一驱动（基于 `/merge`、CI label 和 diff_comment），agent 不在 PR 评论写 `/next` 治理评论，避免双重通知。CI 修复循环内的 commit、push 和重新触发均由本技能自动完成。协议见 `spec/governance/next-comment-protocol.md`。
+PR 流水线状态与阻塞流转通知由常驻服务 后台合入管理服务 统一驱动（基于 `/merge`、CI label 和 diff_comment），agent 不写治理评论，避免双重通知。CI 修复循环内的 commit、push 和重新触发均由本技能自动完成。

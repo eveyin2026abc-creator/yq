@@ -135,4 +135,4 @@ gitcode pr comment <PR编号> -R <TARGET_REPO> --body-file "$TMPDIR/feedback-sum
 
 ## 后台服务与通知
 
-PR 检视意见处理后的流转通知（退回作者、检视通过、转交等）由常驻服务 后台合入管理服务 统一驱动（基于 diff_comment 解决状态、`/merge`、`/lgtm` 等），agent 不在 PR 评论写 `/next` 治理评论，避免双重通知。协议见 `spec/governance/next-comment-protocol.md`。
+PR 检视意见处理后的流转通知（退回作者、检视通过、转交等）由常驻服务 后台合入管理服务 统一驱动（基于 diff_comment 解决状态、`/merge`、`/lgtm` 等），agent 不写治理评论，避免双重通知。

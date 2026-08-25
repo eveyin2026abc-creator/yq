@@ -65,4 +65,4 @@ metadata:
 
 ## 后台服务与通知
 
-PR 合入流程的流转通知（请求检视、退回作者、转交、CI 通过通知 approver 等）由常驻服务 后台合入管理服务 基于 `/merge` 驱动，agent 不在 PR 评论写 `/next` 治理评论，避免双重通知。Issue 侧状态更新通过 CLI 评论记录。协议见 `spec/governance/next-comment-protocol.md`。
+PR 合入流程的流转通知（请求检视、退回作者、转交、CI 通过通知 approver 等）由常驻服务 后台合入管理服务 基于 `/merge` 驱动，agent 不写治理评论，避免双重通知。Issue 侧状态更新通过 CLI 评论记录。
