@@ -1,0 +1,21 @@
+# Cluster configuration
+
+# Whether to prefix docker commands with sudo
+docker_use_sudo = false
+
+[vllm_mix]
+chips_per_node = 8              # A3=16, A2=8; used by build_shell_scripts.py to compute dp_size_local
+#data_parallel_rpc_port = 13389  # Optional, the DP handshake RPC port; when unset, a free port is picked automatically each optimization cycle
+
+[[vllm_mix.node]]
+host = "<node_ip>"              # Master node IP, e.g. 192.168.0.10
+#nic_name = "<nic_name>"  # Optional; when unset, detected automatically before optimization (detect_nic.py)
+
+[[vllm_mix.workers]]
+host = "<worker_ip>"            # Worker node IP, e.g. 192.168.0.11
+ssh_port = 22
+ssh_user = "<ssh_user>"
+password = "<ssh_password>"     # Plaintext or Base64; prefer SSH key auth (omit this key) — see README
+#nic_name = "<nic_name>"  # Optional; when unset, detected automatically before optimization (detect_nic.py)
+docker_container_id = "<container_id>"
+

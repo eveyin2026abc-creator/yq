@@ -1,0 +1,17 @@
+[project]
+name = "multihost_inference_optimization"
+version = "0.1.0"
+description = "multihost_inference_optimization performance benchmarking plugin for msserviceprofiler"
+requires-python = ">=3.8"
+
+dependencies = [
+    "fabric>=2.0",
+    "pyroute2>=0.7.3",
+    "jinja2>=3.0",
+    "loguru",
+    "requests",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.entry-points."optix.plugins"]
+multihost_inference_optimization = "multihost_inference_optimization:register"
