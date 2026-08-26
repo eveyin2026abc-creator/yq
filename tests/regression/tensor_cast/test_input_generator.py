@@ -9,6 +9,7 @@ from tensor_cast.core.input_generator import (
     _is_v4_model,
     _layer_uses_sparse_attention_indexer,
     _load_preprocessor_pixel_limits,
+    _resolve_decoder_attention_layer,
     _resolve_decoder_layers,
     _resolve_indexer_cache_dtype,
     _resolve_main_kv_cache_dtype,
@@ -18,12 +19,14 @@ from tensor_cast.core.input_generator import (
     generate_image_inputs,
     generate_inputs,
     generate_inputs_varlen,
+    get_kv_cache_info,
     get_sparse_attention_indexer_cache_info,
     kv_cache_excluded_layer_indices,
     resize_image,
 )
 from tensor_cast.layers.deepseek_v4 import DeepseekV4SparseAttention
 from tensor_cast.layers.glm5 import Glm5SparseAttention
+from tensor_cast.layers.utils import ModelWrapperBase
 from tensor_cast.layers.sampler import Sampler
 from tensor_cast.model_config import MtpConfig
 from tensor_cast.device import TEST_DEVICE
@@ -80,6 +83,26 @@ def test_resolve_decoder_layers_from_language_model_layout():
     )
 
     assert _resolve_decoder_layers(model) is layers
+
+
+def test_resolve_decoder_attention_layer_supports_attention_fallback():
+    attention = torch.nn.Identity()
+
+    assert _resolve_decoder_attention_layer(SimpleNamespace(attention=attention)) is attention
+
+
+def test_resolve_decoder_attention_layer_prefers_self_attn():
+    self_attn = torch.nn.Identity()
+    attention = torch.nn.Linear(1, 1)
+
+    assert _resolve_decoder_attention_layer(SimpleNamespace(self_attn=self_attn, attention=attention)) is self_attn
+
+
+def test_resolve_decoder_attention_layer_unwraps_model_wrapper():
+    attention = torch.nn.Identity()
+    wrapper = ModelWrapperBase(attention)
+
+    assert _resolve_decoder_attention_layer(SimpleNamespace(attention=wrapper)) is attention
 
 
 @patch(
@@ -658,6 +681,39 @@ class TestSparseAttentionCacheHelpers:
         assert 1 in info["indexer_cache_by_layers"]
         assert info["indexer_cache_by_layers"][1].shape == (4, 16, 128)
         assert info["indexer_cache_per_token"] > 0
+
+
+class TestBailingV3KvCacheHelpers:
+    @pytest.mark.parametrize("model_dtype", [torch.float16, torch.bfloat16, torch.float32])
+    @patch("tensor_cast.core.input_generator.get_attention_quant_config", return_value=None)
+    def test_kda_cache_is_fixed_per_request_state(self, _mock_attn_quant, model_dtype):
+        attention_type = type("BailingMoeV3KimiDeltaAttention", (torch.nn.Module,), {})
+        attention = attention_type()
+        attention.num_heads = 8
+        attention.head_dim = 4
+        attention.conv_size = 3
+        model = MagicMock()
+        model.num_hidden_layers = 1
+        model.model_config.mla_config = SimpleNamespace()
+        model.model_config.dtype = model_dtype
+        model.model_config.hf_config = None
+        model.model_config.parallel_config.tensor_parallel_size = 2
+        model.text_config = SimpleNamespace(model_type="bailing_hybrid")
+        model.unwrap.return_value = SimpleNamespace(
+            layers=[SimpleNamespace(self_attn=attention)],
+        )
+
+        cache_by_layers, cache_per_token = get_kv_cache_info(
+            model,
+            num_blocks=4,
+            block_size=16,
+            batch_size=3,
+        )
+
+        recurrent_state_bytes = 3 * 4 * 4 * 4 * torch.empty((), dtype=torch.float32).element_size()
+        conv_state_bytes = 3 * 3 * 4 * 4 * 2 * torch.empty((), dtype=model_dtype).element_size()
+        assert cache_by_layers[0].numel() == recurrent_state_bytes + conv_state_bytes
+        assert cache_per_token == 0
 
 
 class TestDeepseekV4KvCacheHelpers:

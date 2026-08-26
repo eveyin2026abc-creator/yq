@@ -92,7 +92,7 @@ def _(
     qk_nope_head_dim: int,
     qk_rope_head_dim: int,
     kv_lora_rank: int,
-    q_lora_rank: int,
+    q_lora_rank: Optional[int],
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Fused MLA preprocessing op that models RMS norm, matmuls, and RoPE rotation.
@@ -102,6 +102,8 @@ def _(
         cos/sin: rotary embedding caches shaped (1, seq_len, qk_rope_head_dim).
         q_a_proj_weight / q_b_proj_weight: LoRA weights with shapes
             (q_lora_rank, hidden_size) and (num_heads * qk_head_dim, q_lora_rank).
+            When q_lora_rank is None, q_a_proj_weight is the direct q_proj weight
+            and q_b_proj_weight/q_a_layernorm_weight are None.
         q_a_layernorm_weight: RMSNorm scale for the LoRA branch (q_lora_rank,).
         kv_a_proj_weight: (kv_lora_rank + qk_rope_head_dim, hidden_size) matrix
             producing compressed key/value streams; kv_a_layernorm_weight matches
@@ -144,10 +146,10 @@ def _(
     qk_nope_head_dim: int,
     qk_rope_head_dim: int,
     kv_lora_rank: int,
-    q_lora_rank: int,
+    q_lora_rank: Optional[int],
     q_a_proj_scale: torch.Tensor,
     q_a_proj_offset: Optional[torch.Tensor],
-    q_b_proj_scale: torch.Tensor,
+    q_b_proj_scale: Optional[torch.Tensor],
     q_b_proj_offset: Optional[torch.Tensor],
     kv_a_proj_scale: torch.Tensor,
     kv_a_proj_offset: Optional[torch.Tensor],

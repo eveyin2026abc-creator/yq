@@ -25,6 +25,7 @@ from ..utils import exact_division
 # Qwen2-VL / Qwen3-VL preprocessor_config.json defaults when no local config is available.
 _QWEN_VL_DEFAULT_MIN_PIXELS = 65536
 _QWEN_VL_DEFAULT_MAX_PIXELS = 16777216
+_BAILING_V3_KDA_CONV_STATE_COUNT = 3
 
 
 @dataclass
@@ -369,7 +370,7 @@ def _load_preprocessor_pixel_limits(model_id: str):
             return min_pixels, max_pixels
 
     try:
-        from transformers import AutoImageProcessor
+        from transformers import AutoImageProcessor  # pylint: disable=no-name-in-module
 
         image_processor = AutoImageProcessor.from_pretrained(model_id, local_files_only=True)
         size = getattr(image_processor, "size", None)
@@ -506,6 +507,8 @@ def _resolve_decoder_attention_layer(layer, preserve_attention_wrapper: bool = F
         visited.add(id(current))
 
         attention_layer = getattr(current, "self_attn", None)
+        if attention_layer is None:
+            attention_layer = getattr(current, "attention", None)
         if attention_layer is not None:
             if preserve_attention_wrapper:
                 return attention_layer
@@ -715,6 +718,31 @@ def _resolve_indexer_cache_dtype(model, layer_idx: int) -> torch.dtype:
     return cache_dtype
 
 
+def _resolve_bailing_v3_kda_cache_bytes(attention_layer, model_config, parallel_config, batch_size) -> int:
+    local_heads = exact_division(
+        int(attention_layer.num_heads),
+        parallel_config.tensor_parallel_size,
+    )
+    head_dim = int(attention_layer.head_dim)
+    conv_kernel_size = int(attention_layer.conv_size)
+    request_batch_size = int(batch_size or 1)
+
+    # FLA KDA keeps its final recurrent state in FP32 regardless of the
+    # activation dtype. Its Q/K/V short-convolution states retain the model
+    # working dtype.
+    recurrent_state_element_size = torch.empty((), dtype=torch.float32).element_size()
+    recurrent_state_bytes = request_batch_size * local_heads * head_dim * head_dim * recurrent_state_element_size
+    conv_state_bytes = (
+        _BAILING_V3_KDA_CONV_STATE_COUNT
+        * request_batch_size
+        * local_heads
+        * head_dim
+        * (conv_kernel_size - 1)
+        * torch.empty((), dtype=model_config.dtype).element_size()
+    )
+    return recurrent_state_bytes + conv_state_bytes
+
+
 def kv_cache_excluded_layer_indices(model) -> set[int]:
     """Return layer indices whose kv_cache placeholder must be excluded from
     KV-cache byte/per-token accounting.
@@ -802,6 +830,19 @@ def _get_kv_cache_info(
             attention_layer = None
             if decoder_layers is not None and i < len(decoder_layers):
                 attention_layer = _resolve_decoder_attention_layer(decoder_layers[i])
+            if attention_layer is not None and type(attention_layer).__name__ == "BailingMoeV3KimiDeltaAttention":
+                kv_cache_by_layers[i] = torch.empty(
+                    _resolve_bailing_v3_kda_cache_bytes(
+                        attention_layer,
+                        model_config,
+                        parallel_config,
+                        batch_size,
+                    ),
+                    dtype=torch.uint8,
+                    device="meta",
+                )
+                # KDA state scales per request, not per token.
+                continue
             if is_v4_model:
                 kv_cache_shape = _resolve_v4_kv_cache_size(
                     model,

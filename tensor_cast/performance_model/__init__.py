@@ -1180,6 +1180,71 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     return properties
 
 
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.kimi_delta_attention_core.default)
+def _(
+    op_invoke_info: OpInvokeInfo,
+) -> OpInvokeInfo.PerformanceProperties:
+    q, _k, v, f, beta, gate, state, query_lens, _seq_lens, conv_kernel_size = op_invoke_info.args
+    num_tokens = q.numel() // (q.size(-2) * q.size(-1))
+    num_heads = q.size(-2)
+    head_dim = q.size(-1)
+    projection_size = num_heads * head_dim
+
+    properties = op_invoke_info.get_memory_access_properties()
+    properties.memory_write_bytes += bytes_of_tensor(state)
+
+    conv_gp_ops = num_tokens * 3 * projection_size * conv_kernel_size * 2 + _elementwise_silu_ops(
+        num_tokens * 3 * projection_size
+    )
+    beta_gp_ops = _elementwise_sigmoid_ops(beta.numel())
+    # -exp(A_log) * softplus(f.float() + dt_bias): one cast, one add,
+    # one multiply per gate element, plus one exp per head.
+    forget_gate_gp_ops = num_heads + f.numel() * (_elementwise_softplus_ops(1) + 3)
+    output_gate_gp_ops = (
+        _rmsnorm_ops(num_tokens * num_heads, head_dim) + _elementwise_sigmoid_ops(gate.numel()) + gate.numel()
+    )
+
+    try:
+        request_query_lens = [int(value) for value in query_lens.tolist()]
+    except (RuntimeError, TypeError) as exc:
+        logger.warning(
+            "Failed to read Kimi Delta Attention query_lens (%s); falling back to a single-request "
+            "assumption with num_tokens=%d. Batched FLOPs estimates may be inaccurate.",
+            exc,
+            num_tokens,
+        )
+        request_query_lens = [num_tokens]
+
+    recurrence_mma_ops = 0
+    recurrence_gp_ops = 0
+    recurrence_fp32_gp_ops = 0
+    for query_len in request_query_lens:
+        if query_len <= 64:
+            mma_ops, gp_ops, fp32_gp_ops = _linear_attention_recurrent_gated_delta_ops(
+                1, query_len, num_heads, head_dim, head_dim
+            )
+        else:
+            mma_ops, gp_ops, fp32_gp_ops = _linear_attention_chunk_gated_delta_ops(
+                1, query_len, num_heads, head_dim, head_dim
+            )
+        recurrence_mma_ops += mma_ops
+        recurrence_gp_ops += gp_ops
+        recurrence_fp32_gp_ops += fp32_gp_ops
+
+    _accumulate_compute_ops(
+        properties,
+        q.dtype,
+        mma_ops=recurrence_mma_ops,
+        gp_ops=conv_gp_ops + beta_gp_ops + forget_gate_gp_ops + output_gate_gp_ops + recurrence_gp_ops,
+    )
+    _accumulate_compute_ops(
+        properties,
+        torch.float32,
+        gp_ops=recurrence_fp32_gp_ops,
+    )
+    return properties
+
+
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.attention.default)
 def _(
     op_invoke_info: OpInvokeInfo,
@@ -1415,17 +1480,17 @@ def _mlapo_properties_helper(
 
     # Fused MLA preprocessing op that models RMS norm, matmuls, and RoPE
 
-    # Op1: q_a_proj
-    # Shapes: (num_tokens, hidden_size) @ (hidden_size, q_lora_rank)
-    op1_ops = num_tokens * hidden_size * q_lora_rank * 2
-
-    # Op2: q_a_layernorm
-    # Each RMS norm element (mean, variance, scale) is approximated as ~5 FLOPs.
-    op2_ops = num_tokens * q_lora_rank * 5
-
-    # Op3: q_b_proj
-    # Shapes: (num_tokens, q_lora_rank) @ (q_lora_rank, num_heads * qk_head_dim)
-    op3_ops = num_tokens * q_lora_rank * num_heads * qk_head_dim * 2
+    if q_lora_rank is None:
+        # Direct q_proj: (num_tokens, hidden_size) @
+        # (hidden_size, num_heads * qk_head_dim).
+        op1_ops = num_tokens * hidden_size * num_heads * qk_head_dim * 2
+        op2_ops = 0
+        op3_ops = 0
+    else:
+        # LoRA q path: q_a_proj + RMSNorm + q_b_proj.
+        op1_ops = num_tokens * hidden_size * q_lora_rank * 2
+        op2_ops = num_tokens * q_lora_rank * 5
+        op3_ops = num_tokens * q_lora_rank * num_heads * qk_head_dim * 2
 
     # Op4: q_RoPE
     # Each RoPE element (multiply by cos, rotate + multiply by sin, add) is approximated as ~3 FLOPs.
@@ -1446,8 +1511,12 @@ def _mlapo_properties_helper(
 
     properties = op_invoke_info.get_memory_access_properties()
     activation_bytes = hidden_states.element_size()
-    q_a_bytes = num_tokens * q_lora_rank * activation_bytes
-    qa_normed_read_bytes = q_a_bytes
+    if q_lora_rank is None:
+        q_a_bytes = num_tokens * num_heads * qk_head_dim * activation_bytes
+        qa_normed_read_bytes = 0
+    else:
+        q_a_bytes = num_tokens * q_lora_rank * activation_bytes
+        qa_normed_read_bytes = q_a_bytes
     compressed_kv_bytes = num_tokens * (kv_lora_rank + qk_rope_head_dim) * activation_bytes
     properties.memory_readwrite_bytes += 2 * (q_a_bytes + compressed_kv_bytes)
     properties.memory_read_bytes += qa_normed_read_bytes
@@ -1517,20 +1586,28 @@ def _(
     if is_fp8_dtype(kv_a_proj_weight.dtype):
         # QDQ for q_a_proj
         quant1_ops = num_tokens * hidden_size
-        dequant1_ops = hidden_size * q_lora_rank
-        # QDQ for q_b_proj
-        quant2_ops = num_tokens * q_lora_rank
-        dequant2_ops = q_lora_rank * num_heads * qk_head_dim
+        if q_lora_rank is None:
+            dequant1_ops = hidden_size * num_heads * qk_head_dim
+            quant2_ops = 0
+            dequant2_ops = 0
+        else:
+            dequant1_ops = hidden_size * q_lora_rank
+            quant2_ops = num_tokens * q_lora_rank
+            dequant2_ops = q_lora_rank * num_heads * qk_head_dim
         # QDQ for kv_a_proj
         quant3_ops = num_tokens * hidden_size
         dequant3_ops = hidden_size * (kv_lora_rank + qk_rope_head_dim)
     else:
         # QDQ for q_a_proj
         quant1_ops = num_tokens * hidden_size * qdq_op_factor1
-        dequant1_ops = hidden_size * q_lora_rank * qdq_op_factor1
-        # QDQ for q_b_proj
-        quant2_ops = num_tokens * q_lora_rank * qdq_op_factor2
-        dequant2_ops = q_lora_rank * num_heads * qk_head_dim * qdq_op_factor2
+        if q_lora_rank is None:
+            dequant1_ops = hidden_size * num_heads * qk_head_dim * qdq_op_factor1
+            quant2_ops = 0
+            dequant2_ops = 0
+        else:
+            dequant1_ops = hidden_size * q_lora_rank * qdq_op_factor1
+            quant2_ops = num_tokens * q_lora_rank * qdq_op_factor2
+            dequant2_ops = q_lora_rank * num_heads * qk_head_dim * qdq_op_factor2
         # QDQ for kv_a_proj
         quant3_ops = num_tokens * hidden_size * qdq_op_factor3
         dequant3_ops = hidden_size * (kv_lora_rank + qk_rope_head_dim) * qdq_op_factor3

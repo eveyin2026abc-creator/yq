@@ -7,6 +7,7 @@ from . import (  # noqa: F401
     fused_moe,
     gmm,
     internal,
+    kda,
     la,
     layernorm,
     linear,

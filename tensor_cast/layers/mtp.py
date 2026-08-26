@@ -43,6 +43,32 @@ class MultiTokenPredictorLayer(torch.nn.Module):
         return hidden_states
 
 
+class BailingV3MultiTokenPredictorLayer(torch.nn.Module):
+    def __init__(self, hf_config, mtp_block: torch.nn.Module):
+        super().__init__()
+        del hf_config
+        self.mtp_block = mtp_block
+
+    def forward(
+        self,
+        inputs_embeds: torch.Tensor,
+        position_ids: torch.Tensor,
+        previous_hidden_states: torch.Tensor,
+        position_embeddings: Optional[torch.Tensor] = None,
+        **kwargs,
+    ):
+        hidden_states = self.mtp_block(
+            inputs_embeds,
+            previous_hidden_states,
+            position_ids=position_ids,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        return hidden_states
+
+
 def _resolve_mtp_layer_cls(hf_config, mtp_block):
     """Select the appropriate MTP layer class based on HC (Hyper-Connection) config.
 
@@ -50,6 +76,11 @@ def _resolve_mtp_layer_cls(hf_config, mtp_block):
     to expand [B,S,D] -> [B,S,Hc,D] before the MTP block and reduce after.
     V3/V3.2 models use the base MultiTokenPredictorLayer.
     """
+    # Remote-code model classes are loaded from a dynamic module, so matching
+    # the stable class name avoids importing a vendor-specific implementation.
+    if type(mtp_block).__name__ == "BailingMoeV3MTPLayer":
+        return BailingV3MultiTokenPredictorLayer
+
     hc_mult = int(getattr(mtp_block, "hc_mult", None) or getattr(hf_config, "hc_mult", 1) or 1)
     if hc_mult > 1:
         # Import here to avoid circular dependency at module level.

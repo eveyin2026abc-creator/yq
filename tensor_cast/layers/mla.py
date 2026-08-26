@@ -249,16 +249,23 @@ class MultiheadLatentAttentionTensorCast(MultiheadLatentAttentionBase):
         num_tokens = batch_size * seq_length
         hidden_states_view = hidden_states.view(num_tokens, -1)
         cos, sin = position_embeddings
-        self.q_a_proj_weight, self.q_a_proj_scale, self.q_a_proj_offset = self.extract_qparams(self.q_a_proj)
-        self.q_b_proj_weight, self.q_b_proj_scale, self.q_b_proj_offset = self.extract_qparams(self.q_b_proj)
+        if self.q_lora_rank is None:
+            self.q_a_proj_weight, self.q_a_proj_scale, self.q_a_proj_offset = self.extract_qparams(self.q_proj)
+            self.q_a_layernorm_weight = None
+            self.q_b_proj_weight = None
+            self.q_b_proj_scale = None
+            self.q_b_proj_offset = None
+        else:
+            self.q_a_proj_weight, self.q_a_proj_scale, self.q_a_proj_offset = self.extract_qparams(self.q_a_proj)
+            self.q_b_proj_weight, self.q_b_proj_scale, self.q_b_proj_offset = self.extract_qparams(self.q_b_proj)
+            self.q_a_layernorm_weight = self.q_a_layernorm.weight.data
         self.kv_a_proj_weight, self.kv_a_proj_scale, self.kv_a_proj_offset = self.extract_qparams(
             self.kv_a_proj_with_mqa
         )
-        self.q_a_layernorm_weight = self.q_a_layernorm.weight.data
         self.kv_a_layernorm_weight = self.kv_a_layernorm.weight.data
         linear_quant_enabled = (
             getattr(self, "q_a_proj_scale", None) is not None
-            and getattr(self, "q_b_proj_scale", None) is not None
+            and (self.q_lora_rank is None or getattr(self, "q_b_proj_scale", None) is not None)
             and getattr(self, "kv_a_proj_scale", None) is not None
         )
         if linear_quant_enabled:

@@ -171,6 +171,66 @@ class TestMlaIndexerCacheHooks(unittest.TestCase):
 
         self.assertIs(wrapper.kv_b_proj_scale, quant_kv_b.weight_scale)
 
+    def test_direct_q_forward_uses_q_proj_without_lora_intermediates(self):
+        inner = nn.Module()
+        inner.num_heads = 2
+        inner.q_lora_rank = None
+        inner.qk_nope_head_dim = 1
+        inner.qk_rope_head_dim = 1
+        inner.qk_head_dim = 2
+        inner.kv_lora_rank = 2
+        inner.v_head_dim = 2
+        inner.q_proj = nn.Linear(4, 4, bias=False)
+        inner.kv_a_proj_with_mqa = nn.Linear(4, 3, bias=False)
+        inner.kv_a_layernorm = nn.LayerNorm(2)
+        inner.kv_b_proj = nn.Linear(2, 6, bias=False)
+        inner.o_proj = nn.Identity()
+        wrapper = MultiheadLatentAttentionTensorCast(
+            MlaConfig(module_name="FakeMla"),
+            inner,
+            ParallelGroup(rank=0, rank_groups=[[0]], global_world_size=1),
+        )
+
+        hidden_states = torch.empty((1, 3, 4))
+        q_states = torch.empty((3, 2, 2))
+        kv_c_normed = torch.empty((3, 2))
+        k_rot = torch.empty((3, 1))
+        unused_qa_normed = torch.empty((3, 0))
+
+        def attention_backend(**kwargs):
+            return kwargs["q"]
+
+        with (
+            patch(
+                "torch.ops.tensor_cast.mlapo",
+                return_value=(q_states, kv_c_normed, k_rot, unused_qa_normed),
+            ) as mock_mlapo,
+            patch.object(
+                MultiheadLatentAttentionTensorCast,
+                "_get_attention_op",
+                return_value=attention_backend,
+            ),
+            patch.object(
+                MultiheadLatentAttentionTensorCast,
+                "_pre_attention_forward",
+                return_value=None,
+            ) as mock_pre_attention,
+        ):
+            output, attention_weights = wrapper(
+                hidden_states,
+                position_embeddings=(torch.empty((3, 1)), torch.empty((3, 1))),
+                attention_mask=None,
+            )
+
+        mlapo_args = mock_mlapo.call_args.args
+        self.assertEqual(mlapo_args[3].data_ptr(), inner.q_proj.weight.data.data_ptr())
+        self.assertIsNone(mlapo_args[4])
+        self.assertIsNone(mlapo_args[5])
+        self.assertIsNone(mlapo_args[13])
+        self.assertIsNone(mock_pre_attention.call_args.kwargs["qa_normed"])
+        self.assertEqual(output.shape, hidden_states.shape)
+        self.assertIsNone(attention_weights)
+
 
 class TestDeepseekSparseAttentionIndexer(unittest.TestCase):
     def setUp(self):
