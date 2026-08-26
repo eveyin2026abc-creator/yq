@@ -282,7 +282,7 @@ export default {
     },
     {
       "id": "quantize_attention_action",
-      "label": { "zh": "KV cache 量化", "en": "Attention KV Cache Quantization" },
+      "label": { "zh": "Attention 量化", "en": "Attention Quantization" },
       "control": "multi-select",
       "dataType": "string[]",
       "default": ["INT8"],
@@ -290,7 +290,7 @@ export default {
       "tooltip": { "zh": "Attention KV Cache 的量化策略（可多选；每个取值单独仿真，结果区生成多用例对比）。", "en": "Quantization for attention KV cache (multi-select; each value runs independently and yields a multi-case comparison)." },
       "optionSource": { "type": "inline", "values": QUANTIZE_ATTENTION_OPTIONS },
       "validation": [
-        { "rule": "required", "message": { "zh": "KV cache 量化为必填项", "en": "Attention KV Cache Quantization is required" }, "trigger": ["change", "blur"] }
+        { "rule": "required", "message": { "zh": "Attention 量化为必填项", "en": "Attention Quantization is required" }, "trigger": ["change", "blur"] }
       ]
     },
     {
