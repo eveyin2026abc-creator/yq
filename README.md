@@ -76,7 +76,7 @@
 <details>
 <summary><b>模型推理性能仿真</b></summary>
 
-🔹 多硬件仿真（Atlas 800 A2/A3、Atlas 350 等昇腾设备），支持自定义设备画像<br>
+🔹 多硬件仿真（Atlas 800 A2/A3、Atlas 350/850/850E/950 等昇腾设备），支持自定义设备画像<br>
 🔹 LLM Prefill / Decode 分阶段仿真<br>
 🔹 Prefix Cache 仿真<br>
 🔹 MTP 投机解码仿真<br>

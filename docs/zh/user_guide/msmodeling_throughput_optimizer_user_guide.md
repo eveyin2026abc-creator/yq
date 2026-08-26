@@ -322,10 +322,7 @@ General Options:
                         ModelScope ids, but may execute remote Python code through trust_remote_code=True and is not security-guaranteed.
   --device DEVICE [DEVICE ...]
                         Device profile(s) to evaluate. One or more registered DeviceProfile names.
-                        Supported values: TEST_DEVICE, ATLAS_800_A2_376T_64G, ATLAS_800_A2_313T_64G,
-                        ATLAS_800_A2_280T_64G, ATLAS_800_A2_280T_64G_PCIE, ATLAS_800_A2_280T_32G_PCIE,
-                        ATLAS_800_A3_752T_128G_DIE, ATLAS_800_A3_560T_128G_DIE,
-                        ATLAS_800_A3_560T_128G_DIE_ROCE, ATLAS_350_425T_112G, ATLAS_350_425T_84G.
+                        Supported values: any registered DeviceProfile name; see the TensorCast user guide.
                         Multiple values enable cross-hardware comparison tables.
                         Duplicate names are removed; input order is preserved.
                         If omitted, defaults to TEST_DEVICE. (default: TEST_DEVICE)
@@ -441,7 +438,7 @@ PD Ratio Optimization Options:
 
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
-| `--device` | Options | 可选 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。<br>1. 类型：Str 或 List[Str]。<br>2. 参考值：`TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：未指定时使用 `TEST_DEVICE`。<br>4. 支持一次传入多个已注册 `DeviceProfile` 名称，重复名称会去重并保留输入顺序。 |
+| `--device` | Options | 可选 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。<br>1. 类型：Str 或 List[Str]。<br>2. 参考值：任意已注册的 `DeviceProfile` 名称；内置值见 TensorCast 用户指南“设备类型”章节。<br>3. 默认值：未指定时使用 `TEST_DEVICE`。<br>4. 支持一次传入多个已注册 `DeviceProfile` 名称，重复名称会去重并保留输入顺序。 |
 | `--input-length` | Options | 必选 | 输入 prompt 的 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--output-length` | Options | 必选 | 期望生成的输出 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--mtp-acceptance-rates` | Options | 可选 | 指定 MTP token 的接受率列表。<br>1. 类型：List[Float]。<br>2. 取值范围：浮点数列表。<br>3. 默认值：`[0.9, 0.6, 0.4, 0.2]`。 |

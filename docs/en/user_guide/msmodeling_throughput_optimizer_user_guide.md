@@ -276,10 +276,7 @@ General Options:
                         ModelScope ids, but may execute remote Python code through trust_remote_code=True and is not security-guaranteed.
   --device DEVICE [DEVICE ...]
                         Device profile(s) to evaluate. One or more registered DeviceProfile names.
-                        Supported values: TEST_DEVICE, ATLAS_800_A2_376T_64G, ATLAS_800_A2_313T_64G,
-                        ATLAS_800_A2_280T_64G, ATLAS_800_A2_280T_64G_PCIE, ATLAS_800_A2_280T_32G_PCIE,
-                        ATLAS_800_A3_752T_128G_DIE, ATLAS_800_A3_560T_128G_DIE,
-                        ATLAS_800_A3_560T_128G_DIE_ROCE, ATLAS_350_425T_112G, ATLAS_350_425T_84G.
+                        Supported values: any registered DeviceProfile name; see the TensorCast user guide.
                         Multiple values enable cross-hardware comparison tables.
                         Duplicate names are removed; input order is preserved.
                         If omitted, defaults to TEST_DEVICE. (default: TEST_DEVICE)
@@ -395,7 +392,7 @@ Main parameters:
 
 | Parameter | Category | Required/Optional | Description |
 | --- | --- | --- | --- |
-| `--device` | Options | Optional | Specifies one or more device profile names. Multiple values enable cross-hardware comparison tables.<br>1. Type: Str or List[Str].<br>2. Reference values: `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: uses `TEST_DEVICE` when omitted.<br>4. Duplicate registered `DeviceProfile` names are removed while preserving input order. |
+| `--device` | Options | Optional | Specifies one or more device profile names. Multiple values enable cross-hardware comparison tables.<br>1. Type: Str or List[Str].<br>2. Reference values: any registered `DeviceProfile` name; see the TensorCast user guide's Device Types section.<br>3. Default: uses `TEST_DEVICE` when omitted.<br>4. Duplicate registered `DeviceProfile` names are removed while preserving input order. |
 | `--input-length` | Options | Required | Input prompt token length.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--output-length` | Options | Required | Expected generated output token length.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--mtp-acceptance-rates` | Options | Optional | MTP token acceptance rate list.<br>1. Type: List[Float].<br>2. Valid range: float list.<br>3. Default: `[0.9, 0.6, 0.4, 0.2]`. |

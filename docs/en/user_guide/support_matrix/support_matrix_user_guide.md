@@ -36,7 +36,7 @@ This document summarizes the currently supported model types and simulation feat
 
 | Feature | Description |
 | --- | --- |
-| Multi-Hardware Simulation | Supports built-in device profiles for Ascend hardware such as Atlas 800 A2/A3 and Atlas 350, as well as custom device profiles, to estimate operator latency, communication overhead, and memory usage in multi-device scenarios without real hardware. |
+| Multi-Hardware Simulation | Supports built-in device profiles for Ascend hardware such as Atlas 800 A2/A3 and Atlas 350/850/850E/950, as well as custom device profiles, to estimate operator latency, communication overhead, and memory usage in multi-device scenarios without real hardware. |
 | LLM Prefill / Decode Staged Simulation | Models prefill and decode as separate computation paths, covering attention, KV cache growth, and per-token generation overhead. |
 | Prefix Cache Simulation | Approximates prefill reuse benefits from prefix cache hits and evaluates their impact on time to first token. |
 | MTP Speculative Decoding Simulation | Models the extra draft/verify computation introduced by Multi-Token Prediction and evaluates its impact on latency and throughput. |

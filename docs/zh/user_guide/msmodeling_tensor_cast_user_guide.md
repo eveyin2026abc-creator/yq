@@ -245,6 +245,21 @@ python -m cli.inference.image_generate black-forest-labs/FLUX.1-dev \
 - `ATLAS_800_A3_560T_128G_DIE_ROCE`
 - `ATLAS_350_425T_112G`
 - `ATLAS_350_425T_84G`
+- `ATLAS_850_486T_112G`
+- `ATLAS_850_486T_128G`
+- `ATLAS_850E_486T_96G`
+- `ATLAS_850E_425T_96G`
+- `ATLAS_850_486T_112G_ROCE`
+- `ATLAS_850_486T_128G_ROCE`
+- `ATLAS_850E_486T_96G_ROCE`
+- `ATLAS_850E_425T_96G_ROCE`
+- `ATLAS_850_486T_112G_FM16`
+- `ATLAS_850_486T_128G_FM16`
+- `ATLAS_850E_486T_96G_FM16`
+- `ATLAS_850E_425T_96G_FM16`
+- `ATLAS_950_486T_128G`
+- `ATLAS_950_486T_96G`
+- `ATLAS_950_486T_144G`
 
 ### 3.1 自定义设备类型
 
@@ -268,7 +283,7 @@ Python 代码，msmodeling 不对远端代码安全性做保证；运行时会�
 
 ```text
 usage: text_generate.py [-h]
-                        [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
+                        [--device <NAME>]
                         [--num-devices NUM_DEVICES] [--reserved-memory-gb RESERVED_MEMORY_GB]
                         [--log-level {debug,info,warning,error,critical}] --num-queries NUM_QUERIES
                         --query-length QUERY_LENGTH [--context-length CONTEXT_LENGTH] [--decode]
@@ -307,7 +322,7 @@ Run a simulated LLM inference pass and dump the perf result.
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
 | `model_id` | General Options | 必选 | 模型 ID 或本地模型路径。<br>1. 类型：Str。<br>2. 参考值：Hugging Face ID、ModelScope ID 或本地绝对路径，例如 `Qwen/Qwen3-32B` 或 `/data/models/Qwen3-32B`。<br>3. 默认值：无。<br>4. 使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
-| `--device` | General Options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
+| `--device` | General Options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：任意已注册的 `DeviceProfile` 名称；内置值见第 3 节“设备类型”。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--num-devices` | General Options | 可选 | 指定参与仿真的设备数量。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`1`。 |
 | `--reserved-memory-gb` | General Options | 可选 | 指定每张设备预留给系统使用的显存大小，单位为 GB。<br>1. 类型：Float。<br>2. 取值范围：非负数；设置为 `0` 表示不预留系统显存。<br>3. 默认值：`0.0`。 |
 | `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
@@ -399,7 +414,7 @@ Run a simulated diffusion transformer forward and dump perf stats.
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
 | `model_id` | positional arguments | 必选 | 视频生成模型 ID 或本地模型路径。<br>1. 类型：Str。<br>2. 参考值：Diffusers 模型目录、远端 repo ID 或带子目录的 repo ID，需包含 `transformer/config.json` 或兼容的 transformer 配置。<br>3. 默认值：无。<br>4. 推荐使用已审核的本地绝对路径；远端模型 ID 不提供安全保证。 |
-| `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
+| `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：任意已注册的 `DeviceProfile` 名称；内置值见第 3 节“设备类型”。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--batch-size` | options | 必选 | 指定输入 batch 大小。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--seq-len` | options | 必选 | 指定文本序列长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--chrome-trace-file` | options | 可选 | 指定 Chrome trace JSON 输出路径，用于导出性能时间线。<br>1. 类型：Str。<br>2. 取值范围：文件路径。<br>3. 默认值：`None`。 |
@@ -463,7 +478,7 @@ msmodeling inference image-generate MODEL --batch-size <N> --output-image-size H
 | 参数名称 | 分类 | 可选/必选 | 参数说明 |
 | --- | --- | --- | --- |
 | `model_id` / `--model-id` | positional / options | 必选（二选一） | 图像生成模型 ID 或本地模型路径。可位置参数或 `--model-id`。<br>1. 类型：Str。<br>2. 参考值：Diffusers 模型目录或精确允许的远端 repo ID，例如 `black-forest-labs/FLUX.1-dev`、`Qwen/Qwen-Image-Edit`。<br>3. 默认值：无。<br>4. 推荐使用已审核的本地绝对路径；远端模型 ID 不提供安全保证。 |
-| `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：已注册 `DeviceProfile` 名称，包括 `TEST_DEVICE`、`ATLAS_800_A2_376T_64G`、`ATLAS_800_A2_313T_64G`、`ATLAS_800_A2_280T_64G`、`ATLAS_800_A2_280T_64G_PCIE`、`ATLAS_800_A2_280T_32G_PCIE`、`ATLAS_800_A3_752T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE`、`ATLAS_800_A3_560T_128G_DIE_ROCE`、`ATLAS_350_425T_112G`、`ATLAS_350_425T_84G`。<br>3. 默认值：`TEST_DEVICE`。 |
+| `--device` | options | 可选 | 指定用于仿真的设备配置。<br>1. 类型：Str。<br>2. 参考值：任意已注册的 `DeviceProfile` 名称；内置值见第 3 节“设备类型”。<br>3. 默认值：`TEST_DEVICE`。 |
 | `--batch-size` | options | 必选 | 指定基础 workload 的 batch 大小，不是 prompt 数或源图数。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--output-image-size` | options | 必选 | 指定输出图像尺寸，恰好出现一次；只用于推导 shape，不输出图片。<br>1. 类型：Tuple[Int, Int]（`HEIGHT WIDTH`）。<br>2. 取值范围：两个正整数。<br>3. 默认值：无。 |
 | `--text-seq-len` | options | 必选 | 实际进入 Transformer 的文本条件长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。<br>4. 不是字符数、tokenizer 输入长度或模板长度；本首版不执行文本编码。 |

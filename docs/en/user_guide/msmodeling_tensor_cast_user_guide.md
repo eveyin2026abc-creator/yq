@@ -246,6 +246,21 @@ We provide built-in support for the following device profiles (defined in `tenso
 - `ATLAS_800_A3_560T_128G_DIE_ROCE`
 - `ATLAS_350_425T_112G`
 - `ATLAS_350_425T_84G`
+- `ATLAS_850_486T_112G`
+- `ATLAS_850_486T_128G`
+- `ATLAS_850E_486T_96G`
+- `ATLAS_850E_425T_96G`
+- `ATLAS_850_486T_112G_ROCE`
+- `ATLAS_850_486T_128G_ROCE`
+- `ATLAS_850E_486T_96G_ROCE`
+- `ATLAS_850E_425T_96G_ROCE`
+- `ATLAS_850_486T_112G_FM16`
+- `ATLAS_850_486T_128G_FM16`
+- `ATLAS_850E_486T_96G_FM16`
+- `ATLAS_850E_425T_96G_FM16`
+- `ATLAS_950_486T_128G`
+- `ATLAS_950_486T_96G`
+- `ATLAS_950_486T_144G`
 
 ### 3.1 Custom Device Types
 
@@ -275,7 +290,7 @@ Its general usage is shown below:
 
 ```text
 usage: text_generate.py [-h]
-                        [--device {TEST_DEVICE,ATLAS_800_A2_376T_64G,ATLAS_800_A2_313T_64G,ATLAS_800_A2_280T_64G,ATLAS_800_A2_280T_64G_PCIE,ATLAS_800_A2_280T_32G_PCIE,ATLAS_800_A3_752T_128G_DIE,ATLAS_800_A3_560T_128G_DIE,ATLAS_800_A3_560T_128G_DIE_ROCE,ATLAS_350_425T_112G,ATLAS_350_425T_84G}]
+                        [--device <NAME>]
                         [--num-devices NUM_DEVICES] [--reserved-memory-gb RESERVED_MEMORY_GB]
                         [--log-level {debug,info,warning,error,critical}] --num-queries NUM_QUERIES
                         --query-length QUERY_LENGTH [--context-length CONTEXT_LENGTH] [--decode]
@@ -314,7 +329,7 @@ Main parameters:
 | Parameter | Category | Required/Optional | Description |
 | --- | --- | --- | --- |
 | `model_id` | General Options | Required | Model ID or local model path.<br>1. Type: Str.<br>2. Reference values: Hugging Face ID, ModelScope ID, or local absolute path, such as `Qwen/Qwen3-32B` or `/data/models/Qwen3-32B`.<br>3. Default: none.<br>4. When a remote model ID is used, remote code may be executed through `trust_remote_code=True`. |
-| `--device` | General Options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: registered `DeviceProfile` names, including `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: `TEST_DEVICE`. |
+| `--device` | General Options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: any registered `DeviceProfile` name; see the built-in list in Section 3, Device Types.<br>3. Default: `TEST_DEVICE`. |
 | `--num-devices` | General Options | Optional | Specifies the number of devices participating in simulation.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `1`. |
 | `--reserved-memory-gb` | General Options | Optional | Specifies device memory reserved for system use, in GB.<br>1. Type: Float.<br>2. Valid range: non-negative number; set to `0` to disable memory reservation.<br>3. Default: `0.0`. |
 | `--log-level` | General Options | Optional | Specifies the log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`, `critical`.<br>3. Default: `error`. |
@@ -406,7 +421,7 @@ Main parameters:
 | Parameter | Category | Required/Optional | Description |
 | --- | --- | --- | --- |
 | `model_id` | positional arguments | Required | Video generation model ID or local model path.<br>1. Type: Str.<br>2. Reference values: Diffusers model directory, remote repo ID, or remote repo ID plus subfolder. It must contain `transformer/config.json` or a compatible transformer config.<br>3. Default: none.<br>4. A reviewed local absolute path is recommended; remote model IDs are not security-guaranteed. |
-| `--device` | options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: registered `DeviceProfile` names, including `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: `TEST_DEVICE`. |
+| `--device` | options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: any registered `DeviceProfile` name; see the built-in list in Section 3, Device Types.<br>3. Default: `TEST_DEVICE`. |
 | `--batch-size` | options | Required | Specifies the input batch size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--seq-len` | options | Required | Specifies text sequence length.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--chrome-trace-file` | options | Optional | Specifies the Chrome trace JSON output path for exporting the performance timeline.<br>1. Type: Str.<br>2. Valid range: file path.<br>3. Default: `None`. |
@@ -470,7 +485,7 @@ Main parameters:
 | Parameter | Category | Required/Optional | Description |
 | --- | --- | --- | --- |
 | `model_id` / `--model-id` | positional / options | Required (either) | Image generation model ID or local model path. Positional or `--model-id`.<br>1. Type: Str.<br>2. Reference values: Diffusers model directory or an exactly allowed remote repo ID, such as `black-forest-labs/FLUX.1-dev`, `Qwen/Qwen-Image-Edit`.<br>3. Default: none.<br>4. A reviewed local absolute path is recommended; remote model IDs are not security-guaranteed. |
-| `--device` | options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: registered `DeviceProfile` names, including `TEST_DEVICE`, `ATLAS_800_A2_376T_64G`, `ATLAS_800_A2_313T_64G`, `ATLAS_800_A2_280T_64G`, `ATLAS_800_A2_280T_64G_PCIE`, `ATLAS_800_A2_280T_32G_PCIE`, `ATLAS_800_A3_752T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE`, `ATLAS_800_A3_560T_128G_DIE_ROCE`, `ATLAS_350_425T_112G`, `ATLAS_350_425T_84G`.<br>3. Default: `TEST_DEVICE`. |
+| `--device` | options | Optional | Specifies the device profile for simulation.<br>1. Type: Str.<br>2. Reference values: any registered `DeviceProfile` name; see the built-in list in Section 3, Device Types.<br>3. Default: `TEST_DEVICE`. |
 | `--batch-size` | options | Required | Specifies the base batch size of the workload, not the prompt count or source image count.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--output-image-size` | options | Required | Specifies the output image size, provided exactly once; used only to derive the shape, does not output an image.<br>1. Type: Tuple[Int, Int] (`HEIGHT WIDTH`).<br>2. Valid range: two positive integers.<br>3. Default: none. |
 | `--text-seq-len` | options | Required | The effective text condition length entering the Transformer.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none.<br>4. Not a character count, tokenizer input length, or template length; text encoding is not performed in this first version. |
