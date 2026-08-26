@@ -321,6 +321,50 @@ class TestAggThroughputOptimizer(unittest.TestCase):
         self.assertEqual(df.iloc[0]["tpot"], 5.0)
         self.assertTrue(pd.isna(df.iloc[1]["ttft"]))
 
+    def test_variable_length_decode_uses_speculative_shape_resolution(self):
+        batch_result = SimpleNamespace(
+            execution_time_s={"analytic": 0.01},
+            total_device_memory_gb=64.0,
+            model_weight_size_gb=20.0,
+            kv_cache_size_gb=4.0,
+            model_activation_size_gb=1.0,
+            reserved_memory_gb=0.0,
+            device_memory_available_gb=8.0,
+            breakdowns={},
+        )
+
+        for block_field, acceptance_field in (
+            ("dspark", "dspark_acceptance_length"),
+            ("dflash", "dflash_acceptance_length"),
+        ):
+            with self.subTest(block_field=block_field):
+                optimizer_data = OptimizerData(
+                    length_distribution=LengthDistribution(bins=[LengthBin(min_tokens=0, max_tokens=1000, weight=1.0)]),
+                    output_length=256,
+                    batch_size=4,
+                    **{f"{block_field}_block_size": 8, acceptance_field: 5.0},
+                )
+                resolved_shapes = []
+
+                def fake_latency(batch_size, data, is_decode=False, **kwargs):
+                    resolved_shapes.append(self.strategy._resolve_forward_shape(data, is_decode, **kwargs))
+                    return 2.0, 7.0, "decode", None
+
+                with (
+                    patch.object(
+                        self.strategy,
+                        "_get_batched_forward_info",
+                        return_value=([(batch_result, 4)], [{"samples": 4}]),
+                    ),
+                    patch.object(self.strategy, "_get_or_compute_latency", side_effect=fake_latency) as latency,
+                ):
+                    self.strategy._get_batched_full_prefill_metrics(optimizer_data, concurrency=4, chunk_plan=[])
+
+                self.assertTrue(latency.call_args.kwargs["is_decode"])
+                self.assertNotIn("query_len", latency.call_args.kwargs)
+                self.assertEqual(latency.call_args.kwargs["seq_len"], 629)
+                self.assertEqual(resolved_shapes, [(8, 629)])
+
     def test_get_inference_info_variable_mode_aggregates_prefill_breakdowns(self):
         optimizer_data = OptimizerData(
             length_distribution=LengthDistribution(

@@ -694,10 +694,13 @@ class TestBailingV3KvCacheHelpers:
         attention.conv_size = 3
         model = MagicMock()
         model.num_hidden_layers = 1
-        model.model_config.mla_config = SimpleNamespace()
-        model.model_config.dtype = model_dtype
-        model.model_config.hf_config = None
-        model.model_config.parallel_config.tensor_parallel_size = 2
+        model.model_config = SimpleNamespace(
+            mla_config=SimpleNamespace(),
+            dtype=model_dtype,
+            hf_config=None,
+            parallel_config=SimpleNamespace(tensor_parallel_size=2),
+            has_draft_spec=lambda: False,
+        )
         model.text_config = SimpleNamespace(model_type="bailing_hybrid")
         model.unwrap.return_value = SimpleNamespace(
             layers=[SimpleNamespace(self_attn=attention)],

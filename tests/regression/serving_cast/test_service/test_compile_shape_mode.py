@@ -21,7 +21,7 @@ from serving_cast.service.compile_shape_mode import (
     decide_compile_shape_mode,
 )
 from serving_cast.service.workload_cache import WorkloadCache
-from serving_cast.service.utils import OptimizerData
+from serving_cast.service.utils import LengthBin, LengthDistribution, OptimizerData
 from tensor_cast.core.user_config import UserInputConfig
 
 from .test_common import SimpleArgs
@@ -309,6 +309,30 @@ class TestParallelRunnerCompileShapeMode(unittest.TestCase):
         self.assertIs(resolved_runner, selected_runner)
         self.assertIs(resolved_strategy, selected_strategy)
         self.assertFalse(build_runner.call_args.args[0].dynamic_shapes)
+
+    @patch("serving_cast.parallel_runner.torch.compiler.reset")
+    def test_variable_length_aggregation_falls_back_to_dynamic_without_crashing(self, _reset):
+        optimizer_data = OptimizerData(
+            input_length=None,
+            length_distribution=LengthDistribution(bins=[LengthBin(min_tokens=0, max_tokens=1000, weight=1.0)]),
+            output_length=64,
+        )
+        selected_runner = Mock()
+        selected_strategy = Mock()
+
+        with (
+            patch.object(self.runner, "_build_model_runner", return_value=selected_runner) as build_runner,
+            patch.object(self.runner, "_create_strategy", return_value=selected_strategy),
+        ):
+            resolved_runner, resolved_strategy = self.runner._resolve_compile_shape_mode(
+                self.user_input,
+                optimizer_data,
+                disagg_mode=False,
+            )
+
+        self.assertIs(resolved_runner, selected_runner)
+        self.assertIs(resolved_strategy, selected_strategy)
+        self.assertTrue(build_runner.call_args.args[0].dynamic_shapes)
 
     @patch("serving_cast.parallel_runner.torch.compiler.reset")
     def test_multi_device_runner_reuses_shared_compile_decision_without_probe(self, _reset):

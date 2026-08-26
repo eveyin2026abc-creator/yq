@@ -304,7 +304,6 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             optimizer_data.batch_size,
             optimizer_data,
             is_decode=True,
-            query_len=decode_query_len,
             seq_len=decode_seq_len,
         )
         request_count = sum(row["samples"] for row in composition_rows)
