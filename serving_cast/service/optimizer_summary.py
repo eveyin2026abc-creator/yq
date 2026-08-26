@@ -501,7 +501,8 @@ class OptimizerSummary:
             d_devices_per_inst: Devices per D instance.
 
         Returns:
-            Tuple of (p_instances, d_instances).
+            Tuple of (p_instances, d_instances). When multiple allocations have
+            the same ratio error, the allocation using more devices is preferred.
         """
         # PD ratio = D_QPS / P_QPS
         # For supply-demand balance: P_instances * P_QPS = D_instances * D_QPS
@@ -511,6 +512,7 @@ class OptimizerSummary:
         best_p_inst = 0
         best_d_inst = 0
         best_diff = float("inf")
+        best_total_used = 0
 
         max_d_inst = total_devices // d_devices_per_inst
         for d_inst in range(1, max_d_inst + 1):
@@ -523,8 +525,10 @@ class OptimizerSummary:
             total_used = p_inst * p_devices_per_inst + d_inst * d_devices_per_inst
             if total_used <= total_devices:
                 diff = abs(p_inst - ideal_p_inst)
-                if diff < best_diff:
+                # Avoid leaving devices idle when candidates have the same ratio error.
+                if diff < best_diff or (diff == best_diff and total_used > best_total_used):
                     best_diff = diff
+                    best_total_used = total_used
                     best_p_inst = p_inst
                     best_d_inst = d_inst
 

@@ -220,6 +220,16 @@ class TestTaskRunner(unittest.TestCase):
         keys = {(config.tp_size, config.num_mtp_tokens) for config in configs}
         self.assertEqual(keys, {(1, 0), (1, 2), (2, 0), (2, 2)})
 
+    def test_get_user_config_prefill_disables_mtp(self):
+        """Prefill must not inherit speculative Decode candidates."""
+        self.args.num_mtp_tokens = 2
+        self.args.num_mtp_token_sizes = [1, 2]
+
+        task_runner = ParallelRunner(self.args)
+
+        configs = list(task_runner._get_user_config(is_prefill=True))
+        self.assertEqual({config.num_mtp_tokens for config in configs}, {0})
+
     def test_get_user_config_chrome_trace_names_include_num_mtp_tokens(self):
         """Test MTP search candidates do not overwrite the same chrome trace file."""
         self.args.tp_sizes = [1]
@@ -388,6 +398,44 @@ class TestTaskRunner(unittest.TestCase):
         row = decode_df.iloc[0]
         self.assertEqual(row["concurrency"], 2)
         self.assertIsNone(row["ttft"])
+
+    def test_run_disagg_disables_mtp_for_prefill_only(self):
+        """Standalone disaggregated Prefill must not model speculative decoding."""
+
+        class RecordingParallelRunner(ParallelRunner):
+            def __init__(self, args):
+                super().__init__(args)
+                self.recorded_mtp = []
+
+            def _get_df_list(
+                self,
+                overwrite_optimizer_data,
+                user_configs=None,
+                disagg_mode=None,
+                is_prefill=False,
+            ):
+                del disagg_mode
+                effective_configs = (
+                    list(user_configs)
+                    if user_configs is not None
+                    else list(self._get_user_config(is_prefill=is_prefill))
+                )
+                self.recorded_mtp.append(
+                    (
+                        overwrite_optimizer_data.num_mtp_tokens,
+                        {config.num_mtp_tokens for config in effective_configs},
+                    )
+                )
+                return []
+
+        self.args.ttft_limits = 1000
+        self.args.tpot_limits = 50
+        self.args.num_mtp_tokens = 1
+        task_runner = RecordingParallelRunner(self.args)
+
+        task_runner.run_disagg()
+
+        self.assertEqual(task_runner.recorded_mtp, [(0, {0}), (1, {1})])
 
     def test_submit_task(self):
         """Test _submit_task method"""
@@ -660,6 +708,47 @@ class TestParallelRunnerPDMode(unittest.TestCase):
         self.assertEqual(result_df.attrs["memory_info"]["device_memory_available_gb"], 4.0)
         self.assertTrue(task_runner.disagg_modes)
         self.assertTrue(all(task_runner.disagg_modes))
+
+    def test_pd_phase_disables_mtp_for_prefill_only(self):
+        """PD ratio uses the requested MTP depth only for Decode."""
+
+        class RecordingParallelRunner(ParallelRunner):
+            def __init__(self, args):
+                super().__init__(args)
+                self.recorded_optimizer_mtp = None
+                self.recorded_user_mtp = []
+
+            def _get_df_list(
+                self,
+                overwrite_optimizer_data,
+                user_configs=None,
+                disagg_mode=None,
+                is_prefill=False,
+                process_context=None,
+            ):
+                del disagg_mode, is_prefill, process_context
+                self.recorded_optimizer_mtp = overwrite_optimizer_data.num_mtp_tokens
+                self.recorded_user_mtp = [config.num_mtp_tokens for config in user_configs]
+                return []
+
+        self.args.num_mtp_tokens = 1
+        prefill_runner = RecordingParallelRunner(self.args)
+        prefill_runner._run_pd_phase(
+            devices_per_instance=self.args.prefill_devices_per_instance,
+            is_prefill=True,
+        )
+        self.assertEqual(prefill_runner.recorded_optimizer_mtp, 0)
+        self.assertTrue(prefill_runner.recorded_user_mtp)
+        self.assertEqual(set(prefill_runner.recorded_user_mtp), {0})
+
+        decode_runner = RecordingParallelRunner(self.args)
+        decode_runner._run_pd_phase(
+            devices_per_instance=self.args.decode_devices_per_instance,
+            is_prefill=False,
+        )
+        self.assertEqual(decode_runner.recorded_optimizer_mtp, 1)
+        self.assertTrue(decode_runner.recorded_user_mtp)
+        self.assertEqual(set(decode_runner.recorded_user_mtp), {1})
 
     def test_get_df_list_passes_pd_process_context_to_process_pool(self):
         """PD ratio sub-phases must construct process pools with the spawn context."""

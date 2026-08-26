@@ -317,6 +317,16 @@ class TestSummaryPDMode(unittest.TestCase):
         self.assertGreater(d_inst, 0)
         self.assertLessEqual(p_inst * 4 + d_inst * 2, 8)
 
+    def test_calculate_instance_distribution_uses_budget_for_equal_ratio(self):
+        """Equal-ratio candidates should use the available device budget."""
+        p_inst, d_inst = self.summary._calculate_instance_distribution(
+            pd_ratio=1.0,
+            total_devices=16,
+            p_devices_per_inst=4,
+            d_devices_per_inst=4,
+        )
+        self.assertEqual((p_inst, d_inst), (2, 2))
+
     def test_get_pd_ratio_final_out_structure(self):
         """Test _get_pd_ratio_final_out output structure."""
         df = pd.DataFrame(

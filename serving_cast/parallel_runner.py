@@ -179,6 +179,7 @@ class ParallelRunner:
             overwrite_optimizer_data = copy.deepcopy(self.optimizer_data)
             overwrite_optimizer_data.ttft_limits = self.args.ttft_limits or float("inf")
             overwrite_optimizer_data.tpot_limits = None
+            overwrite_optimizer_data.num_mtp_tokens = 0
             summary_list = self._get_df_list(overwrite_optimizer_data, is_prefill=True)
             self._add_summary_result(summary_list, overwrite_optimizer_data)
 
@@ -568,6 +569,8 @@ class ParallelRunner:
             self.args.num_mtp_tokens,
             target_devices,
         )
+        if is_prefill:
+            mtp_list = [0]
         # DCP applies to the Decode phase only and reuses TP devices (a contiguous
         # sub-slice of the TP group), so it is constrained by ``tp % dcp == 0`` rather
         # than by the device budget. Prefill is always run with dcp=1.
@@ -817,6 +820,7 @@ class ParallelRunner:
         if is_prefill:
             overwrite_optimizer_data.ttft_limits = self.args.ttft_limits
             overwrite_optimizer_data.tpot_limits = None
+            overwrite_optimizer_data.num_mtp_tokens = 0
         else:
             overwrite_optimizer_data.ttft_limits = None
             overwrite_optimizer_data.tpot_limits = self.args.tpot_limits
