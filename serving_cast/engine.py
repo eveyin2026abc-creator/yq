@@ -34,6 +34,19 @@ class BatchScheduler(stime.Task):
         self.max_tokens_budget = common_config.serving_config.max_tokens_budget
 
     def add(self, request: Request):
+        # 准入校验：请求完整序列峰值所需 KV（prefill 输入 + decode 输出）必须能被整池容纳，
+        # 否则该请求永远进不了 running 队列，调度器会忙等挂死（见 issue #338）。
+        # KVCacheManager 在 create_kv_manager 中由 warmup 结果建好后才传入，此处容量已就绪。
+        total_kv_capacity = len(self.kv_manager.blocks) * self.kv_manager.block_size
+        required_tokens = request.num_input_tokens + request.num_output_tokens
+        if required_tokens > total_kv_capacity:
+            raise ValueError(
+                f"Request {request.id} requires {required_tokens} KV tokens "
+                f"(input {request.num_input_tokens} + output {request.num_output_tokens}) "
+                f"exceeding total KV pool capacity {total_kv_capacity} "
+                f"({len(self.kv_manager.blocks)} blocks x {self.kv_manager.block_size}); "
+                f"reduce sequence length or increase device memory."
+            )
         logger.debug("BatchScheduler adding %s", request)
         self.waiting_queue.append(request)
         self.notify()
@@ -106,7 +119,10 @@ class BatchScheduler(stime.Task):
                     and not request.kv_transfer_done
                     and not self._receive_remote_kvs(request)
                 ):
-                    continue
+                    # 转移请求因 KV 不足接收失败：跳出本轮等待调度（与下方普通请求分配失败即 break 语义一致）。
+                    # running 非空时外层 _scheduling_loop 会推进 process_batch 释放 KV 后下轮重试；
+                    # running 空则池必全空闲，准入校验已保证能容纳，不会在此反复失败（见 issue #335）。
+                    break
                 num_computed_tokens = min(token_budget, request.num_current_max_new_tokens)
                 if num_computed_tokens <= 0:
                     raise ValueError(f"num_computed_tokens should be positive, got {num_computed_tokens}")
