@@ -53,6 +53,7 @@ import yaml
 
 from ... import config
 from ...device import DeviceProfile
+from .backend_projector import CANNBackendProjector
 from .data_source import (
     DataSourcePerformanceModel,
     QueryResult,
@@ -99,6 +100,60 @@ DTYPE_MAP = {
 }
 
 
+def _compute_scale_axes(shape: Tuple[int, ...]) -> Optional[Dict[str, float]]:
+    """Return the token/channel axes used by quantize-with-scale kernels."""
+    if not shape or any(int(dim) <= 0 for dim in shape):
+        return None
+    tokens = math.prod(int(dim) for dim in shape[:-1])
+    return {"M": float(tokens), "K": float(shape[-1])}
+
+
+def _compute_scale_profiling_dtype(dtype: torch.dtype) -> Optional[str]:
+    """Keep physical FP16 distinct from BF16 for compute-scale kernels."""
+    if dtype == torch.float16:
+        return "DT_FLOAT16"
+    return DTYPE_MAP.get(dtype)
+
+
+def _compute_scale_input_format(shape: Tuple[int, ...]) -> str:
+    """Return the physical format exported by CANN for an activation rank."""
+    return "NCL" if len(shape) == 3 else "ND"
+
+
+def _scalar_aware_numel(shape: Tuple[int, ...]) -> Optional[int]:
+    numel = 1
+    for dim in shape:
+        if int(dim) < 0:
+            return None
+        numel *= int(dim)
+    return numel
+
+
+def _compute_scale_mode(
+    input_shape: Tuple[int, ...],
+    scale_shape: Tuple[int, ...],
+    kernel_type: str,
+) -> Optional[Tuple[str, Optional[int]]]:
+    axes = _compute_scale_axes(input_shape)
+    scale_numel = _scalar_aware_numel(scale_shape)
+    if axes is None or scale_numel is None or scale_numel <= 0:
+        return None
+    if not scale_shape:
+        return "per_tensor", None
+    tokens = int(axes["M"])
+    channels = int(axes["K"])
+    if kernel_type == "DynamicBlockQuant":
+        if len(scale_shape) != 1 or scale_numel > channels:
+            return None
+        block_size = (channels + scale_numel - 1) // scale_numel
+        return "per_block", block_size
+    if scale_numel == tokens:
+        return "per_token", None
+    if scale_numel == channels:
+        return "per_channel", None
+    return None
+
+
 def fractal_nz_to_nd(nz_shape: Tuple[int, ...]) -> Tuple[int, ...]:
     """Restore FRACTAL_NZ tiled shape to ND shape.
     [..., H, W, block_h, block_w] -> [..., H*block_w, W*block_h]
@@ -125,19 +180,32 @@ def _normalize_func_name(func) -> str:
     return s.removeprefix("torch.ops.")
 
 
-def _parse_shape_str(s: str) -> List[Tuple[int, ...]]:
+def _parse_shape_str(
+    s: str,
+    *,
+    preserve_empty_slots: bool = True,
+) -> List[Tuple[int, ...]]:
     """Parse CSV shape string -> list of tuples.
     e.g. '"136,5120;320,48,16,16"' -> [(136,5120), (320,48,16,16)]
+    e.g. '"20000,64,256;"' -> [(20000,64,256), ()]
+
+    Output shape fields use an empty slot for a scalar tensor on some CANN
+    versions. Input fields also use empty slots for absent optional operands,
+    so their callers explicitly disable slot preservation.
     """
     s = s.strip().strip('"')
+    parts = s.split(";")
     shapes = []
-    for part in s.split(";"):
+    for part in parts:
         part = part.strip()
-        if part:
-            if part == "()":
+        if not part:
+            if preserve_empty_slots and len(parts) > 1:
                 shapes.append(())
-                continue
-            shapes.append(tuple(int(x) for x in part.split(",")))
+            continue
+        if part == "()":
+            shapes.append(())
+            continue
+        shapes.append(tuple(int(x) for x in part.split(",")))
     return shapes
 
 
@@ -872,6 +940,39 @@ def _resolve_batch_phase(
     return "mixed"
 
 
+def _infer_attention_phase(
+    query_lens: Optional[torch.Tensor],
+    *,
+    num_tokens: int,
+    batch_size: int,
+) -> Optional[str]:
+    """Resolve a homogeneous phase from query lengths when metadata is absent."""
+    query_values = _tensor_int_values(query_lens) if isinstance(query_lens, torch.Tensor) else None
+    if query_values:
+        if batch_size > 0 and len(query_values) != batch_size:
+            return "mixed"
+        decode_values = [value <= 1 for value in query_values]
+        if all(decode_values):
+            return "decode"
+        if any(decode_values):
+            return "mixed"
+        return "prefill"
+    if batch_size > 0:
+        return "decode" if num_tokens <= batch_size else "prefill"
+    return None
+
+
+def _composite_num_tokens(op_invoke_info: "OpInvokeInfo") -> Optional[int]:
+    """Best-effort token count for composite runtime phase inference."""
+    args = getattr(op_invoke_info, "args", ())
+    if not args:
+        return None
+    first = args[0]
+    if isinstance(first, torch.Tensor) and first.ndim == 2:
+        return int(first.shape[0])
+    return None
+
+
 def _decompose_mla_common(
     op_invoke_info: "OpInvokeInfo",
     mapping: dict,
@@ -1335,9 +1436,15 @@ def _decompose_mlapo_common(
     physical_tokens = num_tokens
     tp_size = mapping.get("_runtime_tp_size")
     if runtime_sequence_parallel and decomposer_options.get("projection_token_partition") == "tp":
-        if not isinstance(tp_size, int) or tp_size <= 1 or num_tokens % tp_size != 0:
+        if not isinstance(tp_size, int) or tp_size < 1:
             return None
-        physical_tokens = num_tokens // tp_size
+        # Sequence parallel gives uneven requests at most one token of skew.
+        # Query the busiest rank so arbitrary sequence lengths remain valid.
+        physical_tokens = math.ceil(num_tokens / tp_size)
+        # Guard against skew > 1 token: the busiest rank may never have executed
+        # this shape, so fall back rather than generate an unreplayable coverage row.
+        if physical_tokens * tp_size - num_tokens > 1:
+            return None
 
     # Fix MISS #1: QuantBatchMatmulV3 activation dtype is INT8 (DynamicQuant runs
     # before QBMV3 on NPU). BF16 path (MatMulV2) keeps the original dtype_str.
@@ -1852,6 +1959,11 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         self.ep_size = parallel_config.expert_parallel_size if parallel_config else None
         self.tp_size = parallel_config.tensor_parallel_size if parallel_config else None
         self._op_mapping = self._load_op_mapping()
+        self._backend_projector = CANNBackendProjector(
+            self._op_mapping,
+            tensor_parallel_size=self.tp_size,
+            expert_parallel_size=self.ep_size,
+        )
         self._latency_kernel_overrides = self._op_mapping.get("latency_policy", {}).get("kernel_overrides", {})
         self._query_selection_kernel_overrides = self._op_mapping.get("query_selection_policy", {}).get(
             "kernel_overrides", {}
@@ -1870,6 +1982,112 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         self.last_miss_reason: str = ""
         # Set after each lookup() call with shape debug info (HIT or MISS)
         self.last_shape_match_info: Optional[ShapeMatchInfo] = None
+
+    @staticmethod
+    def _extract_tensor_outputs(
+        op_invoke_info: "OpInvokeInfo",
+    ) -> List[Tuple[Tuple[int, ...], torch.dtype]]:
+        output = getattr(op_invoke_info, "out", None)
+        if isinstance(output, torch.Tensor):
+            tensors = [output]
+        elif isinstance(output, (list, tuple)):
+            tensors = [item for item in output if isinstance(item, torch.Tensor)]
+        else:
+            tensors = []
+        return [(tuple(tensor.shape), tensor.dtype) for tensor in tensors]
+
+    @staticmethod
+    def _profile_shapes_and_dtypes(
+        tensors: List[Tuple[Tuple[int, ...], torch.dtype]],
+    ) -> tuple[list[Tuple[int, ...]], list[str]]:
+        shapes = [shape for shape, _dtype in tensors]
+        dtypes = [DTYPE_MAP.get(dtype, "DT_UNDEFINED") for _shape, dtype in tensors]
+        return shapes, dtypes
+
+    @staticmethod
+    def _raw_tensor_slots(
+        values: tuple[Any, ...],
+    ) -> tuple[list[Tuple[int, ...]], list[str]]:
+        shapes: list[Tuple[int, ...]] = []
+        dtypes: list[str] = []
+        for value in values:
+            if isinstance(value, torch.Tensor):
+                shapes.append(tuple(value.shape))
+                dtypes.append(DTYPE_MAP.get(value.dtype, "DT_UNDEFINED"))
+            else:
+                shapes.append(())
+                dtypes.append("DT_UNDEFINED")
+        return shapes, dtypes
+
+    @staticmethod
+    def _extract_grouped_query_inputs(
+        op_invoke_info: "OpInvokeInfo",
+    ) -> List[Tuple[Tuple[int, ...], torch.dtype]]:
+        """Collapse TensorCast grouped-list arguments into kernel-visible tensors.
+
+        Activations and their token-wise scales/offsets concatenate on M;
+        expert weights/scales/biases stack an expert prefix. Empty optional
+        lists remain absent and are restored from the versioned CSV schema by
+        the backend coverage projector.
+        """
+        op_name = _normalize_func_name(op_invoke_info.func)
+        if not op_name.startswith("tensor_cast.grouped_matmul"):
+            return []
+        concatenate_slots = {0, 4, 5}
+        projected: List[Tuple[Tuple[int, ...], torch.dtype]] = []
+        for slot, value in enumerate(op_invoke_info.args):
+            if not isinstance(value, (list, tuple)):
+                continue
+            tensors = [item for item in value if isinstance(item, torch.Tensor)]
+            if not tensors:
+                continue
+            first_shape = tuple(tensors[0].shape)
+            if slot in concatenate_slots and first_shape:
+                if any(tuple(item.shape)[1:] != first_shape[1:] for item in tensors[1:]):
+                    continue
+                shape = (sum(int(item.shape[0]) for item in tensors), *first_shape[1:])
+            else:
+                if any(tuple(item.shape) != first_shape for item in tensors[1:]):
+                    continue
+                shape = (len(tensors), *first_shape)
+            projected.append((shape, tensors[0].dtype))
+        return projected
+
+    def _record_tensor_query(
+        self,
+        op_invoke_info: "OpInvokeInfo",
+        kernel_types: List[str],
+        *,
+        query_mode: str,
+        inputs: Optional[List[Tuple[Tuple[int, ...], torch.dtype]]] = None,
+        input_shapes: Optional[List[Tuple[int, ...]]] = None,
+        input_dtypes: Optional[List[str]] = None,
+        output_shapes: Optional[List[Tuple[int, ...]]] = None,
+        output_dtypes: Optional[List[str]] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self._backend_projector.enabled:
+            return
+        if inputs is not None:
+            input_shapes, input_dtypes = self._profile_shapes_and_dtypes(inputs)
+        if output_shapes is None or output_dtypes is None:
+            extracted_output_shapes, extracted_output_dtypes = self._profile_shapes_and_dtypes(
+                self._extract_tensor_outputs(op_invoke_info)
+            )
+            if output_shapes is None:
+                output_shapes = extracted_output_shapes
+            if output_dtypes is None:
+                output_dtypes = extracted_output_dtypes
+        self._backend_projector.record(
+            op_name=_normalize_func_name(op_invoke_info.func),
+            kernel_types=kernel_types,
+            query_mode=query_mode,
+            input_shapes=input_shapes or (),
+            output_shapes=output_shapes or (),
+            input_dtypes=input_dtypes or (),
+            output_dtypes=output_dtypes or (),
+            attributes=attributes,
+        )
 
     def _load_op_mapping(self) -> dict:
         yaml_path = self.data_dir / "op_mapping.yaml"
@@ -2269,6 +2487,8 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             return self._lookup_moe(op_invoke_info, mapping)
         if mapping.get("query_mode") == "mtp_projection":
             return self._lookup_mtp_projection(op_invoke_info, mapping)
+        if mapping.get("compute_subcategory") == "compute_scale":
+            return self._lookup_compute_scale(op_invoke_info, mapping)
 
         # Zero-cost ops: shape-only operations with no kernel execution
         if mapping.get("zero_cost"):
@@ -2345,6 +2565,13 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         # --- Compute sub-kernels: try each until one matches ---
         compute_kernels = [k for k in sub_kernels if not k.startswith("hcom_")]
+        self._record_tensor_query(
+            op_invoke_info,
+            compute_kernels,
+            query_mode="composite_compute",
+            inputs=tc_inputs,
+            attributes={"tc_input_count": tc_input_count},
+        )
         compute_hit = self._find_compute_match(compute_kernels, tc_inputs, tc_input_count)
 
         if compute_hit is None:
@@ -2466,18 +2693,42 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             sub_kernel_shapes=sub_kernel_shapes_info,
         )
 
-    def _build_composite_runtime_mapping(self, mapping: dict) -> dict:
-        """Inject the runtime TP/SP context required by composite decomposers.
+    def _build_composite_runtime_mapping(
+        self,
+        op_invoke_info: "OpInvokeInfo",
+        mapping: dict,
+    ) -> dict:
+        """Inject one phase-aware runtime context for every decomposer path.
 
         Exact lookup and interpolation fallback must decompose the same
         ``OpInvokeInfo`` with the same runtime mapping. Otherwise a later
         chunked-prefill forward can use TP/SP-projected shapes for exact lookup
         and then silently fall back to unprojected global shapes while
         interpolating the same composite operator.
+
+        Sequence-parallel token projection is a Prefill-only optimization.
+        Decode keeps its original token count even when the global compile flag
+        enables SP, which avoids false misses for small/non-divisible batches.
         """
         runtime_mapping = dict(mapping)
         runtime_mapping["_runtime_tp_size"] = self.tp_size
-        runtime_mapping["_runtime_sequence_parallel"] = bool(config.compilation.passes.enable_sequence_parallel)
+        global_sp = bool(config.compilation.passes.enable_sequence_parallel)
+        phase = _resolve_batch_phase(op_invoke_info)
+        if phase is None:
+            num_tokens = _composite_num_tokens(op_invoke_info)
+            if num_tokens is not None:
+                phase = _infer_attention_phase(
+                    None,
+                    num_tokens=num_tokens,
+                    batch_size=1,
+                )
+        runtime_mapping["_runtime_phase"] = phase
+        if phase in {"prefill", "decode"}:
+            runtime_mapping["_runtime_sequence_parallel"] = global_sp and phase == "prefill"
+        else:
+            # Mixed/invalid phase remains visible to the decomposer, which is
+            # responsible for failing closed instead of inventing a projection.
+            runtime_mapping["_runtime_sequence_parallel"] = global_sp
         return runtime_mapping
 
     def _lookup_composite_decomposed(
@@ -2500,7 +2751,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             attention latency as a full hit.
           - None if all sub-kernels miss.
         """
-        runtime_mapping = self._build_composite_runtime_mapping(mapping)
+        runtime_mapping = self._build_composite_runtime_mapping(op_invoke_info, mapping)
         specs = decomposer(op_invoke_info, runtime_mapping)
         if not specs:
             visible_regime = mapping.get("decomposer_options", {}).get("visible_kernel_regime", {})
@@ -2522,6 +2773,26 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         for spec in specs:
             kernel_types = [spec.kernel_type] + (spec.alternate_kernel_types or [])
+            spec_attributes: Dict[str, Any] = {
+                "tc_input_count": spec.tc_input_count,
+                "composite_query_mode": spec.query_mode,
+            }
+            if spec.attention_params:
+                spec_attributes.update(spec.attention_params)
+            if spec.cache_params:
+                spec_attributes.update(spec.cache_params)
+            if spec.runtime_params:
+                spec_attributes.update(spec.runtime_params)
+            self._record_tensor_query(
+                op_invoke_info,
+                kernel_types,
+                query_mode=f"composite_{spec.query_mode}",
+                input_shapes=list(spec.input_shapes),
+                input_dtypes=list(spec.input_dtypes or [spec.dtype] * len(spec.input_shapes)),
+                output_shapes=[],
+                output_dtypes=[],
+                attributes=spec_attributes,
+            )
 
             if spec.query_mode == "mlapo_preprocess" and spec.runtime_params:
                 hit = self._query_mlapo_preprocess(kernel_types, spec.runtime_params, spec.dtype)
@@ -2817,7 +3088,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 if expected_shapes is None:
                     continue
                 expected_input_shapes, expected_output_shapes = expected_shapes
-                input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+                input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
                 output_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
                 if (
                     len(input_dtypes) != _MLA_PREPROCESS_INPUT_COUNT
@@ -2850,7 +3121,9 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         target_tokens = target["num_tokens"]
 
         def shape_info(row: pd.Series, rule: str) -> ShapeMatchInfo:
-            csv_shapes = [list(shape) for shape in _parse_shape_str(str(row.get("Input Shapes", "")))]
+            csv_shapes = [
+                list(shape) for shape in _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
+            ]
             return ShapeMatchInfo(
                 simulation_shapes=[[target_tokens, target["hidden_size"]]],
                 kernel_shapes=csv_shapes,
@@ -3241,7 +3514,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         expected_dtypes = [dtype_str, dtype_str, dtype_str, dtype_str, "INT64", dtype_str, dtype_str]
 
         def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
-            csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+            csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
             csv_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
             csv_formats = _parse_str_list(str(row.get("Input Formats", "")))
             if len(csv_shapes) < 7 or len(csv_dtypes) < 7 or len(csv_formats) < 7:
@@ -3301,7 +3574,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         expected_dtypes = [dtype_str, "INT32", dtype_str]
 
         def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
-            csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+            csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
             csv_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
             csv_formats = _parse_str_list(str(row.get("Input Formats", "")))
             output_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
@@ -3398,6 +3671,24 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         topology_tier = self._resolve_topology_tier(list(rank_group))
 
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel_type],
+            query_mode="composite_communication",
+            input_shapes=[(int(message_bytes),)],
+            input_dtypes=["BYTES"],
+            output_shapes=[],
+            output_dtypes=[],
+            attributes={
+                "message_bytes": int(message_bytes),
+                "message_bytes_mode": message_bytes_mode,
+                "group_type": group_type,
+                "num_devices": num_devices,
+                "topology_tier": topology_tier,
+                "interpolation_method": interpolation_method,
+            },
+        )
+
         result = self._query_comm_csv(
             kernel_type,
             message_bytes,
@@ -3476,6 +3767,20 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         # Resolve topology_tier from group via CommGrid
         topology_tier = self._resolve_topology_tier(list(rank_group))
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel_type],
+            query_mode="communication",
+            input_shapes=[(int(message_bytes),)],
+            input_dtypes=["BYTES"],
+            output_shapes=[],
+            output_dtypes=[],
+            attributes={
+                "message_bytes": int(message_bytes),
+                "num_devices": num_devices,
+                "topology_tier": topology_tier,
+            },
+        )
 
         result = self._query_comm_csv(kernel_type, message_bytes, num_devices, topology_tier)
         if result is None:
@@ -3567,12 +3872,45 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         input_layout = "TND" if query.ndim == 3 else "BNSD_NBSD" if query.ndim == 4 else None
 
         # Build params dict
+        seq_values = _tensor_int_values(seq_lens)
+        query_values = _tensor_int_values(query_lens)
+        batch_size = len(seq_values) if seq_values else None
+        block_table = args[4] if len(args) > 4 else None
+        is_paged = isinstance(block_table, torch.Tensor) and block_table.ndim == 2
+
+        def cumulative(values: Optional[List[int]]) -> Optional[List[int]]:
+            if values is None:
+                return None
+            total = 0
+            result = []
+            for value in values:
+                total += value
+                result.append(total)
+            return result
+
+        actual_query_values = cumulative(query_values or seq_values)
+        actual_kv_values = seq_values if is_paged else cumulative(seq_values)
+        block_size = None
+        if is_paged and isinstance(key, torch.Tensor) and key.ndim == 4:
+            block_size = int(key.shape[1])
+        valid_blocks = None
+        if actual_kv_values is not None and block_size:
+            valid_blocks = [math.ceil(value / block_size) for value in actual_kv_values]
         params = {
             "q_shape_3d": tc_q_3d,
             "avg_seq_len": tc_avg_seq_len,
             "sparse_mode": tc_sparse_mode,
             "num_kv_heads": tc_num_kv_heads,
+            "num_heads": tc_q_3d[1],
             "input_layout": input_layout,
+            "phase": _resolve_batch_phase(op_invoke_info, batch_size),
+            "batch_size": batch_size,
+            "actual_seq_lengths_values": actual_query_values,
+            "actual_seq_lengths_kv_values": actual_kv_values,
+            "block_table_valid_blocks": valid_blocks,
+            "block_size": block_size,
+            "cache_layout": "PA_BSND" if is_paged else None,
+            "kv_cache_mode": "paged" if is_paged else "contiguous",
         }
 
         # Build kernel_types list: primary + alternates
@@ -3580,6 +3918,19 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         for alt in mapping.get("alternate_kernel_types", []):
             if alt not in kernel_types:
                 kernel_types.append(alt)
+
+        if self._backend_projector.enabled:
+            raw_input_shapes, raw_input_dtypes = self._raw_tensor_slots(tuple(op_invoke_info.args))
+        else:
+            raw_input_shapes, raw_input_dtypes = [], []
+        self._record_tensor_query(
+            op_invoke_info,
+            kernel_types,
+            query_mode="attention_special",
+            input_shapes=raw_input_shapes,
+            input_dtypes=raw_input_dtypes,
+            attributes=params,
+        )
 
         result = self._query_by_attn_params(kernel_types, params, tc_dtype_str)
         if result is None:
@@ -3631,6 +3982,15 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         if not kernel_type:
             self.last_miss_reason = "unmapped"
             return None
+        _ew_inputs = self._extract_tensor_inputs(op_invoke_info) if self._backend_projector.enabled else None
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel_type],
+            query_mode="elementwise",
+            inputs=_ew_inputs,
+            output_shapes=[tuple(tc_output_shape)],
+            output_dtypes=[tc_dtype_str or "DT_UNDEFINED"],
+        )
 
         def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
             csv_out_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
@@ -3721,6 +4081,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         tc_inputs: List[Tuple[Tuple[int, ...], torch.dtype]],
         tc_input_count: Optional[int],
         simulation_shapes: Optional[List[List[int]]] = None,
+        expected_input_dtypes: Optional[List[str]] = None,
     ) -> CheckerFn:
         """Build a checker closure for compute-style shape matching.
 
@@ -3733,10 +4094,18 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         sim_shapes = simulation_shapes or [list(s) for s, _ in tc_inputs]
 
         def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
-            rule = self._inputs_match(tc_inputs, row, kt, tc_input_count)
+            rule = self._inputs_match(
+                tc_inputs,
+                row,
+                kt,
+                tc_input_count,
+                expected_input_dtypes=expected_input_dtypes,
+            )
             if rule is None:
                 return None
-            csv_shapes = [list(s) for s in _parse_shape_str(str(row.get("Input Shapes", "")))]
+            csv_shapes = [
+                list(s) for s in _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
+            ]
             return Candidate(
                 latency_us=float(row[lat_col]),
                 kernel_type=kt,
@@ -3775,7 +4144,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             primary = kernel_types[0] if kernel_types else "unknown"
             df = self._load_csv(primary)
             if df is not None and not df.empty:
-                csv_first_shapes = _parse_shape_str(str(df.iloc[0].get("Input Shapes", "")))
+                csv_first_shapes = _parse_shape_str(str(df.iloc[0].get("Input Shapes", "")), preserve_empty_slots=False)
                 effective_csv_count = len(csv_first_shapes)
                 effective_tc_count = len(tc_inputs)
                 if effective_tc_input_count is not None:
@@ -3909,19 +4278,6 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             self.last_miss_reason = "unmapped"
             return None
 
-        # Pre-check: if CSV has EP Size column but ep_size not configured, bail
-        df = self._load_csv(kernel_type)
-        if df is None:
-            self.last_miss_reason = "csv_not_found"
-            return None
-        has_ep_col = "EP Size" in df.columns
-        if has_ep_col and self.ep_size is None:
-            logger.warning(
-                "DFC CSV has EP Size column but ep_size not configured. Pass parallel_config to ProfilingDataSource."
-            )
-            self.last_miss_reason = "ep_size_not_configured"
-            return None
-
         raw_tc_inputs = self._extract_tensor_inputs(op_invoke_info)
         projected_inputs = None
         if mapping.get("project_full_shape"):
@@ -3934,6 +4290,26 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             tc_inputs = tc_inputs[:tc_input_count]
         simulation_shapes = [list(s) for s, _ in tc_inputs]
         ep_size = self.ep_size
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel_type],
+            query_mode="moe_fused",
+            inputs=tc_inputs,
+            attributes={"ep_size": ep_size, "tc_input_count": tc_input_count},
+        )
+
+        # Pre-check after projection so a missing CSV still produces a demand.
+        df = self._load_csv(kernel_type)
+        if df is None:
+            self.last_miss_reason = "csv_not_found"
+            return None
+        has_ep_col = "EP Size" in df.columns
+        if has_ep_col and self.ep_size is None:
+            logger.warning(
+                "DFC CSV has EP Size column but ep_size not configured. Pass parallel_config to ProfilingDataSource."
+            )
+            self.last_miss_reason = "ep_size_not_configured"
+            return None
 
         def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
             rule = self._inputs_match(tc_inputs, row, kt, tc_input_count)
@@ -3945,7 +4321,9 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 ep_val = row["EP Size"]
                 if pd.isna(ep_val) or int(ep_val) != ep_size:
                     return None
-            csv_shapes = [list(s) for s in _parse_shape_str(str(row.get("Input Shapes", "")))]
+            csv_shapes = [
+                list(s) for s in _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
+            ]
             return Candidate(
                 latency_us=float(row[lat_col]),
                 kernel_type=kt,
@@ -4010,6 +4388,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             )
 
         comm_kernel_type = comm_spec.get("kernel_type")
+        comm_optional = bool(comm_spec.get("optional", False))
         interpolation_method = comm_spec.get("interpolation_method", "alpha_beta")
         if not isinstance(comm_kernel_type, str) or not comm_kernel_type.startswith("hcom_"):
             self.last_miss_reason = "invalid_moe_embedded_communication"
@@ -4020,6 +4399,16 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         comm_context = self._moe_embedded_comm_context(op_invoke_info, comm_spec)
         if comm_context is None:
+            if comm_optional:
+                self.last_miss_reason = ""
+                return QueryResult(
+                    latency_us=base_latency,
+                    confidence=hit.confidence,
+                    source=QuerySource.MEASURED,
+                    details=base_details,
+                    shape_match_info=hit.shape_match_info,
+                    sub_kernel_shapes=sub_kernel_shapes,
+                )
             self.last_miss_reason = "moe_embedded_communication_context_mismatch"
             return None
         comm_result = self._query_comm_csv(
@@ -4049,6 +4438,23 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 )
             partial_miss_reason = f"moe_embedded_communication_miss:{comm_kernel_type}"
             self.last_miss_reason = ""
+            if comm_optional:
+                return QueryResult(
+                    latency_us=base_latency,
+                    confidence=hit.confidence,
+                    source=QuerySource.MEASURED,
+                    details={
+                        **base_details,
+                        "embedded_communication_active": False,
+                        "embedded_communication": {
+                            **comm_context,
+                            "kernel_type": comm_kernel_type,
+                            "reason": "optional_lookup_failed",
+                        },
+                    },
+                    shape_match_info=hit.shape_match_info,
+                    sub_kernel_shapes=sub_kernel_shapes,
+                )
             return QueryResult(
                 latency_us=base_latency,
                 confidence=0.5,
@@ -4119,6 +4525,12 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             (weight_shape, output_tensor.dtype),
         ]
         projection_shapes = [list(shape) for shape, _ in projection_inputs]
+        self._record_tensor_query(
+            op_invoke_info,
+            [projection_kernel_type],
+            query_mode="mtp_projection",
+            inputs=projection_inputs,
+        )
         projection_hit = self._find_candidates(
             [projection_kernel_type],
             self._make_compute_checker(projection_inputs, 2, projection_shapes),
@@ -4138,6 +4550,160 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         return projection_result
 
     # ---- Compute op lookup ----
+
+    @staticmethod
+    def _compute_scale_target_regime(
+        input_shape: Tuple[int, ...],
+        outputs: List[Tuple[Tuple[int, ...], torch.dtype]],
+        kernel_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        if len(outputs) < 2 or outputs[0][0] != input_shape:
+            return None
+        output_dtypes = [_compute_scale_profiling_dtype(dtype) for _shape, dtype in outputs]
+        if any(dtype is None for dtype in output_dtypes):
+            return None
+        modes = tuple(_compute_scale_mode(input_shape, shape, kernel_type) for shape, _dtype in outputs[1:])
+        if any(mode is None for mode in modes):
+            return None
+        scale_mode, block_size = modes[0]
+        input_format = _compute_scale_input_format(input_shape)
+        return {
+            "compute_subcategory": "compute_scale",
+            "input_format": input_format,
+            "output_count": len(outputs),
+            "output_dtypes": tuple(dtype for dtype in output_dtypes if dtype is not None),
+            "output_formats": (input_format, *(["ND"] * (len(outputs) - 1))),
+            "scale_mode": scale_mode,
+            "block_size": block_size,
+            "auxiliary_modes": modes,
+        }
+
+    def _compute_scale_output_regime(
+        self,
+        tc_input_shape: Tuple[int, ...],
+        tc_outputs: List[Tuple[Tuple[int, ...], torch.dtype]],
+        row: pd.Series,
+        kernel_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        target = self._compute_scale_target_regime(tc_input_shape, tc_outputs, kernel_type)
+        if target is None:
+            return None
+        csv_input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
+        csv_input_formats = _parse_str_list(str(row.get("Input Formats", "")))
+        csv_output_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
+        csv_output_dtypes = _parse_str_list(str(row.get("Output Data Types", "")))
+        csv_output_formats = _parse_str_list(str(row.get("Output Formats", "")))
+        if not csv_input_shapes or not csv_input_formats:
+            return None
+        if not (len(tc_outputs) == len(csv_output_shapes) == len(csv_output_dtypes) == len(csv_output_formats)):
+            return None
+        if csv_input_formats[0] != target["input_format"]:
+            return None
+        if tuple(csv_output_dtypes) != target["output_dtypes"]:
+            return None
+        if tuple(csv_output_formats) != target["output_formats"]:
+            return None
+
+        csv_input_shape = tuple(csv_input_shapes[0])
+        if csv_input_formats[0] == "FRACTAL_NZ":
+            csv_input_shape = fractal_nz_to_nd(csv_input_shape)
+        csv_quant_shape = tuple(csv_output_shapes[0])
+        if csv_output_formats[0] == "FRACTAL_NZ":
+            csv_quant_shape = fractal_nz_to_nd(csv_quant_shape)
+        if csv_quant_shape != csv_input_shape:
+            return None
+        candidate_modes = tuple(
+            _compute_scale_mode(csv_input_shape, tuple(shape), kernel_type) for shape in csv_output_shapes[1:]
+        )
+        if any(mode is None for mode in candidate_modes) or candidate_modes != target["auxiliary_modes"]:
+            return None
+        return target
+
+    def _lookup_compute_scale(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
+        """Exact lookup for quantize kernels whose auxiliary output is semantic."""
+        kernel_type = mapping.get("kernel_type")
+        if not kernel_type:
+            self.last_miss_reason = "compute_scale_kernel_type_missing"
+            return None
+
+        tc_inputs = self._extract_tensor_inputs(op_invoke_info)
+        tc_input_count = mapping.get("tc_input_count")
+        if tc_input_count is not None:
+            tc_inputs = tc_inputs[:tc_input_count]
+        tc_outputs = self._extract_tensor_outputs(op_invoke_info)
+        if not tc_inputs or len(tc_inputs) != 1 or len(tc_outputs) < 2:
+            self.last_miss_reason = "compute_scale_signature_unavailable"
+            return None
+
+        kernel_types = [kernel_type]
+        for alternate in mapping.get("alternate_kernel_types", []):
+            if alternate not in kernel_types:
+                kernel_types.append(alternate)
+        rank_map = mapping.get("kernel_types_by_input_rank", {})
+        input_rank = len(tc_inputs[0][0])
+        rank_candidates = rank_map.get(input_rank, rank_map.get(str(input_rank)))
+        if isinstance(rank_candidates, list) and all(isinstance(item, str) for item in rank_candidates):
+            kernel_types = list(dict.fromkeys([*rank_candidates, *kernel_types]))
+
+        expected_input_dtypes = [_compute_scale_profiling_dtype(dtype) for _shape, dtype in tc_inputs]
+        if any(dtype is None for dtype in expected_input_dtypes):
+            self.last_miss_reason = "compute_scale_input_dtype_unavailable"
+            return None
+        target_regime = self._compute_scale_target_regime(tc_inputs[0][0], tc_outputs, kernel_type)
+        if target_regime is None:
+            self.last_miss_reason = "compute_scale_signature_unavailable"
+            return None
+
+        input_shapes = [shape for shape, _dtype in tc_inputs]
+        output_shapes = [shape for shape, _dtype in tc_outputs]
+        output_dtypes = [_compute_scale_profiling_dtype(dtype) for _shape, dtype in tc_outputs]
+        self._record_tensor_query(
+            op_invoke_info,
+            kernel_types,
+            query_mode="compute_scale",
+            input_shapes=input_shapes,
+            input_dtypes=[dtype for dtype in expected_input_dtypes if dtype is not None],
+            output_shapes=output_shapes,
+            output_dtypes=[dtype for dtype in output_dtypes if dtype is not None],
+            attributes={"tc_input_count": tc_input_count, **target_regime},
+        )
+
+        simulation_shapes = [list(shape) for shape, _dtype in tc_inputs]
+        compute_checker = self._make_compute_checker(
+            tc_inputs,
+            tc_input_count,
+            simulation_shapes,
+            expected_input_dtypes=[dtype for dtype in expected_input_dtypes if dtype is not None],
+        )
+
+        def checker(row: pd.Series, candidate_kernel: str, latency_col: str) -> Optional[Candidate]:
+            candidate = compute_checker(row, candidate_kernel, latency_col)
+            if candidate is None:
+                return None
+            regime = self._compute_scale_output_regime(tc_inputs[0][0], tc_outputs, row, candidate_kernel)
+            if regime is None:
+                return None
+            candidate.details.update(regime)
+            return candidate
+
+        hit = self._find_candidates(kernel_types, checker, select="nearest")
+        if hit is None:
+            self.last_miss_reason = "compute_scale_signature_mismatch"
+            self.last_shape_match_info = ShapeMatchInfo(
+                simulation_shapes=simulation_shapes,
+                kernel_shapes=[],
+                shape_match_rule=self.last_miss_reason,
+            )
+            return None
+
+        self.last_shape_match_info = hit.shape_match_info
+        return QueryResult(
+            latency_us=hit.latency_us,
+            confidence=hit.confidence,
+            source=QuerySource.MEASURED,
+            details={"kernel_type": hit.kernel_type, **hit.details},
+            shape_match_info=hit.shape_match_info,
+        )
 
     def _lookup_compute(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
         if not mapping.get("kernel_type"):
@@ -4212,6 +4778,17 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 tc_inputs = projected
 
         simulation_shapes = [list(s) for s, _ in tc_inputs]
+        if self._backend_projector.enabled:
+            query_inputs = tc_inputs or self._extract_grouped_query_inputs(op_invoke_info)
+        else:
+            query_inputs = None
+        self._record_tensor_query(
+            op_invoke_info,
+            kernel_types,
+            query_mode="compute",
+            inputs=query_inputs,
+            attributes={"tc_input_count": tc_input_count},
+        )
 
         checker = self._make_compute_checker(tc_inputs, tc_input_count, simulation_shapes)
 
@@ -4257,6 +4834,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         csv_row: pd.Series,
         kernel_type: str = "",
         tc_input_count: Optional[int] = None,
+        expected_input_dtypes: Optional[List[str]] = None,
     ) -> Optional[str]:
         """Match TensorCast input shapes/dtypes against a CSV row.
 
@@ -4269,7 +4847,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         - ND weight transpose for matmul kernels (CSV stores (N,K), TC sees (K,N))
         - Block-padding tolerance (TC pads seq to NPU tile alignment)
         """
-        csv_shapes = _parse_shape_str(str(csv_row.get("Input Shapes", "")))
+        csv_shapes = _parse_shape_str(str(csv_row.get("Input Shapes", "")), preserve_empty_slots=False)
         csv_dtypes = _parse_str_list(str(csv_row.get("Input Data Types", "")))
         csv_formats = _parse_str_list(str(csv_row.get("Input Formats", "")))
 
@@ -4317,7 +4895,10 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         for i, (tc_shape, tc_dtype) in enumerate(tc_inputs_normalized):
             # Check dtype
-            expected_dtype = DTYPE_MAP.get(tc_dtype)
+            if expected_input_dtypes is not None:
+                expected_dtype = expected_input_dtypes[i] if i < len(expected_input_dtypes) else None
+            else:
+                expected_dtype = DTYPE_MAP.get(tc_dtype)
             if expected_dtype is None or i >= len(csv_dtypes):
                 return None
             csv_dtype_i = csv_dtypes[i]

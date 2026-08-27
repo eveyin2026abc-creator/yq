@@ -1089,9 +1089,10 @@ class TestParseShapeTextEdgeCases(unittest.TestCase):
 
     def test_mixed_semicolon_and_empty_slots(self):
         result = parse_shape_text("128,5120;;")
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
         self.assertEqual(result[0], (128, 5120))
         self.assertEqual(result[1], ())
+        self.assertEqual(result[2], ())
 
 
 class TestLoadCsvTemplateRows(unittest.TestCase):

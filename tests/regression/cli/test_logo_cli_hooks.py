@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,25 +61,29 @@ def test_generate_shape_grid_main_cli(
 ) -> None:
     """Exercise generate_shape_grid.main in-process for CI test_map coverage."""
     monkeypatch.setattr(
-        "tools.perf_data_collection.generate_shape_grid.load_csv_files",
-        lambda _data_dir: [],
-    )
-    monkeypatch.setattr(
-        "tools.perf_data_collection.generate_shape_grid.run_theory_mode",
-        lambda _args, _data_dir, _csv_files: (0, []),
-    )
-    monkeypatch.setattr(
-        "tools.perf_data_collection.generate_shape_grid.clear_progress",
-        lambda: None,
+        "tools.perf_data_collection.generate_shape_grid.run_query_mode",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            workloads=SimpleNamespace(
+                attempted=1,
+                succeeded=1,
+                cached=0,
+                elapsed_seconds=0.1,
+                failed_workloads=(),
+            ),
+            captured_demands=2,
+            total_appended_rows=0,
+            generated_files=(),
+            skipped_files=(),
+        ),
     )
 
     result = run_module_main(
         "tools.perf_data_collection.generate_shape_grid",
-        ["--database-path", str(tmp_path), "--rows", "0"],
+        ["--database-path", str(tmp_path), "--target-models", "org/model"],
     )
 
     assert result.returncode == 0
-    assert "Appended 0 rows" in result.stdout
+    assert "appended_rows=0" in result.stdout
     _assert_logo_on_stderr(result.stderr)
 
 

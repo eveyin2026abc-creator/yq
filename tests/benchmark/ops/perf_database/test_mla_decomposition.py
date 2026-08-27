@@ -1283,6 +1283,33 @@ class TestDecomposeMlapo:
         # Fused: (num_tokens, hidden_size) @ (q_lora_rank+kv_proj_dim, hidden_size)
         assert matmul_specs[0].input_shapes == [(100, 5120), (2112, 5120)]
 
+    @pytest.mark.parametrize(
+        ("num_tokens", "tp_size", "expected_local_tokens"),
+        [(127, 1, 127), (127, 8, 16)],
+    )
+    def test_sequence_parallel_uses_identity_or_ceil_partition(
+        self,
+        num_tokens,
+        tp_size,
+        expected_local_tokens,
+    ):
+        op = _make_op_info(
+            torch.ops.tensor_cast.mlapo.default,
+            _make_mlapo_args(num_tokens=num_tokens),
+        )
+        specs = _decompose_mlapo(
+            op,
+            {
+                "_runtime_tp_size": tp_size,
+                "_runtime_sequence_parallel": True,
+                "_runtime_phase": "prefill",
+                "decomposer_options": {"projection_token_partition": "tp"},
+            },
+        )
+
+        assert specs is not None
+        assert _specs_for_kernel(specs, "MatMulV2")[0].input_shapes[0][0] == expected_local_tokens
+
     def test_insufficient_args_returns_none(self):
         op = _make_op_info(
             torch.ops.tensor_cast.mlapo.default,

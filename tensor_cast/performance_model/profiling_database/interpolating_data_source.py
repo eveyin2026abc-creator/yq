@@ -28,6 +28,10 @@ from .interpolation_index import (
     make_regime_key,
 )
 from .profiling_data_source import (
+    _compute_scale_axes as _base_compute_scale_axes,
+    _compute_scale_input_format,
+    _compute_scale_mode as _base_compute_scale_mode,
+    _compute_scale_profiling_dtype as _base_compute_scale_profiling_dtype,
     _DTYPE_COMPAT,
     _DTYPE_RELAXED_KERNELS,
     _is_block_padded,
@@ -37,6 +41,7 @@ from .profiling_data_source import (
     _parse_shape_str,
     _parse_str_list,
     _project_dispatch_ffn_combine_inputs,
+    _scalar_aware_numel as _base_scalar_aware_numel,
     _strip_batch_dim,
     COMPOSITE_DECOMPOSERS,
     DTYPE_MAP,
@@ -179,7 +184,7 @@ _LIGHTNING_INDEXER_AXIS_GROUPS = (
     ("effective_kv_len",),
     ("q_tokens", "effective_kv_len"),
 )
-_SPARSE_ATTENTION_AXIS_GROUPS = _LIGHTNING_INDEXER_AXIS_GROUPS
+_SPARSE_ATTENTION_AXIS_GROUPS = (("prefill_tokens",),) + _LIGHTNING_INDEXER_AXIS_GROUPS
 _SCATTER_ND_UPDATE_AXIS_GROUPS = (("tokens",),)
 _RUNTIME_ATTENTION_KERNELS = frozenset({"LightningIndexer", "LightningIndexerVllm"})
 _SPARSE_RUNTIME_ATTENTION_KERNELS = frozenset({"SparseFlashAttention"})
@@ -547,7 +552,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         *,
         include_output_signature: bool = False,
     ) -> tuple[Optional[CandidatePoint], Optional[str]]:
-        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         if tc_input_count is not None:
             csv_shapes = csv_shapes[:tc_input_count]
         if len(csv_shapes) < 2:
@@ -906,11 +911,27 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         return tuple(patterns)
 
     @staticmethod
-    def _generic_compute_shape_signature(input_shapes: List[Tuple[int, ...]]) -> tuple[Any, ...]:
+    def _generic_compute_shape_signature(
+        input_shapes: List[Tuple[int, ...]],
+        co_varying_input_indices: Sequence[int] = (),
+    ) -> Optional[tuple[Any, ...]]:
         if not input_shapes:
             return ()
         first = tuple(input_shapes[0])
-        return (first[1:], tuple(tuple(shape) for shape in input_shapes[1:]))
+        if not first:
+            return None
+        axis_0 = first[0]
+        co_varying = set(co_varying_input_indices)
+        signature_shapes = []
+        for index, shape in enumerate(input_shapes[1:], start=1):
+            logical_shape = tuple(shape)
+            if index in co_varying:
+                if logical_shape and logical_shape[0] == axis_0:
+                    logical_shape = logical_shape[1:]
+                elif axis_0 != 1 or logical_shape != first[1:]:
+                    return None
+            signature_shapes.append(logical_shape)
+        return (first[1:], tuple(signature_shapes))
 
     def _generic_compute_policy(self, kernel_type: str, policy_kernel_type: Optional[str] = None) -> dict[str, Any]:
         kernel_types = [kernel_type]
@@ -987,9 +1008,21 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             ), None
         if not logical_shapes or not logical_shapes[0]:
             return None, "generic_compute_input_shape_unavailable"
+        generic_policy = self._generic_compute_policy(kernel_type, policy_kernel_type)
+        co_varying_input_indices = generic_policy.get("co_varying_input_indices", [])
+        if not isinstance(co_varying_input_indices, list) or any(
+            not isinstance(index, int) or index <= 0 for index in co_varying_input_indices
+        ):
+            return None, "generic_compute_co_varying_input_indices_invalid"
+        shape_signature = self._generic_compute_shape_signature(
+            logical_shapes,
+            co_varying_input_indices,
+        )
+        if shape_signature is None:
+            return None, "generic_compute_co_varying_input_axis_mismatch"
         return (
             {_GENERIC_COMPUTE_AXIS_0: float(logical_shapes[0][0])},
-            [("shape_signature", self._generic_compute_shape_signature(logical_shapes))],
+            [("shape_signature", shape_signature)],
         ), None
 
     def _generic_compute_axes_and_regime(
@@ -1126,7 +1159,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         tc_input_count: Optional[int],
         policy_kernel_type: Optional[str] = None,
     ) -> tuple[Optional[CandidatePoint], Optional[str]]:
-        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         csv_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
         csv_formats = _parse_str_list(str(row.get("Input Formats", "")))
         if tc_input_count is not None:
@@ -1483,7 +1516,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         latency_col: str,
         row_index: int,
     ) -> tuple[Optional[CandidatePoint], Optional[str]]:
-        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        csv_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         csv_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
         csv_formats = _parse_str_list(str(row.get("Input Formats", "")))
         if not csv_shapes:
@@ -1732,7 +1765,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         if seq_value is None or seq_value < 0:
             return None
 
-        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         q_raw = input_shapes[0] if input_shapes else None
         if q_raw is None:
             return None
@@ -2269,6 +2302,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         q_shape: tuple[int, ...],
         workload: dict[str, Any],
         params: dict[str, Any],
+        kv_lengths: Sequence[int] = (),
         *,
         include_sparse_fields: bool,
     ) -> Optional[list[tuple[str, Any]]]:
@@ -2317,6 +2351,8 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             ("kv_cache_mode", str(params["kv_cache_mode"])),
         ]
         if include_sparse_fields:
+            if not kv_lengths:
+                return None
             sparse_required = ("sparse_block_size", "sparse_indices_pattern", "sparse_indices_valid_count")
             if any(params.get(field) is None for field in sparse_required):
                 return None
@@ -2329,14 +2365,33 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                 or sparse_indices_valid_count <= 0
             ):
                 return None
+            expected_valid_count = min(topk, max(int(value) for value in kv_lengths))
+            if sparse_indices_valid_count != expected_valid_count:
+                return None
+            valid_count_state = "topk_capped" if expected_valid_count == topk else "kv_limited"
             fields.extend(
                 [
                     ("sparse_block_size", sparse_block_size),
                     ("sparse_indices_pattern", str(params["sparse_indices_pattern"])),
-                    ("sparse_indices_valid_count", sparse_indices_valid_count),
+                    ("sparse_indices_valid_count_state", valid_count_state),
                 ]
             )
         return fields
+
+    @staticmethod
+    def _runtime_attention_axes(
+        workload: dict[str, Any],
+        *,
+        include_sparse_fields: bool,
+    ) -> dict[str, float]:
+        if include_sparse_fields and workload["phase"] == "prefill" and workload["batch_size"] == 1:
+            # One-request Prefill has one physical degree of freedom. Keeping
+            # two equal axes would make valid measured points collinear.
+            return {"prefill_tokens": workload["q_tokens"]}
+        return {
+            "q_tokens": workload["q_tokens"],
+            "effective_kv_len": workload["effective_kv_len"],
+        }
 
     def _candidate_from_runtime_attention_row(
         self,
@@ -2351,7 +2406,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             completeness = _optional_str_cell(row.get("Runtime metadata_completeness"))
             if completeness != "complete":
                 return None, "runtime_metadata_incomplete"
-        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         input_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
         if not input_shapes or not input_dtypes:
             return None, "input_signature_missing"
@@ -2392,6 +2447,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             q_shape,
             workload,
             params,
+            kv_lengths,
             include_sparse_fields=include_sparse_fields,
         )
         if regime_fields is None:
@@ -2401,10 +2457,10 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             return None, str(latency_meta["latency_rejected_reason"])
         return CandidatePoint(
             kernel_type=kernel_type,
-            axes={
-                "q_tokens": workload["q_tokens"],
-                "effective_kv_len": workload["effective_kv_len"],
-            },
+            axes=self._runtime_attention_axes(
+                workload,
+                include_sparse_fields=include_sparse_fields,
+            ),
             latency_us=latency,
             regime_key=make_regime_key(regime_fields),
             input_shapes=[q_shape],
@@ -2487,6 +2543,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             q_shape,
             workload,
             params,
+            kv_lengths,
             include_sparse_fields=include_sparse_fields,
         )
         if regime_fields is None:
@@ -2495,10 +2552,10 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         return InterpolationTarget(
             func_name=kernel_type,
             kernel_type=kernel_type,
-            axes={
-                "q_tokens": workload["q_tokens"],
-                "effective_kv_len": workload["effective_kv_len"],
-            },
+            axes=self._runtime_attention_axes(
+                workload,
+                include_sparse_fields=include_sparse_fields,
+            ),
             regime_key=make_regime_key(regime_fields),
             tc_shapes=[q_shape],
             input_dtypes=[dtype_str],
@@ -2564,7 +2621,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         latency_col: str,
         row_index: int,
     ) -> tuple[Optional[CandidatePoint], Optional[str]]:
-        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         input_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
         input_formats = _parse_str_list(str(row.get("Input Formats", "")))
         if len(input_shapes) < 3:
@@ -2585,7 +2642,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             ("cache_dtype", input_dtypes[0]),
             ("index_dtype", input_dtypes[1]),
             ("update_dtype", input_dtypes[2]),
-            ("full_cache_shape", cache_shape),
+            ("cache_tail", cache_shape[1:] if len(cache_shape) >= 2 else cache_shape),
             ("update_tail", update_shape[1:]),
             ("input_formats", tuple(input_formats[:3])),
         ]
@@ -2633,7 +2690,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                     ("cache_dtype", cache_dtype),
                     ("index_dtype", index_dtype),
                     ("update_dtype", update_dtype),
-                    ("full_cache_shape", cache_shape),
+                    ("cache_tail", cache_shape[1:] if len(cache_shape) >= 2 else cache_shape),
                     ("update_tail", update_shape[1:]),
                     # TensorCast tensors do not carry physical format metadata;
                     # the current cache-update mapping is intentionally ND-only.
@@ -2668,7 +2725,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                     ("cache_dtype", input_dtypes[0]),
                     ("index_dtype", input_dtypes[1]),
                     ("update_dtype", input_dtypes[2]),
-                    ("full_cache_shape", cache_shape),
+                    ("cache_tail", cache_shape[1:] if len(cache_shape) >= 2 else cache_shape),
                     ("update_tail", update_shape[1:]),
                     ("input_formats", ("ND", "ND", "ND")),
                 ]
@@ -2839,51 +2896,23 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
 
     @staticmethod
     def _compute_scale_axes(shape: Tuple[int, ...]) -> Optional[dict[str, float]]:
-        if not shape or any(int(dim) <= 0 for dim in shape):
-            return None
-        tokens = math.prod(int(dim) for dim in shape[:-1])
-        return {"M": float(tokens), "K": float(shape[-1])}
+        return _base_compute_scale_axes(shape)
 
     @staticmethod
     def _compute_scale_profiling_dtype(dtype: torch.dtype) -> Optional[str]:
-        if dtype == torch.float16:
-            return "DT_FLOAT16"
-        return DTYPE_MAP.get(dtype)
+        return _base_compute_scale_profiling_dtype(dtype)
 
     @staticmethod
     def _scalar_aware_numel(shape: Tuple[int, ...]) -> Optional[int]:
-        numel = 1
-        for dim in shape:
-            if int(dim) < 0:
-                return None
-            numel *= int(dim)
-        return numel
+        return _base_scalar_aware_numel(shape)
 
-    @classmethod
+    @staticmethod
     def _compute_scale_mode(
-        cls,
         input_shape: Tuple[int, ...],
         scale_shape: Tuple[int, ...],
         kernel_type: str,
     ) -> Optional[tuple[str, Optional[int]]]:
-        axes = cls._compute_scale_axes(input_shape)
-        scale_numel = cls._scalar_aware_numel(scale_shape)
-        if axes is None or scale_numel is None or scale_numel <= 0:
-            return None
-        if not scale_shape:
-            return "per_tensor", None
-        tokens = int(axes["M"])
-        channels = int(axes["K"])
-        if kernel_type == "DynamicBlockQuant":
-            if len(scale_shape) != 1 or scale_numel > channels:
-                return None
-            block_size = (channels + scale_numel - 1) // scale_numel
-            return "per_block", block_size
-        if scale_numel == tokens:
-            return "per_token", None
-        if scale_numel == channels:
-            return "per_channel", None
-        return None
+        return _base_compute_scale_mode(input_shape, scale_shape, kernel_type)
 
     @staticmethod
     def _output_tensors(output: Any) -> Optional[list[torch.Tensor]]:
@@ -2900,7 +2929,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         latency_col: str,
         row_index: int,
     ) -> tuple[Optional[CandidatePoint], Optional[str]]:
-        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         input_dtypes = _parse_str_list(str(row.get("Input Data Types", "")))
         input_formats = _parse_str_list(str(row.get("Input Formats", "")))
         output_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
@@ -3025,13 +3054,14 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             return None
         auxiliary_modes = tuple(mode for mode in extracted_modes if mode is not None)
         scale_mode, block_size = auxiliary_modes[0]
+        input_format = _compute_scale_input_format(input_shape)
         regime_fields: list[tuple[str, Any]] = [
             ("kernel_type", kernel_type),
             ("input_dtype", self._dtype_key(kernel_type, input_dtype_str)),
-            ("input_format", "ND"),
+            ("input_format", input_format),
             ("output_count", len(output_tensors)),
             ("output_dtypes", tuple(output_dtypes)),
-            ("output_formats", tuple("ND" for _ in output_tensors)),
+            ("output_formats", (input_format, *(["ND"] * (len(output_tensors) - 1)))),
             ("scale_mode", scale_mode),
             ("auxiliary_modes", auxiliary_modes),
         ]
@@ -3206,7 +3236,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         if decomposer is None:
             return None
 
-        runtime_mapping = self.base._build_composite_runtime_mapping(mapping)
+        runtime_mapping = self.base._build_composite_runtime_mapping(op_invoke_info, mapping)
         specs = decomposer(op_invoke_info, runtime_mapping)
         if not specs:
             return None
@@ -3663,7 +3693,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         row_index: int,
         tc_dtype_str: str,
     ) -> Optional[CandidatePoint]:
-        csv_input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")))
+        csv_input_shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=False)
         csv_out_shapes = _parse_shape_str(str(row.get("Output Shapes", "")))
         csv_out_dtypes = _parse_str_list(str(row.get("Output Data Types", "")))
         if not csv_out_shapes:

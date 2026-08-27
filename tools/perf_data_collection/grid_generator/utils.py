@@ -93,7 +93,9 @@ def parse_shape_text(shape_text: str) -> list[tuple[int, ...]]:
         elif char == ")":
             depth = max(0, depth - 1)
         current.append(char)
-    if current:
+    # Slot position is part of the replay contract.  Preserve a trailing empty
+    # slot (for example ``"1;"``) instead of silently shortening the schema.
+    if current or parts:
         parts.append("".join(current).strip())
 
     shapes: list[tuple[int, ...]] = []
@@ -248,6 +250,15 @@ def _profile_dedupe_key(
     return _dedupe_key(headers, row)
 
 
+def profile_dedupe_key(
+    csv_path: Path | None,
+    headers: list[str],
+    row: dict[str, str],
+) -> tuple[str, ...]:
+    """Return the same canonical signature used by database write-back."""
+    return _profile_dedupe_key(csv_path, headers, row)
+
+
 def dedupe_generated_rows(
     headers: list[str],
     source_rows: list[dict[str, str]],
@@ -310,7 +321,7 @@ def load_csv_template_rows(
     require_rows: bool,
     extra_headers: list[str] | None = None,
 ) -> tuple[list[str], list[dict[str, str]]] | None:
-    with csv_path.open("r", encoding="utf-8", newline="") as input_file:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as input_file:
         reader = csv.DictReader(input_file)
         headers = reader.fieldnames
         if not headers:

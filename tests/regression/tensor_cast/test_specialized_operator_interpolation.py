@@ -131,6 +131,46 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
     assert result.details["axes"] == ["output_numel"]
 
 
+def test_add_rms_norm_bias_interpolates_shared_token_axis(tmp_path, monkeypatch):
+    data_dir = tmp_path / "add_rms_norm_bias_shared_token_axis"
+    data_dir.mkdir()
+    _write_text(
+        data_dir / "op_mapping.yaml",
+        """
+version: "test"
+interpolation_policy:
+  kernel_overrides:
+    AddRmsNormBias:
+      generic_compute:
+        co_varying_input_indices: [1]
+operator_mappings:
+  "tensor_cast.add_rms_norm2.default":
+    kernel_type: AddRmsNormBias
+    tc_input_count: 3
+""",
+    )
+    _write_text(
+        data_dir / "AddRmsNormBias.csv",
+        """
+Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Output Formats,Duration(us)
+"1,64,6144;64,6144;6144;","DT_BF16;DT_BF16;DT_BF16;DT_UNDEFINED","NCL;ND;ND;NULL","1,64,6144;1,64,1;1,64,6144","DT_BF16;FLOAT;DT_BF16","ND;ND;ND",10.0
+"1,128,6144;128,6144;6144;","DT_BF16;DT_BF16;DT_BF16;DT_UNDEFINED","NCL;ND;ND;NULL","1,128,6144;1,128,1;1,128,6144","DT_BF16;FLOAT;DT_BF16","ND;ND;ND",20.0
+""",
+    )
+    source = InterpolatingDataSource(ProfilingDataSource(data_dir))
+    monkeypatch.setattr(source.base, "lookup", lambda _op: None)
+    x = torch.empty((1, 96, 6144), device="meta", dtype=torch.float16)
+    residual = torch.empty_like(x)
+    weight = torch.empty((6144,), device="meta", dtype=torch.float16)
+
+    result = source.lookup(_make_op_info("tensor_cast.add_rms_norm2.default", [x, residual, weight, 1e-5]))
+
+    assert result is not None
+    assert result.source == QuerySource.INTERPOLATED
+    assert result.latency_us == pytest.approx(15.0)
+    assert result.details["axes"] == ["axis_0"]
+
+
 def test_elementwise_base_miss_does_not_recover_local_measured_exact(tmp_path):
     data_dir = tmp_path / "elementwise_fallback_only"
     data_dir.mkdir()
@@ -428,6 +468,68 @@ def test_real_sparse_attention_interpolates_effective_kv_length():
     assert result.details["phase"] == "decode"
 
 
+@pytest.mark.parametrize("q_tokens", [844, 1094])
+def test_sparse_attention_interpolates_arbitrary_single_request_prefill(q_tokens):
+    source = InterpolatingDataSource(ProfilingDataSource(_REAL_V018_DATA_DIR))
+    params = {
+        "q_shape_3d": (q_tokens, 64, 512),
+        "sparse_mode": 3,
+        "num_kv_heads": 1,
+        "input_layout": "TND",
+        "topk": 2048,
+        "block_size": 128,
+        "num_heads": 64,
+        "cache_layout": "PA_BSND",
+        "kv_cache_mode": "paged",
+        "actual_seq_lengths_values": [q_tokens],
+        "actual_seq_lengths_kv_values": [q_tokens],
+        "sparse_block_size": 1,
+        "sparse_indices_pattern": "uniform",
+        "sparse_indices_valid_count": q_tokens,
+    }
+
+    result = source._interpolate_attention_by_params_one(
+        "SparseFlashAttention",
+        params,
+        "DT_BF16",
+    )
+
+    assert result is not None
+    assert result.source == QuerySource.INTERPOLATED
+    assert result.details["axes"] == ["prefill_tokens"]
+    assert result.details["phase"] == "prefill"
+    assert result.details["exact_fields"]["sparse_indices_valid_count_state"] == "kv_limited"
+
+
+def test_sparse_attention_rejects_inconsistent_derived_valid_count():
+    source = InterpolatingDataSource(ProfilingDataSource(_REAL_V018_DATA_DIR))
+    params = {
+        "q_shape_3d": (844, 64, 512),
+        "sparse_mode": 3,
+        "num_kv_heads": 1,
+        "input_layout": "TND",
+        "topk": 2048,
+        "block_size": 128,
+        "num_heads": 64,
+        "cache_layout": "PA_BSND",
+        "kv_cache_mode": "paged",
+        "actual_seq_lengths_values": [844],
+        "actual_seq_lengths_kv_values": [844],
+        "sparse_block_size": 1,
+        "sparse_indices_pattern": "uniform",
+        "sparse_indices_valid_count": 625,
+    }
+
+    result = source._interpolate_attention_by_params_one(
+        "SparseFlashAttention",
+        params,
+        "DT_BF16",
+    )
+
+    assert result is None
+    assert source.last_miss_reason == "sparse_attention_target_unextractable"
+
+
 def test_v018_dsa_indexer_mapping_has_registered_decomposer():
     base = ProfilingDataSource(_REAL_V018_DATA_DIR)
     mapping = base._op_mapping["operator_mappings"]["tensor_cast.dsa_indexer.default"]
@@ -471,7 +573,7 @@ operator_mappings:
 
 def test_moe_fused_real_csv_keeps_full_weight_shapes_in_candidate_regime():
     ds = InterpolatingDataSource(ProfilingDataSource(_REAL_V018_DATA_DIR, parallel_config=_ParallelConfig()))
-    tokens = 1
+    tokens = 3
     op = _make_op_info(
         "tensor_cast.dispatch_ffn_combine_quant.default",
         [
@@ -559,7 +661,7 @@ def test_moe_fused_missing_weight_shape_fails_closed():
     assert ds.last_miss_reason == "moe_fused_target_unextractable"
 
 
-def test_scatter_base_miss_does_not_recover_local_measured_exact(tmp_path):
+def test_scatter_base_miss_interpolates_across_cache_pool_capacity(tmp_path):
     data_dir = tmp_path / "scatter_real_csv"
     data_dir.mkdir()
     _write_text(
@@ -586,8 +688,9 @@ operator_mappings:
 
     result = ds.lookup(op)
 
-    assert result is None
-    assert ds.last_miss_reason == "insufficient_filtered_candidates"
+    assert result is not None
+    assert result.source == QuerySource.INTERPOLATED
+    assert result.details["axes"] == ["tokens"]
 
 
 def test_moe_fused_rank1_activation_fails_closed():
@@ -2339,7 +2442,7 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
     assert ds.last_miss_reason == "insufficient_filtered_candidates"
 
 
-def test_scatter_cache_write_sub_kernel_interpolates_with_full_cache_regime(tmp_path):
+def test_scatter_cache_write_sub_kernel_ignores_pool_capacity(tmp_path):
     data_dir = tmp_path / "scatter_cache_write_sub_kernel"
     data_dir.mkdir()
     _write_text(data_dir / "op_mapping.yaml", 'version: "test"\noperator_mappings: {}')
@@ -2348,14 +2451,14 @@ def test_scatter_cache_write_sub_kernel_interpolates_with_full_cache_regime(tmp_
         """
 Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Output Formats,Duration(us)
 "1000,128;100,1;100,128","DT_BF16;INT32;DT_BF16","ND;ND;ND","1000,128","DT_BF16","ND",10.0
-"1000,128;200,1;200,128","DT_BF16;INT32;DT_BF16","ND;ND;ND","1000,128","DT_BF16","ND",20.0
+"2000,128;200,1;200,128","DT_BF16;INT32;DT_BF16","ND;ND;ND","2000,128","DT_BF16","ND",20.0
 """,
     )
     ds = InterpolatingDataSource(ProfilingDataSource(data_dir))
 
     result = ds._interpolate_scatter_nd_update_by_shapes(
         ["ScatterNdUpdate"],
-        [(1000, 128), (150, 1), (150, 128)],
+        [(3000, 128), (150, 1), (150, 128)],
         ["DT_BF16", "INT32", "DT_BF16"],
     )
 
@@ -2380,7 +2483,7 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
 
     result = ds._interpolate_scatter_nd_update_by_shapes(
         ["ScatterNdUpdate"],
-        [(2000, 128), (150, 1), (150, 128)],
+        [(2000, 256), (150, 1), (150, 128)],
         ["DT_BF16", "INT32", "DT_BF16"],
     )
 
@@ -2545,6 +2648,49 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
     assert result.source == QuerySource.INTERPOLATED
     assert result.latency_us == pytest.approx(16.0)
     assert result.details["interpolation_path"] == "compute_scale_1d"
+
+
+def test_dynamic_quant_rank3_per_tensor_interpolation_uses_ncl_regime(tmp_path):
+    data_dir = tmp_path / "dynamic_quant_rank3_per_tensor"
+    data_dir.mkdir()
+    _write_text(
+        data_dir / "op_mapping.yaml",
+        """
+version: "test"
+operator_mappings:
+  "tensor_cast.dynamic_quantize_symmetric.default":
+    kernel_type: DynamicQuant
+    compute_subcategory: compute_scale
+    tc_input_count: 1
+""",
+    )
+    _write_text(
+        data_dir / "DynamicQuant.csv",
+        """
+Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Output Formats,Duration(us)
+"1,100,64","DT_FLOAT16","NCL","1,100,64;","INT8;FLOAT","NCL;ND",10.0
+"1,200,64","DT_FLOAT16","NCL","1,200,64;","INT8;FLOAT","NCL;ND",20.0
+""",
+    )
+    source = InterpolatingDataSource(ProfilingDataSource(data_dir))
+    x = torch.empty((1, 150, 64), device="meta", dtype=torch.float16)
+    op = _make_op_info(
+        "tensor_cast.dynamic_quantize_symmetric.default",
+        [x, []],
+        (
+            torch.empty_like(x, dtype=torch.int8),
+            torch.empty((), device="meta", dtype=torch.float32),
+        ),
+    )
+
+    result = source.lookup(op)
+
+    assert result is not None
+    assert result.source == QuerySource.INTERPOLATED
+    assert result.latency_us == pytest.approx(15.0)
+    assert result.details["scale_mode"] == "per_tensor"
+    assert result.details["exact_fields"]["input_format"] == "NCL"
+    assert result.details["exact_fields"]["output_formats"] == ["NCL", "ND"]
 
 
 def test_dynamic_quant_compute_scale_preserves_base_exact_result(tmp_path, monkeypatch):

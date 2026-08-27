@@ -296,7 +296,8 @@ assignments:
   # Cross-filled from MatMulV2/V3 via PROFILE_OP_ALIASES; no independent theory grid needed.
   MatMulCommon: skip
   MatMul: matmul
-  BatchMatMulV2: matmul
+  # Generic rank-2 GEMM theory rows cannot preserve BatchMatMulV2's batched schema.
+  BatchMatMulV2: skip
   QuantBatchMatmulV3: quant_matmul
   TransposeBatchMatMul: transpose_batch_matmul
   BatchMatMulNd: batch_matmul_nd
@@ -304,7 +305,8 @@ assignments:
   # Elementwise binary
   Add: elementwise_binary
   AddAiCore: elementwise_binary
-  Mul: elementwise_binary
+  # Mul has rank-dependent schemas; only real query projection is safe.
+  Mul: skip
   MulAiCore: elementwise_binary
   Sub: elementwise_binary
   SubAiCore: elementwise_binary
@@ -326,7 +328,8 @@ assignments:
   Cast: elementwise_unary
   CastAiCore: elementwise_unary
   ZerosLike: elementwise_unary
-  Fill: elementwise_unary
+  # Fill stores shape metadata in input[0], not an ordinary tensor input.
+  Fill: skip
   Log: elementwise_unary
   LogicalNot: elementwise_unary
   LogicalNotAiCore: elementwise_unary

@@ -10,14 +10,19 @@ Public API:
     InterpolatingDataSource     - wrapper that adds interpolation capability
 """
 
+from .backend_projector import CANNBackendProjector
 from .data_source import DataSourcePerformanceModel, QueryResult, QuerySource
 from .interpolating_data_source import InterpolatingDataSource
 from .profiling_data_source import ProfilingDataSource
+from .query_demand import KernelQueryDemand, load_query_demand_traces
 
 __all__ = [
+    "CANNBackendProjector",
     "DataSourcePerformanceModel",
     "InterpolatingDataSource",
+    "KernelQueryDemand",
     "ProfilingDataSource",
     "QueryResult",
     "QuerySource",
+    "load_query_demand_traces",
 ]

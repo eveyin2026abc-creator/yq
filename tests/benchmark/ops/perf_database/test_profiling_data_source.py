@@ -6,10 +6,11 @@ import pytest
 import torch
 from tensor_cast.device import CommGrid, InterconnectTopology
 from tensor_cast.model_config import ParallelConfig
-from tensor_cast.performance_model.profiling_database.data_source import QuerySource
+from tensor_cast.performance_model.profiling_database.data_source import QuerySource, ShapeMatchInfo
 from tensor_cast.performance_model.profiling_database.profiling_data_source import (
     COMPOSITE_DECOMPOSERS,
     DTYPE_MAP,
+    Candidate,
     ProfilingDataSource,
     SubKernelSpec,
     _decompose_dsa_indexer,
@@ -18,6 +19,7 @@ from tensor_cast.performance_model.profiling_database.profiling_data_source impo
     _decompose_mlapo_quant,
     _dtype_byte_size,
     _is_block_padded,
+    _parse_shape_str,
     _parse_runtime_int_list_cell,
     _project_dispatch_ffn_combine_inputs,
     _project_tp_sharded_linear_inputs,
@@ -150,6 +152,108 @@ class _FakeTorchOp:
 
     def __str__(self) -> str:
         return f"torch.ops.{self.qualname}"
+
+
+def test_parse_shape_str_preserves_trailing_scalar_output() -> None:
+    assert _parse_shape_str("20000,64,256;") == [(20000, 64, 256), ()]
+    assert _parse_shape_str("20000,64,256;", preserve_empty_slots=False) == [(20000, 64, 256)]
+
+
+def test_composite_runtime_mapping_is_phase_aware(tmp_path, monkeypatch) -> None:
+    from tensor_cast.performance_model.profiling_database import profiling_data_source
+
+    (tmp_path / "op_mapping.yaml").write_text('version: "test"\n', encoding="utf-8")
+    source = ProfilingDataSource(tmp_path)
+    monkeypatch.setattr(profiling_data_source.config.compilation.passes, "enable_sequence_parallel", True)
+
+    decode = _make_op_info(
+        _FakeTorchOp("tensor_cast.synthetic_composite.default"),
+        [torch.empty((3, 64), device="meta", dtype=torch.bfloat16)],
+        kwargs={"is_decode_values": [True, True, True]},
+    )
+    prefill = _make_op_info(
+        _FakeTorchOp("tensor_cast.synthetic_composite.default"),
+        [torch.empty((17, 64), device="meta", dtype=torch.bfloat16)],
+        kwargs={"is_decode_values": [False]},
+    )
+
+    decode_mapping = source._build_composite_runtime_mapping(decode, {})
+    prefill_mapping = source._build_composite_runtime_mapping(prefill, {})
+
+    assert decode_mapping["_runtime_phase"] == "decode"
+    assert decode_mapping["_runtime_sequence_parallel"] is False
+    assert prefill_mapping["_runtime_phase"] == "prefill"
+    assert prefill_mapping["_runtime_sequence_parallel"] is True
+
+
+def test_compute_scale_exact_match_preserves_fp16_scalar_regime(tmp_path) -> None:
+    (tmp_path / "op_mapping.yaml").write_text(
+        """
+version: "test"
+operator_mappings:
+  "tensor_cast.dynamic_quantize_symmetric.default":
+    kernel_type: DynamicQuant
+    compute_subcategory: compute_scale
+    tc_input_count: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "DynamicQuant.csv").write_text(
+        """Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Output Formats,Duration(us)
+"100,64","DT_FLOAT16","ND","100,64;","INT8;FLOAT","ND;ND",13.0
+""".strip(),
+        encoding="utf-8",
+    )
+    source = ProfilingDataSource(tmp_path)
+    input_tensor = torch.empty((100, 64), device="meta", dtype=torch.float16)
+    op = _make_op_info(
+        _FakeTorchOp("tensor_cast.dynamic_quantize_symmetric.default"),
+        [input_tensor, []],
+        [
+            torch.empty_like(input_tensor, dtype=torch.int8),
+            torch.empty((), device="meta", dtype=torch.float32),
+        ],
+    )
+
+    result = source.lookup(op)
+
+    assert result is not None
+    assert result.source == QuerySource.MEASURED
+    assert result.latency_us == pytest.approx(13.0)
+    assert result.details["scale_mode"] == "per_tensor"
+
+
+def test_compute_scale_exact_match_rejects_bf16_for_fp16_query(tmp_path) -> None:
+    (tmp_path / "op_mapping.yaml").write_text(
+        """
+version: "test"
+operator_mappings:
+  "tensor_cast.dynamic_quantize_symmetric.default":
+    kernel_type: DynamicQuant
+    compute_subcategory: compute_scale
+    tc_input_count: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "DynamicQuant.csv").write_text(
+        """Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Output Formats,Duration(us)
+"100,64","DT_BF16","ND","100,64;","INT8;FLOAT","ND;ND",11.0
+""".strip(),
+        encoding="utf-8",
+    )
+    source = ProfilingDataSource(tmp_path)
+    input_tensor = torch.empty((100, 64), device="meta", dtype=torch.float16)
+    op = _make_op_info(
+        _FakeTorchOp("tensor_cast.dynamic_quantize_symmetric.default"),
+        [input_tensor, []],
+        [
+            torch.empty_like(input_tensor, dtype=torch.int8),
+            torch.empty((), device="meta", dtype=torch.float32),
+        ],
+    )
+
+    assert source.lookup(op) is None
+    assert source.last_miss_reason == "compute_scale_signature_mismatch"
 
 
 def test_exact_match_with_fractal_nz(sample_data_dir):
@@ -4523,24 +4627,82 @@ def test_glm5_dfc_embedded_alltoall_uses_routed_input_bytes():
     assert context["num_devices"] == 32
 
 
+def test_optional_embedded_comm_hit_contributes_to_total_latency(tmp_path, monkeypatch):
+    (tmp_path / "op_mapping.yaml").write_text(
+        "version: test\ndevice: TEST\noperator_mappings: {}\n",
+        encoding="utf-8",
+    )
+    ds = ProfilingDataSource(
+        tmp_path,
+        parallel_config=_make_parallel_config(ep_size=32, world_size=32, tp_size=16),
+    )
+    shape_match = ShapeMatchInfo(
+        simulation_shapes=[[256, 6144]],
+        kernel_shapes=[[256, 6144]],
+        shape_match_rule="identity",
+    )
+    monkeypatch.setattr(ds, "_load_csv", lambda _kernel: pd.DataFrame([{"EP Size": 32}]))
+    monkeypatch.setattr(
+        ds,
+        "_find_candidates",
+        lambda *_args, **_kwargs: Candidate(
+            latency_us=100.0,
+            kernel_type="DispatchFFNCombine",
+            details={"kernel_type": "DispatchFFNCombine"},
+            shape_match_info=shape_match,
+        ),
+    )
+    monkeypatch.setattr(
+        ds,
+        "_moe_embedded_comm_context",
+        lambda *_args, **_kwargs: {
+            "message_bytes": 4096,
+            "num_devices": 32,
+            "topology_tier": 0,
+        },
+    )
+    monkeypatch.setattr(ds, "_query_comm_csv", lambda *_args, **_kwargs: (20.0, False))
+    mapping = {
+        "kernel_type": "DispatchFFNCombine",
+        "project_full_shape": True,
+        "embedded_communication": {
+            "kernel_type": "hcom_alltoall_",
+            "optional": True,
+            "message_bytes_mode": "routed_input",
+            "group_type": "expert_parallel",
+        },
+    }
+
+    result = ds._lookup_moe(_make_glm5_quant_dfc_op(256), mapping)
+
+    assert result is not None
+    assert result.latency_us == 120.0
+    assert result.details["sub_kernel_durations"][-1] == ("hcom_alltoall_", 20.0)
+
+
 @_skip_no_glm5_a3_hccl
-def test_glm5_dfc_partial_comm_miss_is_reported_in_result(monkeypatch):
+def test_glm5_dfc_optional_embedded_comm_adds_successful_lookup(monkeypatch):
     ds = ProfilingDataSource(
         _glm5_a3_data_dir(),
         parallel_config=_make_parallel_config(ep_size=32, world_size=32, tp_size=16),
     )
 
-    def _miss_comm(*_args, **_kwargs):
-        ds.last_miss_reason = "csv_not_found"
-        return None
+    # optional controls the missing-context/MISS fallback only. A successful
+    # embedded communication lookup must still contribute to total latency.
+    _sentinel_comm_latency = 999_999.0
 
-    monkeypatch.setattr(ds, "_query_comm_csv", _miss_comm)
+    def _mock_comm_query(*_args, **_kwargs):
+        return (_sentinel_comm_latency, False)
+
+    monkeypatch.setattr(ds, "_query_comm_csv", _mock_comm_query)
     result = ds.lookup(_make_glm5_quant_dfc_op(256))
 
     assert result is not None
-    assert result.source == QuerySource.PARTIAL
-    assert result.details["partial_miss_reason"] == "moe_embedded_communication_miss:hcom_alltoall_"
+    assert result.source == QuerySource.MEASURED
+    assert result.details["kernel_type"] == "DispatchFFNCombine"
     assert ds.last_miss_reason == ""
+    assert "embedded_communication" in result.details
+    assert result.latency_us > _sentinel_comm_latency
 
 
 @_skip_no_glm5_a3_hccl
