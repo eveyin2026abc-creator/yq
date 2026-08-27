@@ -610,6 +610,81 @@ def _update_share_field(field, i, params_field, simulate_run_info, decode_contex
             break
 
 
+def _get_le_enum_eligible(
+    values: list,
+    target_name: str,
+    fields,
+    *,
+    field_name: str = "",
+    fallback_on_missing_target: str = "min",
+) -> tuple:
+    """查找 target 字段并计算 le_enum 的合法子集 eligible。
+
+    公共逻辑：查找 target → 过滤 eligible → 兜底（含 warning）。
+    返回 (eligible, target_op)：eligible 为非空 list，
+    target_op 为找到的 target 字段对象（未找到为 None）。
+
+    兜底策略（fallback_on_missing_target）：
+      - "min": target 未找到时 eligible = [min(values)]（正向保守）
+      - "inf": target 未找到时 eligible = list(values)（反向全放开）
+    eligible 空时统一兜底 [min(values)]。
+    """
+    target_op = next((op for op in fields if op.name == target_name), None)
+
+    if target_op is None:
+        if fallback_on_missing_target == "inf":
+            logger.warning(
+                "[le_enum] field '%s': target '%s' not found in fields, using full candidate set as eligible.",
+                field_name,
+                target_name,
+            )
+            return list(values), None
+        logger.warning(
+            "[le_enum] field '%s': target '%s' not found in fields, "
+            "falling back to min(%s). Check target_name spelling and field "
+            "declaration order (target must be declared before the le_enum field).",
+            field_name,
+            target_name,
+            values,
+        )
+        return [min(values)], None
+
+    eligible = [val for val in values if val <= target_op.value]
+    if not eligible:
+        logger.warning(
+            "[le_enum] field '%s': target '%s' value %s smaller than all candidates %s, falling back to min.",
+            field_name,
+            target_name,
+            target_op.value,
+            values,
+        )
+        return [min(values)], target_op
+    return eligible, target_op
+
+
+def _update_le_enum_field(field, i, params_field, simulate_run_info, decode_context=None):
+    """le_enum type handler: clamp value into the eligible subset (values <= target.value).
+
+    正向映射已由 map_param_with_value 选定真实值；此处仅做防御性 clamp：
+    精调阶段 target 可能变小，导致先前选定的值不再合法，向下 clamp 到 max(eligible)。
+    保留 map_param_with_value 由 PSO 维度选定的合法值，不覆盖为 max。
+    """
+    _field = simulate_run_info[i]
+    _values = field.dtype_param["values"]
+    _eligible, _t_op = _get_le_enum_eligible(
+        _values,
+        field.dtype_param["target_name"],
+        simulate_run_info,
+        field_name=field.name,
+        fallback_on_missing_target="min",
+    )
+    if _t_op is None:
+        _field.value = _eligible[0]
+        return
+    if _field.value not in _eligible:
+        _field.value = max(_eligible)
+
+
 DERIVED_FIELD_HANDLERS = {
     "ratio": _update_ratio_field,
     "share": _update_share_field,
@@ -617,6 +692,7 @@ DERIVED_FIELD_HANDLERS = {
     "times": _update_times_field,
     "ternary_factories": _update_ternary_factories_field,
     "ternary_times": _update_ternary_times_field,
+    "le_enum": _update_le_enum_field,
 }
 
 
@@ -730,6 +806,27 @@ def map_param_with_value(
                 else:
                     _enum_index = np.searchsorted(segment, params[i]) - 1
                     _field.value = v.dtype_param[_enum_index]
+        elif v.dtype == "le_enum":
+            _values = v.dtype_param["values"]
+            _eligible, _t_op = _get_le_enum_eligible(
+                _values,
+                v.dtype_param["target_name"],
+                _simulate_run_info,
+                field_name=v.name,
+                fallback_on_missing_target="min",
+            )
+            if _t_op is None or len(_eligible) == 1:
+                _field.value = _eligible[0]
+            else:
+                segment = np.linspace(v.min, v.max, len(_eligible) + 1)
+                if params[i] <= v.min:
+                    _field.value = _eligible[0]
+                elif params[i] >= v.max:
+                    _field.value = _eligible[-1]
+                else:
+                    _idx = np.searchsorted(segment, params[i]) - 1
+                    _idx = max(0, min(_idx, len(_eligible) - 1))
+                    _field.value = _eligible[_idx]
         else:
             try:
                 _field.value = float(params[i])
@@ -796,6 +893,14 @@ def field_to_param(params_field: tuple[OptimizerConfigField, ...]):
                 bisect.insort_left(v.dtype_param, v.value)
             _index = v.dtype_param.index(v.value)
             segment = np.linspace(v.min, v.max, len(v.dtype_param) + 1)
+            _params.append((segment[_index] + segment[_index + 1]) / 2)
+        elif v.dtype == "le_enum":
+            _values = v.dtype_param["values"]
+            _eligible, _t_op = _get_le_enum_eligible(
+                _values, v.dtype_param["target_name"], params_field, field_name=v.name, fallback_on_missing_target="inf"
+            )
+            _index = _eligible.index(v.value) if v.value in _eligible else len(_eligible) - 1
+            segment = np.linspace(v.min, v.max, len(_eligible) + 1)
             _params.append((segment[_index] + segment[_index + 1]) / 2)
         else:
             _params.append(v.value)

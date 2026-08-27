@@ -1,0 +1,241 @@
+# ===========================================================================
+# vllm_pd_simulator 配置（P/D 分离集群仿真）
+# 使用方式:
+#   ms_serviceparam_optimizer optimizer -e vllm_pd                -b evalscopeperf
+# 说明: [[cluster.hosts]] 为集群主机部署信息；[vllm_pd] 为 P/D 分离业务参数。
+# ===========================================================================
+
+# ======================== 共享主机信息 ========================
+# [[cluster.hosts]] 定义集群中所有可用的主机节点。
+# node/proxy 通过 hosts = "id" 引用此处定义的主机；不再在两处重复定义。
+# ---------------------------------------------------------------------------
+
+[[cluster.hosts]]
+id = "rank0"                              # 主机唯一标识，供 hosts 字段引用
+ssh_ip = "10.246.63.26"                   # SSH 连接 IP
+ssh_port = 30774                          # SSH 端口
+ssh_user = "root"                         # SSH 用户名
+password = "******"             # SSH 密码（Base64 编码）
+service_ip = "127.0.0.1"                  # 服务绑定 IP（vLLM 对外服务地址）
+network_interface = "eth0"                # 网络接口名（用于 HCCL 通信）
+
+[[cluster.hosts]]
+id = "rank1"
+ssh_ip = "10.246.63.26"
+ssh_port = 30775
+ssh_user = "root"
+password = "******"
+service_ip = "127.0.0.1"
+network_interface = "eth0"
+
+[[cluster.hosts]]
+id = "rank2"
+ssh_ip = "10.246.63.26"
+ssh_port = 30775
+ssh_user = "root"
+password = "******"
+service_ip = "127.0.0.1"
+network_interface = "eth0"
+
+[[cluster.hosts]]
+id = "rank3"
+ssh_ip = "10.246.63.26"
+ssh_port = 30775
+ssh_user = "root"
+password = "******"
+service_ip = "127.0.0.1"
+network_interface = "eth0"
+
+[[cluster.hosts]]
+id = "26-30859"
+ssh_ip = "10.246.63.26"
+ssh_port = 30859
+ssh_user = "root"
+password = "******"
+service_ip = "192.168.82.110"
+network_interface = "lo"
+
+[[cluster.hosts]]
+id = "28-30118"
+ssh_ip = "10.246.63.28"
+ssh_port = 30118
+ssh_user = "root"
+password = "******"
+service_ip = "192.168.191.120"
+network_interface = "lo"
+
+# 场景二：vllm_pd（P/D 分离部署）
+# 功能: vLLM PD (Prefill-Decode Disaggregation) 分离部署
+#       通过 SSH 在多台机器上启动 P-Deployer、D-Deployer 和 Proxy
+# ===========================================================================
+
+[vllm_pd]
+ssh_command_timeout = 30                  # 远端 SSH 短命令超时（秒）
+# remote_tmp_dir = "/tmp"  # ssh mode remote work dir, default /tmp
+
+# ======================== 环境变量 ========================
+# [vllm_pd.env] 公共环境变量（P/D 共享）
+# [vllm_pd.env.prefill] / [vllm_pd.env.decode] 角色专属环境变量
+# 公共变量会合并到 P 和 D，专属变量覆盖同名公共变量
+# ---------------------------------------------------------------------------
+
+[vllm_pd.env]
+TORCH_DEVICE_BACKEND_AUTOLOAD = "0"
+ASCEND_CONNECT_TIMEOUT = "600"
+HCCL_CONNECT_TIMEOUT = "300"
+PYTORCH_NPU_ALLOC_CONF = "expandable_segments:True"
+TASK_QUEUE_ENABLE = "1"
+VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+VLLM_USE_V1 = "1"
+
+# Prefill 专属环境变量
+[vllm_pd.env.prefill]
+role = "prefill"
+HCCL_BUFFSIZE = "256"
+
+# Decode 专属环境变量
+[vllm_pd.env.decode]
+role = "decode"
+HCCL_BUFFSIZE = "1024"
+
+# ======================== P-Deployer 组配置 ========================
+# [[vllm_pd.prefill_groups]] Prefill 部署组（至少一组）
+# 每组包含一个或多个 node，node 通过 hosts 引用 [[cluster.hosts]] 中的主机
+# ---------------------------------------------------------------------------
+
+[[vllm_pd.prefill_groups]]
+dp_rpc_port = 12345                       # DP 协调端口
+
+[[vllm_pd.prefill_groups.nodes]]
+hosts = "rank0"                           # 引用 [[cluster.hosts]] id
+gpu_ids = [0,1,2,3]                       # 使用的 GPU/NPU 卡
+service_port = 18000                      # vLLM 服务端口
+kv_port = 19000                           # KV 传输端口
+
+[[vllm_pd.prefill_groups]]
+dp_rpc_port = 12355
+
+[[vllm_pd.prefill_groups.nodes]]
+hosts = "rank1"
+gpu_ids = [0,1,2,3]
+service_port = 18000
+kv_port = 19000
+
+# ======================== D-Deployer 组配置 ========================
+# [[vllm_pd.decode_groups]] Decode 部署组（至少一组）
+# ---------------------------------------------------------------------------
+
+[[vllm_pd.decode_groups]]
+dp_rpc_port = 12356
+
+[[vllm_pd.decode_groups.nodes]]
+hosts = "rank2"
+gpu_ids = [0,1,2,3]
+service_port = 18100
+kv_port = 19100
+
+[[vllm_pd.decode_groups]]
+dp_rpc_port = 12366
+
+[[vllm_pd.decode_groups.nodes]]
+hosts = "rank3"
+gpu_ids = [0,1,2,3]
+service_port = 18100
+kv_port = 19100
+
+# ======================== Proxy 配置 ========================
+# [vllm_pd.proxy] 负载均衡代理（必填）
+# ---------------------------------------------------------------------------
+
+[vllm_pd.proxy]
+hosts = "rank0"                           # 引用 [[cluster.hosts]] id
+service_port = 8000                       # Proxy 服务端口
+
+# ======================== 寻优参数配置 ========================
+# [[vllm_pd.target_field]] 寻优参数搜索空间
+# 需与 scripts/pd/run_pd_*.sh 中的变量保持一致
+# 命名约定:
+#   - name 大写部分 + _prefill/_decode 后缀
+#   - config_position: "env" 表示环境变量，"run" 表示运行参数
+# 注: tp_size 在节点配置中直接指定，不需要寻优
+# ---------------------------------------------------------------------------
+
+# ---- Prefill (P) 节点寻优参数 ----
+
+# P节点 - 环境变量
+[[vllm_pd.target_field]]
+name = "MAX_MODEL_LEN_prefill"
+config_position = "env"
+min = 8192
+max = 131072
+dtype = "int"
+value = 8192
+
+[[vllm_pd.target_field]]
+name = "GPU_MEMORY_UTILIZATION_prefill"
+config_position = "env"
+min = 0.5
+max = 0.95
+dtype = "float"
+value = 0.5
+
+# P节点 - 运行参数
+[[vllm_pd.target_field]]
+name = "MAX_NUM_BATCHED_TOKENS_prefill"
+config_position = "run"
+min = 1024
+max = 16384
+dtype = "int"
+value = 1024
+
+[[vllm_pd.target_field]]
+name = "MAX_NUM_SEQS_prefill"
+config_position = "run"
+min = 8
+max = 64
+dtype = "int"
+value = 8
+
+# ---- Decode (D) 节点寻优参数 ----
+
+# D节点 - 环境变量
+[[vllm_pd.target_field]]
+name = "MAX_MODEL_LEN_decode"
+config_position = "env"
+min = 8192
+max = 131072
+dtype = "int"
+value = 8192
+
+[[vllm_pd.target_field]]
+name = "GPU_MEMORY_UTILIZATION_decode"
+config_position = "env"
+min = 0.5
+max = 0.95
+dtype = "float"
+value = 0.5
+
+# D节点 - 运行参数
+[[vllm_pd.target_field]]
+name = "MAX_NUM_BATCHED_TOKENS_decode"
+config_position = "run"
+min = 128
+max = 512
+dtype = "int"
+value = 128
+
+[[vllm_pd.target_field]]
+name = "MAX_NUM_SEQS_decode"
+config_position = "run"
+min = 32
+max = 128
+dtype = "int"
+value = 32
+
+# 注意事项：
+# 1. name 除 _prefill/_decode 后缀外，其他部分为大写
+# 2. tp_size/dp_size 通过寻优参数 (target_field) 指定，不需要在全局配置中设置
+# 3. config_position = "env" 对应环境变量 (PD_ADDON_XXX)
+# 4. config_position = "run" 对应运行参数 (--xxx-yyy)
+# 5. 确保 SSH 免密登录已配置
+# 6. 模型个性化 CLI 参数请放在 vllm_others 中

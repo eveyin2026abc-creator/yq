@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm_pd_simulator"
+version = "0.1.0"
+description = "Unified vLLM simulator plugin (vllm_pd + vllm_cluster) for optix"
+requires-python = ">=3.10"
+dependencies = [
+    "fabric>=2.0",
+]
+
+[project.entry-points."optix.plugins"]
+vllm_pd_simulator = "vllm_pd_simulator:register"
+
+[tool.setuptools.packages.find]
+include = ["vllm_pd_simulator*"]
