@@ -42,25 +42,56 @@ if str(REPO_ROOT) not in sys.path:
 if str(OP_REPLAY_DIR) not in sys.path:
     sys.path.insert(0, str(OP_REPLAY_DIR))
 
-from cli.logo import print_logo
-from common import (
-    DEFAULT_DEVICE, SUPPORTED_DEVICES, build_database_cli_args, check_version,
-    csv_has_complete_microbench, ensure_npu_available, get_target_data_dir,
-    load_csv_rows, parse_float, row_has_valid_duration,
+from cli.logo import print_logo  # noqa: E402
+from common import (  # noqa: E402
+    DEFAULT_DEVICE,
+    SUPPORTED_DEVICES,
+    build_database_cli_args,
+    check_version,
+    csv_has_complete_microbench,
+    ensure_npu_available,
+    get_target_data_dir,
+    is_positive_finite,
+    load_csv_rows,
+    parse_float,
+    row_has_valid_duration,
     row_has_only_invalid_durations,
 )
-from signature_utils import get_sig, is_matmul_family, normalize_op_name
+from signature_utils import (  # noqa: E402
+    canonicalize_shape_columns,
+    get_sig,
+    is_matmul_family,
+    normalize_op_name,
+)
+from operator_metadata import (  # noqa: E402
+    profiler_alias_map,
+    runtime_aware_operator_names,
+)
+from parallel_runner import (  # noqa: E402
+    ParallelRunResult,
+    resolve_worker_device_ids,
+    run_parallel_microbench,
+)
 
 # =============================================================================
 # CSV Column Names
 # =============================================================================
 BASE_COLS = [
-    "OP State", "Accelerator Core", "Input Shapes", "Input Data Types",
-    "Input Formats", "Output Shapes", "Output Data Types", "Output Formats",
+    "OP State",
+    "Accelerator Core",
+    "Input Shapes",
+    "Input Data Types",
+    "Input Formats",
+    "Output Shapes",
+    "Output Data Types",
+    "Output Formats",
 ]
 MATCH_COLS = [
-    "Input Shapes", "Input Data Types", "Input Formats",
-    "Output Shapes", "Output Data Types",
+    "Input Shapes",
+    "Input Data Types",
+    "Input Formats",
+    "Output Shapes",
+    "Output Data Types",
 ]
 
 # Duration column names
@@ -74,31 +105,52 @@ PROF_STD_DUR = "Profiling Std Duration(us)"
 PROF_COLS = {
     k: f"Profiling Average {k}"
     for k in [
-        "aicore_time(us)", "aic_total_cycles", "aic_mac_time(us)",
-        "aic_mac_ratio", "aic_scalar_time(us)", "aic_scalar_ratio",
-        "aic_mte1_time(us)", "aic_mte1_ratio", "aic_mte2_time(us)",
-        "aic_mte2_ratio", "aic_fixpipe_time(us)", "aic_fixpipe_ratio",
-        "aic_icache_miss_rate", "aiv_time(us)", "aiv_total_cycles",
-        "aiv_vec_time(us)", "aiv_vec_ratio", "aiv_scalar_time(us)",
-        "aiv_scalar_ratio", "aiv_mte2_time(us)", "aiv_mte2_ratio",
-        "aiv_mte3_time(us)", "aiv_mte3_ratio", "aiv_icache_miss_rate",
+        "aicore_time(us)",
+        "aic_total_cycles",
+        "aic_mac_time(us)",
+        "aic_mac_ratio",
+        "aic_scalar_time(us)",
+        "aic_scalar_ratio",
+        "aic_mte1_time(us)",
+        "aic_mte1_ratio",
+        "aic_mte2_time(us)",
+        "aic_mte2_ratio",
+        "aic_fixpipe_time(us)",
+        "aic_fixpipe_ratio",
+        "aic_icache_miss_rate",
+        "aiv_time(us)",
+        "aiv_total_cycles",
+        "aiv_vec_time(us)",
+        "aiv_vec_ratio",
+        "aiv_scalar_time(us)",
+        "aiv_scalar_ratio",
+        "aiv_mte2_time(us)",
+        "aiv_mte2_ratio",
+        "aiv_mte3_time(us)",
+        "aiv_mte3_ratio",
+        "aiv_icache_miss_rate",
         "cube_utilization(%)",
     ]
 }
-MB_EXTRA_COLS = {
-    src: "MicroBench " + disp.removeprefix("Profiling Average ")
-    for src, disp in PROF_COLS.items()
-}
+MB_EXTRA_COLS = {src: "MicroBench " + disp.removeprefix("Profiling Average ") for src, disp in PROF_COLS.items()}
 
 # =============================================================================
 # Operator Configuration
 # =============================================================================
 DISPATCH_FFN_OP = "DispatchFFNCombine"
-PROFILE_OP_ALIASES = {
-    "MatMulV2": ("MatMulV3", "MatMulCommon"),
-    "MatMulV3": ("MatMulV2", "MatMulCommon"),
-    "MatMulCommon": ("MatMulV2", "MatMulV3"),
-}
+PROFILE_OP_ALIASES = profiler_alias_map()
+RUNTIME_AWARE_OPS = runtime_aware_operator_names()
+
+
+def _runtime_profile_op_names() -> set[str]:
+    """Return profiler OP Type names that require runtime case metadata."""
+    names = {normalize_op_name(op) for op in RUNTIME_AWARE_OPS}
+    for op in RUNTIME_AWARE_OPS:
+        names.update(normalize_op_name(alias) for alias in PROFILE_OP_ALIASES.get(op, ()))
+    return names
+
+
+TRITON_ROPE_SISO_OP = "_triton_rope_siso"
 
 # Operators requiring custom OPP environment
 CUSTOM_OPP_OPS = {
@@ -106,6 +158,9 @@ CUSTOM_OPP_OPS = {
     "DispatchFFNCombine",
     "KvRmsNormRopeCache",
     "RINGMLAPrefillBF16Kernel",
+    "LightningIndexer",
+    "SparseFlashAttention",
+    "mla_preprocess_0_mix_aic",
     "split_qkv_rmsnorm_rope_kernel",
 }
 
@@ -166,8 +221,9 @@ def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=f"Available operators: {ops}\n\nUpdate modes:\n"
-               "  all: Update all matched rows\n"
-               "  missing-only: Only fill rows with invalid durations")
+        "  all: Update all matched rows\n"
+        "  missing-only: Only fill rows with invalid durations",
+    )
     parser.add_argument("--database-path", type=Path)
     parser.add_argument("--device", default=DEFAULT_DEVICE, choices=SUPPORTED_DEVICES)
     parser.add_argument("--vllm-version", dest="vllm_version", type=check_version)
@@ -205,24 +261,44 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dispatch-ffn-combine-master-addr",
         default="127.0.0.1",
-        help=(
-            "torchrun master address for DispatchFFNCombine EP mode. "
-            "Default: 127.0.0.1 (localhost)."
-        ),
+        help=("torchrun master address for DispatchFFNCombine EP mode. Default: 127.0.0.1 (localhost)."),
     )
     parser.add_argument(
         "--dispatch-ffn-combine-master-port",
         type=int,
         default=None,
-        help=(
-            "torchrun master port for DispatchFFNCombine EP mode. "
-            "Default: auto-selected by torchrun on node 0."
-        ),
+        help=("torchrun master port for DispatchFFNCombine EP mode. Default: auto-selected by torchrun on node 0."),
     )
     parser.add_argument("--repeat-count", type=int, default=1)
+    parser.add_argument(
+        "--num-devices",
+        type=int,
+        default=1,
+        help=(
+            "Number of local Ascend NPUs used for automatic parallel replay. "
+            "The tool launches, assigns, and merges all workers. Default: 1."
+        ),
+    )
+    parser.add_argument(
+        "--case-shard-count",
+        type=int,
+        default=1,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--case-shard-index",
+        type=int,
+        default=0,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--update-mode", choices=("all", "missing-only"), default="all")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--prune-empty-duration-rows", action="store_true")
+    parser.add_argument(
+        "--keep-artifacts",
+        action="store_true",
+        help="Keep parallel worker shard directories after a successful run (for debugging).",
+    )
 
     return parser
 
@@ -247,10 +323,98 @@ def validate_ops(selected: list[str] | None) -> list[str] | None:
     invalid = sorted(op for op in normalized if op not in available)
 
     if invalid:
-        raise ValueError(f"Unsupported --ops: {', '.join(invalid)}. "
-                         f"Available: {', '.join(sorted(available))}")
+        raise ValueError(f"Unsupported --ops: {', '.join(invalid)}. Available: {', '.join(sorted(available))}")
 
     return normalized
+
+
+def validate_case_shard_options(
+    case_shard_count: int,
+    case_shard_index: int,
+    *,
+    prune_empty_duration_rows: bool,
+) -> None:
+    """Validate replay sharding without allowing one shard to prune another."""
+    if case_shard_count <= 0 or not 0 <= case_shard_index < case_shard_count:
+        raise ValueError("case shard index must be in [0, case shard count)")
+    if case_shard_count > 1 and prune_empty_duration_rows:
+        raise ValueError(
+            "--prune-empty-duration-rows cannot be combined with multi-shard replay; "
+            "unmeasured rows belong to other shards"
+        )
+
+
+def validate_num_devices_options(
+    num_devices: int,
+    *,
+    case_shard_count: int,
+    case_shard_index: int,
+    prune_empty_duration_rows: bool,
+) -> None:
+    """Validate the public parallel option and its internal worker boundary."""
+    if num_devices <= 0:
+        raise ValueError("--num-devices must be a positive integer")
+    if num_devices > 1 and (case_shard_count != 1 or case_shard_index != 0):
+        raise ValueError(
+            "--case-shard-count/--case-shard-index are internal worker options "
+            "and cannot be combined with --num-devices > 1"
+        )
+    if num_devices > 1 and prune_empty_duration_rows:
+        raise ValueError(
+            "--prune-empty-duration-rows cannot be combined with --num-devices > 1; "
+            "unmeasured rows belong to other workers"
+        )
+
+
+def resolve_parallel_ops(selected_ops: list[str] | None) -> list[str]:
+    """Return operators safe for independent case sharding."""
+    normalized_dispatch = normalize_op_name(DISPATCH_FFN_OP)
+    if selected_ops is not None:
+        if normalized_dispatch in {normalize_op_name(op) for op in selected_ops}:
+            raise ValueError(
+                f"{DISPATCH_FFN_OP} cannot use --num-devices parallel replay; "
+                "run it separately with the --dispatch-ffn-combine-* options"
+            )
+        return list(dict.fromkeys(selected_ops))
+
+    parallel_ops = [op for op in list_ops() if normalize_op_name(op) != normalized_dispatch]
+    print(
+        f"[SKIP] {DISPATCH_FFN_OP} requires one collective EP process group and "
+        "is excluded from --num-devices parallel replay."
+    )
+    return parallel_ops
+
+
+def run_requested_parallelism(
+    args: argparse.Namespace,
+    target_dir: Path,
+    selected_ops: list[str] | None,
+) -> ParallelRunResult | None:
+    """Run the public multi-device path, or return ``None`` for one device."""
+    if args.num_devices == 1:
+        return None
+
+    parallel_ops = resolve_parallel_ops(selected_ops)
+    visible_devices = get_visible_npu_count()
+    device_ids = resolve_worker_device_ids(args.num_devices, visible_devices)
+    print(
+        f"[parallel] using {len(device_ids)} local NPU device(s): "
+        + ", ".join(str(device_id) for device_id in device_ids)
+    )
+    return run_parallel_microbench(
+        start_script=Path(__file__).resolve(),
+        database_path=target_dir,
+        device_ids=device_ids,
+        selected_ops=parallel_ops,
+        repeat_count=args.repeat_count,
+        update_mode=args.update_mode,
+        fail_fast=args.fail_fast,
+        device=args.device,
+        vllm_ascend_version=args.vllm_version,
+        torch_version=args.torch_version,
+        cann_version=args.cann_version,
+        keep_artifacts=args.keep_artifacts,
+    )
 
 
 # =============================================================================
@@ -274,19 +438,16 @@ def ensure_custom_opp_env(selected_ops: list[str] | None) -> None:
     try:
         p = Path(import_module("vllm_ascend").__file__).resolve().parent
         custom_opp = f"{p}/_cann_ops_custom/vendors/vllm-ascend:$ASCEND_CUSTOM_OPP_PATH"
-        ld_lib = (
-            f"{p}/_cann_ops_custom/vendors/vllm-ascend/op_api/lib/:$LD_LIBRARY_PATH")
+        ld_lib = f"{p}/_cann_ops_custom/vendors/vllm-ascend/op_api/lib/:$LD_LIBRARY_PATH"
     except (ImportError, AttributeError, OSError, TypeError):
-        custom_opp = (
-            "<vllm-ascend>/_cann_ops_custom/vendors/vllm-ascend:"
-            "$ASCEND_CUSTOM_OPP_PATH")
-        ld_lib = (
-            "<vllm-ascend>/_cann_ops_custom/vendors/vllm-ascend/op_api/lib/:"
-            "$LD_LIBRARY_PATH")
+        custom_opp = "<vllm-ascend>/_cann_ops_custom/vendors/vllm-ascend:$ASCEND_CUSTOM_OPP_PATH"
+        ld_lib = "<vllm-ascend>/_cann_ops_custom/vendors/vllm-ascend/op_api/lib/:$LD_LIBRARY_PATH"
 
-    raise RuntimeError(f"Missing env vars for operators: {', '.join(required)}.\n"
-                       f"Please run:\n  export ASCEND_CUSTOM_OPP_PATH={custom_opp}\n"
-                       f"  export LD_LIBRARY_PATH={ld_lib}")
+    raise RuntimeError(
+        f"Missing env vars for operators: {', '.join(required)}.\n"
+        f"Please run:\n  export ASCEND_CUSTOM_OPP_PATH={custom_opp}\n"
+        f"  export LD_LIBRARY_PATH={ld_lib}"
+    )
 
 
 # =============================================================================
@@ -298,19 +459,43 @@ def build_msprof_cmd(
     selected_ops: list[str] | None,
 ) -> list[str]:
     """Build the msprof command for one profiling run."""
-    cmd = ["msprof", f"--output={profiler_root}", "python", str(RUN_ALL_SCRIPT),
-           "--execution-mode", "inprocess"]
+    status_path = profiler_root / "run_all_op_status.json"
+    cmd = [
+        "msprof",
+        f"--output={profiler_root}",
+        "python",
+        str(RUN_ALL_SCRIPT),
+        "--execution-mode",
+        "inprocess",
+        "--status-path",
+        str(status_path),
+    ]
 
     if not args.fail_fast:
         cmd.append("--continue-on-error")
 
-    cmd.extend(build_database_cli_args(
-        database_path=args.database_path, device=args.device,
-        vllm_ascend_version=args.vllm_version, torch_version=args.torch_version,
-        cann_version=args.cann_version))
+    cmd.extend(
+        build_database_cli_args(
+            database_path=args.database_path,
+            device=args.device,
+            vllm_ascend_version=args.vllm_version,
+            torch_version=args.torch_version,
+            cann_version=args.cann_version,
+        )
+    )
 
     if args.repeat_count:
         cmd += ["--repeat-count", str(args.repeat_count)]
+
+    case_shard_count = getattr(args, "case_shard_count", 1)
+    case_shard_index = getattr(args, "case_shard_index", 0)
+    if case_shard_count != 1 or case_shard_index != 0:
+        cmd += [
+            "--case-shard-count",
+            str(case_shard_count),
+            "--case-shard-index",
+            str(case_shard_index),
+        ]
 
     cmd += ["--update-mode", args.update_mode]
 
@@ -318,34 +503,50 @@ def build_msprof_cmd(
         cmd += ["--ops"] + selected_ops
 
     if args.dispatch_ffn_combine_ep_size:
-        cmd += ["--dispatch-ffn-combine-ep-size",
-                str(args.dispatch_ffn_combine_ep_size)]
+        cmd += [
+            "--dispatch-ffn-combine-ep-size",
+            str(args.dispatch_ffn_combine_ep_size),
+        ]
     if args.dispatch_ffn_combine_nproc_per_node is not None:
-        cmd += ["--dispatch-ffn-combine-nproc-per-node",
-                str(args.dispatch_ffn_combine_nproc_per_node)]
+        cmd += [
+            "--dispatch-ffn-combine-nproc-per-node",
+            str(args.dispatch_ffn_combine_nproc_per_node),
+        ]
     if args.dispatch_ffn_combine_nnodes is not None:
-        cmd += ["--dispatch-ffn-combine-nnodes",
-                str(args.dispatch_ffn_combine_nnodes)]
+        cmd += ["--dispatch-ffn-combine-nnodes", str(args.dispatch_ffn_combine_nnodes)]
     if args.dispatch_ffn_combine_node_rank is not None:
-        cmd += ["--dispatch-ffn-combine-node-rank",
-                str(args.dispatch_ffn_combine_node_rank)]
+        cmd += [
+            "--dispatch-ffn-combine-node-rank",
+            str(args.dispatch_ffn_combine_node_rank),
+        ]
     if args.dispatch_ffn_combine_master_addr:
-        cmd += ["--dispatch-ffn-combine-master-addr",
-                args.dispatch_ffn_combine_master_addr]
+        cmd += [
+            "--dispatch-ffn-combine-master-addr",
+            args.dispatch_ffn_combine_master_addr,
+        ]
     if args.dispatch_ffn_combine_master_port is not None:
-        cmd += ["--dispatch-ffn-combine-master-port",
-                str(args.dispatch_ffn_combine_master_port)]
+        cmd += [
+            "--dispatch-ffn-combine-master-port",
+            str(args.dispatch_ffn_combine_master_port),
+        ]
 
     return cmd
 
 
 def run_msprof_cmd(profiler_root: Path, cmd: list[str]) -> tuple[int, set[Path]]:
     """Execute msprof command and return its code plus generated PROF dirs."""
+    status_env = "MSMODELING_REPLAY_STATUS_PATH"
+    prior_status_path = os.environ.get(status_env)
+    os.environ[status_env] = str(profiler_root / "run_all_op_status.json")
     try:
         result = subprocess.run(cmd, check=False, cwd=REPO_ROOT)
     except FileNotFoundError as e:
-        raise RuntimeError(
-            "msprof not found. Activate Ascend toolkit environment.") from e
+        raise RuntimeError("msprof not found. Activate Ascend toolkit environment.") from e
+    finally:
+        if prior_status_path is None:
+            os.environ.pop(status_env, None)
+        else:
+            os.environ[status_env] = prior_status_path
 
     prof_dirs = {p for p in profiler_root.rglob("PROF_*") if p.is_dir()}
     return result.returncode, prof_dirs
@@ -358,6 +559,13 @@ def run_msprof_per_op_fallback(
 ) -> set[Path]:
     """Profile selected operators one-by-one after a combined msprof failure."""
     all_prof_dirs: set[Path] = set()
+    combined_status: dict[str, list[Any]] = {
+        "success": [],
+        "failed": [],
+        "skipped": [],
+        "cases": [],
+        "invalid_rows": [],
+    }
 
     print(
         "[WARN] Combined msprof run produced no op_summary data. "
@@ -372,7 +580,8 @@ def run_msprof_per_op_fallback(
         if returncode != 0 and not summary_files:
             raise RuntimeError(
                 f"msprof exited with {returncode} while profiling {op}; "
-                f"profiling data kept at {op_root}: {subprocess.list2cmdline(op_cmd)}")
+                f"profiling data kept at {op_root}: {subprocess.list2cmdline(op_cmd)}"
+            )
         if returncode != 0:
             print(
                 f"[WARN] msprof exited with {returncode} while profiling {op}, "
@@ -380,12 +589,30 @@ def run_msprof_per_op_fallback(
             )
         all_prof_dirs.update(prof_dirs)
 
+        op_status_path = op_root / "run_all_op_status.json"
+        if op_status_path.exists():
+            try:
+                op_status = json.loads(op_status_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                op_status = {}
+            for key in combined_status:
+                combined_status[key].extend(op_status.get(key, []))
+
+    if any(combined_status.values()):
+        (profiler_root / "run_all_op_status.json").write_text(
+            json.dumps(combined_status, indent=2),
+            encoding="utf-8",
+        )
+
     return all_prof_dirs
 
 
-def run_msprof(target_dir: Path, args: argparse.Namespace,
-               selected_ops: list[str] | None,
-               allow_per_op_fallback: bool = True) -> tuple[Path, set[Path]]:
+def run_msprof(
+    target_dir: Path,
+    args: argparse.Namespace,
+    selected_ops: list[str] | None,
+    allow_per_op_fallback: bool = True,
+) -> tuple[Path, set[Path]]:
     """Run msprof to profile operator execution.
 
     Args:
@@ -421,14 +648,15 @@ def run_msprof(target_dir: Path, args: argparse.Namespace,
                 raise RuntimeError(
                     "combined msprof failed without op_summary data; rerun "
                     "with --ops to enable per-op fallback. Profiling data kept "
-                    f"at {profiler_root}: {subprocess.list2cmdline(cmd)}")
+                    f"at {profiler_root}: {subprocess.list2cmdline(cmd)}"
+                )
             fallback_ops = selected_ops or list_ops()
             if len(fallback_ops) <= 1 or args.fail_fast:
                 raise RuntimeError(
                     f"msprof exited with {returncode}; profiling data kept at "
-                    f"{profiler_root}: {subprocess.list2cmdline(cmd)}")
-            prof_dirs = run_msprof_per_op_fallback(
-                profiler_root, args, fallback_ops)
+                    f"{profiler_root}: {subprocess.list2cmdline(cmd)}"
+                )
+            prof_dirs = run_msprof_per_op_fallback(profiler_root, args, fallback_ops)
 
     if not prof_dirs:
         raise FileNotFoundError(f"No PROF_* directories under {profiler_root}")
@@ -453,9 +681,7 @@ def find_summary_files(
     Raises:
         FileNotFoundError: If no summary files are found.
     """
-    files = [
-        f for d in sorted(prof_dirs)
-        for f in sorted((d / "mindstudio_profiler_output").glob("op_summary_*.csv"))]
+    files = [f for d in sorted(prof_dirs) for f in sorted((d / "mindstudio_profiler_output").glob("op_summary_*.csv"))]
 
     if not files and raise_if_missing:
         raise FileNotFoundError("No op_summary_*.csv found")
@@ -466,13 +692,13 @@ def find_summary_files(
 # =============================================================================
 # Data Processing
 # =============================================================================
-def read_status() -> dict[str, Any] | None:
+def read_status(profiler_root: Path | None = None) -> dict[str, Any] | None:
     """Read operator execution status from JSON file.
 
     Returns:
         Status dict with success/failed/skipped lists, or None if file missing.
     """
-    p = OP_REPLAY_DIR / "run_all_op_status.json"
+    p = (profiler_root or OP_REPLAY_DIR) / "run_all_op_status.json"
 
     try:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
@@ -480,8 +706,116 @@ def read_status() -> dict[str, Any] | None:
         return None
 
 
-def aggregate_summary(files: list[Path], ep_size: int | None
-                      ) -> dict[str, list[dict[str, str]]]:
+def _task_start_time(row: dict[str, str]) -> float | None:
+    for column in (
+        "Task Start Time(us)",
+        "Start Time(us)",
+        "Task Start Time",
+        "Start Time",
+    ):
+        raw_value = (row.get(column, "") or "").strip().rstrip("\t")
+        if not raw_value:
+            continue
+        try:
+            return float(raw_value)
+        except ValueError:
+            continue
+    return None
+
+
+def _aggregate_profile_rows(
+    op_type: str,
+    rows: list[dict[str, str]],
+    ep_size: int | None,
+    *,
+    case_id: str | None = None,
+    aggregation: str = "min",
+) -> dict[str, str]:
+    if not rows:
+        raise ValueError(f"Cannot aggregate an empty {op_type} profiling group")
+    src_row = dict(rows[-1])
+    agg = {key: (src_row.get(key, "") or "").strip() for key in BASE_COLS}
+    durations = [parse_float(row.get("Task Duration(us)", "")) for row in rows]
+    if not all(is_positive_finite(duration) for duration in durations):
+        raise ValueError(f"{op_type} profiling group contains a non-positive or non-finite duration")
+    duration = sum(durations) / len(durations) if aggregation == "mean" else min(durations)
+    agg[MB_DUR] = f"{duration:.6f}"
+    agg["Accelerator Core"] = (src_row.get("Task Type", "") or "").strip()
+    if case_id:
+        agg["Runtime case_id"] = case_id
+    if normalize_op_name(op_type) == normalize_op_name(DISPATCH_FFN_OP) and ep_size:
+        agg["EP Size"] = str(ep_size)
+    for source_column, microbench_column in MB_EXTRA_COLS.items():
+        agg[microbench_column] = f"{sum(parse_float(row.get(source_column, '')) for row in rows) / len(rows):.6f}"
+    return agg
+
+
+def _runtime_case_groups(
+    rows: list[dict[str, str]],
+    cases: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, str]]]]:
+    if not cases:
+        return []
+    require_task_start_time = len(cases) > 1 or any(bool(case.get("require_task_start_time")) for case in cases)
+    start_times = [_task_start_time(row) for row in rows]
+    if require_task_start_time and any(value is None for value in start_times):
+        raise RuntimeError(
+            "Runtime-aware profiling requires task start timestamps; case ordering would otherwise be ambiguous"
+        )
+    else:
+        ordered_rows = sorted(
+            enumerate(zip(rows, start_times)),
+            key=lambda item: (
+                item[1][1] if item[1][1] is not None else float(item[0]),
+                item[0],
+            ),
+        )
+        ordered = [row for _, (row, _) in ordered_rows]
+    expected = sum(int(case.get("warmup_count", 0)) + int(case.get("repeat_count", 0)) for case in cases)
+    if len(ordered) < expected:
+        raise RuntimeError(f"Runtime-aware profiler row count mismatch: expected {expected}, found {len(ordered)}")
+    if len(ordered) > expected:
+        # Profilers may emit additional rows for mixed AIC/AIV task types or
+        # internal sub-kernels.  Filter by the expected Task Type first so
+        # interleaved extra rows do not silently shift case boundaries.
+        task_types = {
+            str(case.get("expected_task_type", "")).strip()
+            for case in cases
+            if str(case.get("expected_task_type", "")).strip()
+        }
+        if task_types:
+            ordered = [
+                row for row in ordered
+                if (row.get("Task Type", "") or "").strip() in task_types
+            ]
+        if len(ordered) > expected:
+            # Still too many rows after filtering; truncate to preserve
+            # the recorded case ordering for the first N matching rows.
+            ordered = ordered[:expected]
+        elif len(ordered) < expected:
+            raise RuntimeError(
+                f"Runtime-aware profiler row count mismatch after task-type "
+                f"filtering: expected {expected}, found {len(ordered)}"
+            )
+    groups: list[tuple[str, list[dict[str, str]]]] = []
+    offset = 0
+    for case in cases:
+        warmup_count = int(case.get("warmup_count", 0))
+        repeat_count = int(case.get("repeat_count", 0))
+        offset += warmup_count
+        measured = ordered[offset : offset + repeat_count]
+        offset += repeat_count
+        if not measured:
+            raise RuntimeError(f"Runtime case {case.get('case_id', '')} has no measured profiler rows")
+        groups.append((str(case["case_id"]), measured))
+    return groups
+
+
+def aggregate_summary(
+    files: list[Path],
+    ep_size: int | None,
+    status: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, str]]]:
     """Aggregate op_summary CSV files by operator type.
 
     Args:
@@ -491,7 +825,8 @@ def aggregate_summary(files: list[Path], ep_size: int | None
     Returns:
         Dict mapping operator type to list of aggregated row dicts.
     """
-    grouped: dict[tuple[str, tuple], dict] = {}
+    grouped: dict[tuple[str, tuple], list[dict[str, str]]] = defaultdict(list)
+    rows_by_op: dict[str, list[dict[str, str]]] = defaultdict(list)
 
     # Read and group rows by (op_type, signature)
     for csv_path in files:
@@ -501,34 +836,77 @@ def aggregate_summary(files: list[Path], ep_size: int | None
                 if not op_type:
                     continue
 
-                key = (op_type, get_sig(row, op_name=op_type))
-                item = grouped.setdefault(key, {"count": 0, "row": row, "min_dur": None,
-                                                "sums": defaultdict(float)})
-                dur = parse_float(row.get("Task Duration(us)", ""))
-                item["count"] += 1
-
-                if item["min_dur"] is None or dur < item["min_dur"]:
-                    item["min_dur"] = dur
-
-                for src in PROF_COLS:
-                    item["sums"][src] += parse_float(row.get(src, ""))
+                rows_by_op[normalize_op_name(op_type)].append(row)
+                grouped[(op_type, get_sig(row, op_name=op_type))].append(row)
 
     # Build aggregated results
     result: dict[str, list[dict[str, str]]] = defaultdict(list)
 
-    for (op_type, _), item in grouped.items():
-        cnt, src_row = item["count"], dict(item["row"])
-        agg = {k: (src_row.get(k, "") or "").strip() for k in BASE_COLS}
-        agg[MB_DUR] = f"{item['min_dur']:.6f}"
-        agg["Accelerator Core"] = (src_row.get("Task Type", "") or "").strip()
+    runtime_cases_by_op: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for case in (status or {}).get("cases", []):
+        kernel_type = normalize_op_name(str(case.get("kernel_type", "")))
+        if kernel_type:
+            runtime_cases_by_op[kernel_type].append(case)
 
-        if normalize_op_name(op_type) == normalize_op_name(DISPATCH_FFN_OP) and ep_size:
-            agg["EP Size"] = str(ep_size)
+    runtime_ops = set(runtime_cases_by_op)
+    runtime_profile_ops = {
+        normalize_op_name(str(case.get("profile_kernel_type", kernel_type)))
+        for kernel_type, cases in runtime_cases_by_op.items()
+        for case in cases
+    }
+    missing_runtime_status = (set(rows_by_op) & _runtime_profile_op_names()) - runtime_profile_ops
+    if missing_runtime_status:
+        raise RuntimeError(
+            "Runtime-aware profiler output is missing replay case metadata for: "
+            + ", ".join(sorted(missing_runtime_status))
+        )
+    for normalized_op, cases in runtime_cases_by_op.items():
+        profile_ops = {normalize_op_name(str(case.get("profile_kernel_type", normalized_op))) for case in cases}
+        if len(profile_ops) != 1:
+            raise RuntimeError(f"Runtime cases for {normalized_op} use inconsistent profiler aliases")
+        profile_op = next(iter(profile_ops))
+        strict_prefixes = {
+            str(case.get("kernel_name_prefix", "")).lower()
+            for case in cases
+            if str(case.get("kernel_name_prefix", "")).strip()
+        }
+        for profiled_op, profiled_rows in rows_by_op.items():
+            if profiled_op in profile_ops:
+                continue
+            if any(prefix in profiled_op.lower() for prefix in strict_prefixes) and profiled_rows:
+                raise RuntimeError(
+                    f"Runtime-aware profiler emitted unexpected kernel variant {profiled_op} for target {normalized_op}"
+                )
+        op_rows = rows_by_op.get(profile_op, [])
+        case_by_id = {str(case["case_id"]): case for case in cases}
+        for case_id, case_rows in _runtime_case_groups(op_rows, cases):
+            case = case_by_id[case_id]
+            expected_task_type = str(case.get("expected_task_type", "")).strip()
+            if expected_task_type and any(
+                (row.get("Task Type", "") or "").strip() != expected_task_type for row in case_rows
+            ):
+                raise RuntimeError(f"Runtime case {case_id} expected Task Type {expected_task_type}")
+            aggregate = _aggregate_profile_rows(
+                normalized_op,
+                case_rows,
+                ep_size,
+                case_id=case_id,
+                aggregation=str(case.get("aggregation", "min")),
+            )
+            signature_context = case.get("signature_context", {})
+            if isinstance(signature_context, dict):
+                aggregate.update(
+                    {
+                        str(column): str(value)
+                        for column, value in signature_context.items()
+                    }
+                )
+            result[normalized_op].append(aggregate)
 
-        for src, mb_col in MB_EXTRA_COLS.items():
-            agg[mb_col] = f"{item['sums'][src] / cnt:.6f}"
-
-        result[op_type].append(agg)
+    for (op_type, _), rows in grouped.items():
+        if normalize_op_name(op_type) in runtime_ops | runtime_profile_ops:
+            continue
+        result[op_type].append(_aggregate_profile_rows(op_type, rows, ep_size))
 
     return result
 
@@ -579,9 +957,28 @@ def get_cols(fieldnames: list[str] | None) -> list[str]:
     return cols
 
 
-def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
-               mode: str, prune: bool,
-               match_only_rows: list[dict[str, str]] | None = None) -> UpdateResult:
+def _triton_rope_match_sig(row: dict[str, str], op_name: str) -> tuple[str, ...]:
+    """Normalize the opaque cos-table dtype ID emitted by raw traces."""
+
+    signature = get_sig(row, op_name=op_name)
+    if not isinstance(signature, tuple):
+        raise TypeError("Expected a tuple profiling signature")
+    values = list(signature)
+    if len(values) > 1:
+        dtype_slots = values[1].split(";")
+        if len(dtype_slots) > 1 and dtype_slots[1].lstrip("-").isdigit():
+            dtype_slots[1] = "FLOAT"
+            values[1] = ";".join(dtype_slots)
+    return tuple(values)
+
+
+def update_csv(
+    csv_path: Path,
+    rows_to_merge: list[dict[str, str]],
+    mode: str,
+    prune: bool,
+    match_only_rows: list[dict[str, str]] | None = None,
+) -> UpdateResult:
     """Update CSV file with new profiling data rows.
 
     Args:
@@ -616,7 +1013,7 @@ def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
     if normalize_op_name(csv_path.stem) == normalize_op_name(DISPATCH_FFN_OP) and "EP Size" not in columns:
         incoming_ep_sizes = {
             (row.get("EP Size", "") or "").strip()
-            for row in [*(rows_to_merge or []), *((match_only_rows or []))]
+            for row in [*(rows_to_merge or []), *(match_only_rows or [])]
             if (row.get("EP Size", "") or "").strip()
         }
         if len(incoming_ep_sizes) == 1:
@@ -641,8 +1038,12 @@ def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
             sig_idx[s] = i
             dup_counts.setdefault(s, 1)
 
-    result.duplicates = [(get_sig(existing_rows[sig_idx[s]], True), c)
-                       for s, c in dup_counts.items() if c > 1]
+    rope_match_indices: dict[tuple[str, ...], list[int]] = defaultdict(list)
+    if normalize_op_name(csv_path.stem) == TRITON_ROPE_SISO_OP:
+        for index, row in enumerate(existing_rows):
+            rope_match_indices[_triton_rope_match_sig(row, csv_path.stem)].append(index)
+
+    result.duplicates = [(get_sig(existing_rows[sig_idx[s]], True), c) for s, c in dup_counts.items() if c > 1]
     result.duplicates.sort(key=lambda x: (-x[1], x[0]))
 
     # Merge new rows
@@ -661,29 +1062,33 @@ def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
     ) -> None:
         s = get_sig(new_row, op_name=csv_path.stem)
 
-        if s not in sig_idx:
+        matched_indices = [sig_idx[s]] if s in sig_idx else []
+        if rope_match_indices:
+            opaque_dtype_matches = rope_match_indices.get(
+                _triton_rope_match_sig(new_row, csv_path.stem), []
+            )
+            matched_indices = sorted(set(matched_indices) | set(opaque_dtype_matches))
+
+        if not matched_indices:
             if record_missing:
                 result.missing.append(get_sig(new_row, True))
             if not allow_add:
-                print(
-                    f"[WARN] match-only profiling row did not match {csv_path.name}: "
-                    f"{get_sig(new_row, True)}"
-                )
+                print(f"[WARN] match-only profiling row did not match {csv_path.name}: {get_sig(new_row, True)}")
             if allow_add and mode == "all":
                 existing_rows.append(new_row)
                 sig_idx[s] = len(existing_rows) - 1
                 result.added += 1
             return
 
-        row = existing_rows[sig_idx[s]]
-        can_update = mode == "all" or not row_has_valid_duration(row)
+        for matched_index in matched_indices:
+            row = existing_rows[matched_index]
+            can_update = mode == "all" or not row_has_valid_duration(row)
 
-        if not can_update:
-            if record_unchanged:
-                result.unchanged += 1
-            else:
-                return
-        else:
+            if not can_update:
+                if record_unchanged:
+                    result.unchanged += 1
+                continue
+
             old_mb = row.get(MB_DUR, "")
             row[MB_DUR] = new_row.get(MB_DUR, "")
 
@@ -691,17 +1096,24 @@ def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
                 if mb_col in new_row:
                     row[mb_col] = new_row[mb_col]
 
-            result.updated += (
-                1 if (old_mb or "").strip() != (row.get(MB_DUR) or "").strip() else 0)
+            result.updated += 1 if (old_mb or "").strip() != (row.get(MB_DUR) or "").strip() else 0
 
-        # Record gap between microbench and profiling durations
-        mb_us = parse_float(row.get(MB_DUR, ""))
-        prof_us = parse_float(row.get(PROF_AVG_DUR, ""))
+            # Record gap between microbench and profiling durations
+            mb_us = parse_float(row.get(MB_DUR, ""))
+            prof_us = parse_float(row.get(PROF_AVG_DUR, ""))
 
-        if mb_us > 0 and prof_us > 0:
-            result.gaps.append(GapRecord(
-                csv_path.stem, csv_path.name, get_sig(row, True),
-                mb_us, prof_us, abs(mb_us - prof_us), mb_us / prof_us))
+            if is_positive_finite(mb_us) and is_positive_finite(prof_us):
+                result.gaps.append(
+                    GapRecord(
+                        csv_path.stem,
+                        csv_path.name,
+                        get_sig(row, True),
+                        mb_us,
+                        prof_us,
+                        abs(mb_us - prof_us),
+                        mb_us / prof_us,
+                    )
+                )
 
     for new_row in rows_to_merge:
         merge_row(
@@ -732,16 +1144,21 @@ def update_csv(csv_path: Path, rows_to_merge: list[dict[str, str]],
 
     # Write if changed
     if not csv_path.exists() or kept != norm_orig:
-        with csv_path.open("w", encoding="utf-8", newline="") as f:
+        with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=columns)
             w.writeheader()
-            w.writerows(kept)
+            w.writerows(canonicalize_shape_columns(row) for row in kept)
 
     return result
 
 
-def update_db(target_dir: Path, aggregated: dict[str, list[dict[str, str]]],
-              selected: list[str] | None, mode: str, prune: bool) -> list[UpdateResult]:
+def update_db(
+    target_dir: Path,
+    aggregated: dict[str, list[dict[str, str]]],
+    selected: list[str] | None,
+    mode: str,
+    prune: bool,
+) -> list[UpdateResult]:
     """Update database CSV files with aggregated profiling data.
 
     Args:
@@ -755,15 +1172,12 @@ def update_db(target_dir: Path, aggregated: dict[str, list[dict[str, str]]],
         List of UpdateResult for each updated CSV file.
     """
     if selected:
-        csv_paths = [
-            p for op in selected for p in sorted(target_dir.rglob(f"{op}.csv"))]
+        csv_paths = [p for op in selected for p in sorted(target_dir.rglob(f"{op}.csv"))]
     else:
         avail = set(list_ops())
-        csv_paths = sorted(
-            p for p in target_dir.glob("*.csv") if normalize_op_name(p.stem) in avail)
+        csv_paths = sorted(p for p in target_dir.glob("*.csv") if normalize_op_name(p.stem) in avail)
 
-    csv_by_op = {p.stem: p for p in csv_paths} if csv_paths else {
-        op: target_dir / f"{op}.csv" for op in aggregated}
+    csv_by_op = {p.stem: p for p in csv_paths} if csv_paths else {op: target_dir / f"{op}.csv" for op in aggregated}
 
     results = []
     for op, path in sorted(csv_by_op.items()):
@@ -771,7 +1185,10 @@ def update_db(target_dir: Path, aggregated: dict[str, list[dict[str, str]]],
         match_only_rows = []
         for alias in PROFILE_OP_ALIASES.get(op, ()):
             match_only_rows.extend(aggregated.get(alias, []))
-        if is_matmul_family(op):
+        if normalize_op_name(op) in {normalize_op_name(item) for item in RUNTIME_AWARE_OPS}:
+            match_only_rows = rows_to_merge + match_only_rows
+            rows_to_merge = []
+        elif is_matmul_family(op):
             match_only_rows = rows_to_merge + match_only_rows
             rows_to_merge = []
         results.append(update_csv(path, rows_to_merge, mode, prune, match_only_rows))
@@ -805,8 +1222,7 @@ def should_skip_dispatch_ffn_msprof(
         return False
     if not selected_ops:
         return True
-    return all(normalize_op_name(op) == normalize_op_name(DISPATCH_FFN_OP)
-               for op in selected_ops)
+    return all(normalize_op_name(op) == normalize_op_name(DISPATCH_FFN_OP) for op in selected_ops)
 
 
 # =============================================================================
@@ -825,13 +1241,11 @@ def md_table(headers: list[str], rows: list[list[str]]) -> str:
     if not rows:
         return "_None_"
 
-    widths = [max(len(h), max((len(r[i]) for r in rows), default=0))
-              for i, h in enumerate(headers)]
-    fmt = lambda c: "| " + " | ".join(x.ljust(w) for x, w in zip(c, widths)) + " |"
+    widths = [max(len(h), max((len(r[i]) for r in rows), default=0)) for i, h in enumerate(headers)]
+    def fmt(c):
+        return "| " + " | ".join(x.ljust(w) for x, w in zip(c, widths)) + " |"
 
-    return "\n".join(
-        [fmt(headers), "| " + " | ".join("-" * w for w in widths) + " |"] +
-        [fmt(r) for r in rows])
+    return "\n".join([fmt(headers), "| " + " | ".join("-" * w for w in widths) + " |"] + [fmt(r) for r in rows])
 
 
 def collect_gaps(results: list[UpdateResult]) -> list[GapRecord]:
@@ -847,11 +1261,12 @@ def collect_gaps(results: list[UpdateResult]) -> list[GapRecord]:
 
     return sorted(
         [g for r in results for g in r.gaps if g.ratio < lower or g.ratio > upper],
-        key=lambda x: (max(x.ratio, 1 / x.ratio), x.diff_us, x.op_type), reverse=True)
+        key=lambda x: (max(x.ratio, 1 / x.ratio), x.diff_us, x.op_type),
+        reverse=True,
+    )
 
 
-def _build_table_rows(results: list[UpdateResult], attr: str, sort_key=None
-                      ) -> list[list[str]]:
+def _build_table_rows(results: list[UpdateResult], attr: str, sort_key=None) -> list[list[str]]:
     """Build table rows for report display.
 
     Args:
@@ -864,7 +1279,9 @@ def _build_table_rows(results: list[UpdateResult], attr: str, sort_key=None
     """
     items = (
         sorted([r for r in results if getattr(r, attr)], key=sort_key)
-        if sort_key else [r for r in results if getattr(r, attr)])
+        if sort_key
+        else [r for r in results if getattr(r, attr)]
+    )
     rows = []
 
     for r in items:
@@ -878,9 +1295,12 @@ def _build_table_rows(results: list[UpdateResult], attr: str, sort_key=None
     return rows
 
 
-def print_report(results: list[UpdateResult], gaps: list[GapRecord],
-                 status: dict[str, Any] | None, to_file: Path | None = None
-                 ) -> tuple[Path, Path] | None:
+def print_report(
+    results: list[UpdateResult],
+    gaps: list[GapRecord],
+    status: dict[str, Any] | None,
+    to_file: Path | None = None,
+) -> tuple[Path, Path] | None:
     """Print update summary and write report files.
 
     Args:
@@ -894,19 +1314,30 @@ def print_report(results: list[UpdateResult], gaps: list[GapRecord],
     """
     # Build tables
     update_rows = [
-        [r.csv_path.stem, str(r.updated), str(r.added), str(len(r.deleted)),
-         str(r.unchanged), "; ".join(r.missing[:MAX_EXAMPLE_DISPLAY]) or "-"]
-        for r in sorted(results, key=lambda x: (-x.added, -x.updated, x.csv_path.name))]
-    missing_rows = _build_table_rows(
-        results, "missing", lambda x: (-len(x.missing), x.csv_path.name))
-    deleted_rows = _build_table_rows(
-        results, "deleted", lambda x: (-len(x.deleted), x.csv_path.name))
-    duplicates_rows = _build_table_rows(
-        results, "duplicates", lambda x: (-len(x.duplicates), x.csv_path.name))
+        [
+            r.csv_path.stem,
+            str(r.updated),
+            str(r.added),
+            str(len(r.deleted)),
+            str(r.unchanged),
+            "; ".join(r.missing[:MAX_EXAMPLE_DISPLAY]) or "-",
+        ]
+        for r in sorted(results, key=lambda x: (-x.added, -x.updated, x.csv_path.name))
+    ]
+    missing_rows = _build_table_rows(results, "missing", lambda x: (-len(x.missing), x.csv_path.name))
+    deleted_rows = _build_table_rows(results, "deleted", lambda x: (-len(x.deleted), x.csv_path.name))
+    duplicates_rows = _build_table_rows(results, "duplicates", lambda x: (-len(x.duplicates), x.csv_path.name))
     gap_rows = [
-        [g.op_type, f"{g.mb_us:.6f}", f"{g.prof_us:.6f}",
-         f"{g.diff_us:.6f}", f"{g.ratio:.2f}x", g.signature]
-        for g in gaps[:MAX_GAP_DISPLAY]]
+        [
+            g.op_type,
+            f"{g.mb_us:.6f}",
+            f"{g.prof_us:.6f}",
+            f"{g.diff_us:.6f}",
+            f"{g.ratio:.2f}x",
+            g.signature,
+        ]
+        for g in gaps[:MAX_GAP_DISPLAY]
+    ]
 
     lower, upper = GAP_BOUNDS
     overview = [
@@ -918,35 +1349,54 @@ def print_report(results: list[UpdateResult], gaps: list[GapRecord],
         ["Duplicate signatures", str(sum(len(r.duplicates) for r in results))],
         ["Missing shapes", str(sum(len(r.missing) for r in results))],
         ["Hotspots", str(len(gaps))],
-        ["Gap threshold", f"microbench/profiling not in [{lower:.2f}x, {upper:.2f}x]"]]
+        ["Gap threshold", f"microbench/profiling not in [{lower:.2f}x, {upper:.2f}x]"],
+    ]
 
     # Build report content (shared for console and file)
     lines = ["# Profile Update Report"]
     if status:
-        lines.append(f"\n## Operator Execution Status\n"
-                     f"- Success: {len(status.get('success', []))}\n"
-                     f"- Failed: {len(status.get('failed', []))}\n"
-                     f"- Skipped: {len(status.get('skipped', []))}")
+        lines.append(
+            f"\n## Operator Execution Status\n"
+            f"- Success: {len(status.get('success', []))}\n"
+            f"- Failed: {len(status.get('failed', []))}\n"
+            f"- Skipped: {len(status.get('skipped', []))}"
+        )
         for item in status.get("failed", []):
             lines.append(f"  - FAILED: {item['op']}: {item['reason']}")
 
     lines.append("\n## Overview\n" + md_table(["Metric", "Value"], overview))
-    lines.append("\n## Update Summary\n" + md_table(
-        ["Operator", "Updated", "Added", "Deleted", "Unchanged", "Missing Samples"],
-        update_rows))
-    lines.append("\n## Missing Shapes\n" + md_table(
-        ["Operator", "Count", "Examples"], missing_rows))
-    lines.append("\n## Deleted Empty Rows\n" + md_table(
-        ["Operator", "Count", "Examples"], deleted_rows))
-    lines.append("\n## Duplicate Signatures\n" + md_table(
-        ["Operator", "Count", "Examples"], duplicates_rows))
-    lines.append("\n## Duration Gap Hotspots\n" + md_table(
-        ["Operator", "MicroBench(us)", "Profiling(us)", "Abs Diff(us)", "MB/Profile",
-         "Shape"], gap_rows))
+    lines.append(
+        "\n## Update Summary\n"
+        + md_table(
+            ["Operator", "Updated", "Added", "Deleted", "Unchanged", "Missing Samples"],
+            update_rows,
+        )
+    )
+    lines.append("\n## Missing Shapes\n" + md_table(["Operator", "Count", "Examples"], missing_rows))
+    lines.append("\n## Deleted Empty Rows\n" + md_table(["Operator", "Count", "Examples"], deleted_rows))
+    lines.append("\n## Duplicate Signatures\n" + md_table(["Operator", "Count", "Examples"], duplicates_rows))
+    lines.append(
+        "\n## Duration Gap Hotspots\n"
+        + md_table(
+            [
+                "Operator",
+                "MicroBench(us)",
+                "Profiling(us)",
+                "Abs Diff(us)",
+                "MB/Profile",
+                "Shape",
+            ],
+            gap_rows,
+        )
+    )
     if status and status.get("failed"):
-        lines.append("\n## Failures\n> [!WARNING]\n> Operators that failed.\n\n" +
-                     md_table(["Operator", "Reason"],
-                              [[x["op"], x["reason"]] for x in status["failed"]]))
+        lines.append(
+            "\n## Failures\n> [!WARNING]\n> Operators that failed.\n\n"
+            + md_table(
+                ["Operator", "Reason"],
+                [[x["op"], x["reason"]] for x in status["failed"]],
+            )
+        )
     report_content = "\n".join(lines) + "\n"
 
     # Print to console
@@ -965,22 +1415,50 @@ def print_report(results: list[UpdateResult], gaps: list[GapRecord],
 
     with gap_csv.open("w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(
-            f, fieldnames=["Operator", "CSV Name", "MicroBench(us)", "Profiling(us)",
-                           "Abs Diff(us)", "MB/Profile", "Shape"])
+            f,
+            fieldnames=[
+                "Operator",
+                "CSV Name",
+                "MicroBench(us)",
+                "Profiling(us)",
+                "Abs Diff(us)",
+                "MB/Profile",
+                "Shape",
+            ],
+        )
         w.writeheader()
 
         for g in gaps:
-            w.writerow({
-                "Operator": g.op_type, "CSV Name": g.csv_name,
-                "MicroBench(us)": f"{g.mb_us:.6f}", "Profiling(us)": f"{g.prof_us:.6f}",
-                "Abs Diff(us)": f"{g.diff_us:.6f}", "MB/Profile": f"{g.ratio:.6f}",
-                "Shape": g.signature})
+            w.writerow(
+                {
+                    "Operator": g.op_type,
+                    "CSV Name": g.csv_name,
+                    "MicroBench(us)": f"{g.mb_us:.6f}",
+                    "Profiling(us)": f"{g.prof_us:.6f}",
+                    "Abs Diff(us)": f"{g.diff_us:.6f}",
+                    "MB/Profile": f"{g.ratio:.6f}",
+                    "Shape": g.signature,
+                }
+            )
+
+    status_snapshot_path = None
+    if status is not None:
+        status_snapshot_path = report_dir / f"run_all_op_status_{ts}.json"
+        status_snapshot_path.write_text(
+            json.dumps(status, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     # Write report markdown
     report_path = report_dir / f"profile_update_report_{ts}.md"
     with report_path.open("w", encoding="utf-8", newline="") as f:
         f.write(report_content)
         f.write(f"Full hotspot CSV: {gap_csv.name}\n")
+        if status_snapshot_path is not None:
+            f.write(f"Run status JSON: {status_snapshot_path.name}\n")
+
+    if status_snapshot_path is not None:
+        print(f"[REPORT] {status_snapshot_path}")
 
     return report_path, gap_csv
 
@@ -993,26 +1471,48 @@ def main() -> None:
     """
     args = build_argparser().parse_args()
     print_logo()
+    validate_num_devices_options(
+        args.num_devices,
+        case_shard_count=args.case_shard_count,
+        case_shard_index=args.case_shard_index,
+        prune_empty_duration_rows=args.prune_empty_duration_rows,
+    )
+    validate_case_shard_options(
+        args.case_shard_count,
+        args.case_shard_index,
+        prune_empty_duration_rows=args.prune_empty_duration_rows,
+    )
     selected_ops = validate_ops(args.ops)
     target_dir = get_target_data_dir(
-        args.device, args.vllm_version, database_path=args.database_path,
-        torch_version=args.torch_version, cann_version=args.cann_version)
+        args.device,
+        args.vllm_version,
+        database_path=args.database_path,
+        torch_version=args.torch_version,
+        cann_version=args.cann_version,
+    )
 
     # Early exit if all CSVs already have usable durations
     if args.update_mode == "missing-only":
         csv_paths = (
             [p for op in selected_ops for p in sorted(target_dir.rglob(f"{op}.csv"))]
-            if selected_ops else
-            sorted(p for p in target_dir.glob("*.csv")
-                   if normalize_op_name(p.stem) in set(list_ops())))
+            if selected_ops
+            else sorted(p for p in target_dir.glob("*.csv") if normalize_op_name(p.stem) in set(list_ops()))
+        )
 
-        if csv_paths and all(
-                csv_has_complete_microbench(load_csv_rows(p)[1]) for p in csv_paths):
+        if csv_paths and all(csv_has_complete_microbench(load_csv_rows(p)[1]) for p in csv_paths):
             for p in csv_paths:
                 print(f"[SKIP] {p} already has usable durations.")
-            print(
-                "[SUMMARY] All target CSV files already have usable replay durations.")
+            print("[SUMMARY] All target CSV files already have usable replay durations.")
             return
+
+    parallel_result = run_requested_parallelism(args, target_dir, selected_ops)
+    if parallel_result is not None:
+        print(
+            f"[parallel] merged results written back to {target_dir}\n"
+            f"[parallel] merged snapshot: {parallel_result.merged_snapshot}\n"
+            f"[parallel] worker logs and intermediate data: {parallel_result.work_root}"
+        )
+        return
 
     profiling_ops = selected_ops
     visible_devices = get_visible_npu_count()
@@ -1025,13 +1525,8 @@ def main() -> None:
         has_prof_path=False,
     ):
         skip_ops = selected_ops or [DISPATCH_FFN_OP]
-        csv_paths = [
-            p for op in skip_ops for p in sorted(target_dir.rglob(f"{op}.csv"))
-        ]
-        skipped_rows = sum(
-            1 for p in csv_paths for row in load_csv_rows(p)[1]
-            if not row_has_valid_duration(row)
-        )
+        csv_paths = [p for op in skip_ops for p in sorted(target_dir.rglob(f"{op}.csv"))]
+        skipped_rows = sum(1 for p in csv_paths for row in load_csv_rows(p)[1] if not row_has_valid_duration(row))
         print(
             f"[SKIP] {DISPATCH_FFN_OP} requires ep-size "
             f"{args.dispatch_ffn_combine_nproc_per_node or args.dispatch_ffn_combine_ep_size} "
@@ -1043,18 +1538,19 @@ def main() -> None:
             "because ep-size exceeds visible NPU count in missing-only mode."
         )
         if selected_ops is None:
-            profiling_ops = [
-                op for op in list_ops()
-                if normalize_op_name(op) != normalize_op_name(DISPATCH_FFN_OP)
-            ]
+            profiling_ops = [op for op in list_ops() if normalize_op_name(op) != normalize_op_name(DISPATCH_FFN_OP)]
             if not profiling_ops:
                 return
             print(f"[SKIP] Continuing full run without {DISPATCH_FFN_OP}.")
         else:
             profiling_ops = selected_ops
             results = update_db(
-                target_dir, {}, selected_ops, args.update_mode,
-                args.prune_empty_duration_rows)
+                target_dir,
+                {},
+                selected_ops,
+                args.update_mode,
+                args.prune_empty_duration_rows,
+            )
             gaps = collect_gaps(results)
             report_result = print_report(results, gaps, None, target_dir)
             if report_result:
@@ -1076,30 +1572,53 @@ def main() -> None:
             allow_per_op_fallback=selected_ops is not None,
         )
 
+        status = read_status(profiler_root)
+        # op_summary may be absent for large vector-core shapes (e.g. the
+        # a large sparse-indexer ScatterNd [161424,128,128] paged cache write)
+        # where msprof does not export op_summary data.  Use raise_if_missing=False
+        # so one operator's missing summary does not abort the whole run —
+        # operators with valid summaries (e.g. mla_preprocess, SFA) still get
+        # their durations written.  The missing-shape operator is left as a
+        # zero-duration row (accepted_miss) instead of crashing the pipeline.
+        summary_files = find_summary_files(prof_dirs, raise_if_missing=False)
+        if not summary_files:
+            print(
+                "[WARN] No op_summary_*.csv found after msprof — msprof produced "
+                "no summary data (likely large vector-core shapes that msprof "
+                "does not sample). Duration writeback skipped; affected rows "
+                "remain zero-duration."
+            )
         aggregated = aggregate_summary(
-            find_summary_files(prof_dirs), args.dispatch_ffn_combine_ep_size)
+            summary_files,
+            args.dispatch_ffn_combine_ep_size,
+            status,
+        )
 
         if selected_ops:
             sel_set = set(selected_ops)
             for op in list(sel_set):
                 sel_set.update(PROFILE_OP_ALIASES.get(op, ()))
-            aggregated = {
-                op: rows for op, rows in aggregated.items()
-                if normalize_op_name(op) in sel_set}
+            aggregated = {op: rows for op, rows in aggregated.items() if normalize_op_name(op) in sel_set}
 
         results = update_db(
-            target_dir, aggregated, selected_ops, args.update_mode,
-            args.prune_empty_duration_rows)
+            target_dir,
+            aggregated,
+            selected_ops,
+            args.update_mode,
+            args.prune_empty_duration_rows,
+        )
         gaps = collect_gaps(results)
-        status = read_status()
         report_result = print_report(results, gaps, status, target_dir)
 
         if report_result:
             print(f"\n[REPORT] {report_result[0]}\n[REPORT] {report_result[1]}")
-
         succeeded = True
     finally:
-        status_path = OP_REPLAY_DIR / "run_all_op_status.json"
+        status_path = (
+            profiler_root / "run_all_op_status.json"
+            if profiler_root is not None
+            else OP_REPLAY_DIR / "run_all_op_status.json"
+        )
         if status_path.exists():
             try:
                 status_path.unlink()

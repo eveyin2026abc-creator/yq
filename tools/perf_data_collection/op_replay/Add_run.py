@@ -34,7 +34,11 @@ def build_case(row: dict[str, str]):
 def run_case(case):
     if len(case["inputs"]) >= 2:
         return case["api"](case["inputs"][0], case["inputs"][1])
-    return case["api"](case["inputs"][0], 1.0)
+    # Keep integral inputs integral when the database records an omitted scalar
+    # slot (for example ``Input Shapes=8;``).  A float literal promotes an
+    # INT32 tensor and makes the profiler signature impossible to match back
+    # to the recorded INT32 output.
+    return case["api"](case["inputs"][0], 1)
 
 
 op = OpReplay(
@@ -60,6 +64,5 @@ def main() -> None:
     op.main()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # Keep imports side-effect free for tooling tests.
     main()
-

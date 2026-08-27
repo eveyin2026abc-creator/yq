@@ -103,6 +103,24 @@ def test_main_replays_each_row_repeat_count_times(
     monkeypatch.setattr(replay_framework, "get_replay_repeat_count", lambda _: 3)
     monkeypatch.setattr(replay_framework.OpReplay, "synchronize", lambda self: None)
 
+    # run_row uses NPU event timing; patch get_runtime_modules so the test
+    # does not require a real NPU.
+    class FakeNpuEvent:
+        def __init__(self, enable_timing=False):
+            pass
+
+        def record(self):
+            pass
+
+        def elapsed_time(self, _other):
+            return 0.001  # 1 us
+
+    class FakeTorch:
+        class npu:
+            Event = FakeNpuEvent
+
+    monkeypatch.setattr(replay_framework, "get_runtime_modules", lambda: (FakeTorch, None))
+
     def build_case(_row):
         return {"inputs": [], "kwargs": {}, "api": None}
 
@@ -127,5 +145,121 @@ def test_main_replays_each_row_repeat_count_times(
     op.main()
 
     output = capsys.readouterr().out
-    assert len(calls) == 3
-    assert "Processed 3 Add rows" in output
+    # run_row does warmup(2) + timed(3) = 5 total run_case calls
+    assert len(calls) == 5
+    # process_repeat_count is 1 (run_row handles repeats internally), so
+    # total_rows = 1 row x 1 outer repeat = 1
+    assert "Processed 1 Add rows" in output
+
+
+def test_exact_runtime_match_records_original_query_signature(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    recorded: list[dict[str, object]] = []
+
+    # run_row uses NPU event timing; patch get_runtime_modules so the test
+    # does not require a real NPU.
+    class FakeNpuEvent:
+        def __init__(self, enable_timing=False):
+            pass
+
+        def record(self):
+            pass
+
+        def elapsed_time(self, _other):
+            return 0.001
+
+    class FakeTorch:
+        class npu:
+            Event = FakeNpuEvent
+
+    monkeypatch.setattr(replay_framework, "get_runtime_modules", lambda: (FakeTorch, None))
+    row = {
+        "Input Shapes": "1,5,6144;5,6144;6144;",
+        "Input Formats": "NCL;ND;ND;NULL",
+        "Input Data Types": "DT_BF16;DT_BF16;DT_BF16;DT_UNDEFINED",
+        "Output Shapes": "1,5,6144;1,5,1;1,5,6144",
+        "Output Data Types": "DT_BF16;FLOAT;DT_BF16",
+        "Output Formats": "NCL;ND;NCL",
+    }
+    op = replay_framework.OpReplay(
+        kernel_type="AddRmsNormBias",
+        description="test",
+        usage_examples=["python test.py"],
+        version_help="test",
+        build_case=lambda _row: {"inputs": [], "kwargs": {}, "api": None},
+        run_case=lambda _case: "ok",
+        exact_runtime_match=True,
+    )
+    monkeypatch.setattr(op, "synchronize", lambda: None)
+    monkeypatch.setattr(
+        replay_framework,
+        "record_runtime_replay_case",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
+    csv_path = tmp_path / "AddRmsNormBias.csv"
+    original_row = dict(row)  # run_row mutates row (adds Average Duration)
+    op.run_row(csv_path, 7, row)
+
+    assert len(recorded) == 1
+    assert recorded[0]["case_id"] == f"AddRmsNormBias:{csv_path}:7"
+    # signature_context captures the original row data (before run_row adds
+    # the measured Average Duration field).
+    assert recorded[0]["signature_context"] == original_row
+
+
+def test_runtime_row_warms_up_then_records_measurements(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    recorded: list[dict[str, object]] = []
+    calls: list[int] = []
+    row = {"Runtime case_id": "runtime-1"}
+    op = replay_framework.OpReplay(
+        kernel_type="SparseFlashAttention",
+        description="test",
+        usage_examples=["python test.py"],
+        version_help="test",
+        build_case=lambda _row: {},
+        run_case=lambda _case: calls.append(1) or "ok",
+        format_success=lambda *_args: "ok",
+        runtime_warmup_count=3,
+    )
+    monkeypatch.setattr(op, "synchronize", lambda: None)
+    monkeypatch.setattr(
+        replay_framework,
+        "record_runtime_replay_case",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
+    op.run_runtime_row(tmp_path / "SparseFlashAttention.csv", 2, row, repeat_count=2)
+
+    assert len(calls) == 5
+    assert recorded[0]["warmup_count"] == 3
+    assert recorded[0]["repeat_count"] == 2
+
+
+def test_runtime_replay_case_owns_fallback_identity_and_signature_context(
+    tmp_path: Path,
+):
+    case = replay_framework.RuntimeReplayCase(
+        kernel_type="AddRmsNormBias",
+        csv_path=tmp_path / "AddRmsNormBias.csv",
+        row_index=4,
+        row={"Input Shapes": "2,16", "Average Duration(us)": "1.0"},
+        exact_runtime_match=True,
+    )
+
+    assert case.case_id.endswith("AddRmsNormBias.csv:4")
+    assert case.signature_context == {"Input Shapes": "2,16"}
+
+
+def test_shard_spec_validates_range_and_delegates_stable_membership(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        replay_framework,
+        "case_belongs_to_shard",
+        lambda key, count, index: (key, count, index) == ("k", 4, 2),
+    )
+
+    assert replay_framework.ShardSpec(4, 2).accepts("k")
+    assert not replay_framework.ShardSpec(4, 2).accepts("other")
+    with pytest.raises(ValueError, match="case shard index"):
+        replay_framework.ShardSpec(2, 2)

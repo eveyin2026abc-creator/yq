@@ -93,9 +93,16 @@ def build_case(row: dict[str, str]):
     first_shape = input_shapes[0] if input_shapes else None
     if first_shape is not None and len(first_shape) == 2:
         case = build_matmul_case(row, kernel_type="BatchMatMulV2", require_exact_inputs=True)
+        case["api"] = op.resolve_api()
     else:
+        try:
+            from .common import get_runtime_modules
+        except ImportError:
+            from common import get_runtime_modules
+
         case = _build_batched_case(row)
-    case["api"] = op.resolve_api()
+        runtime_torch, _ = get_runtime_modules()
+        case["api"] = runtime_torch.bmm
     return case
 
 

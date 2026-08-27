@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -27,8 +28,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from cli.logo import print_logo
-from common import (
+from cli.logo import print_logo  # noqa: E402
+from common import (  # noqa: E402
     DEFAULT_DEVICE,
     DEFAULT_UPDATE_MODE,
     SUPPORTED_DEVICES,
@@ -36,11 +37,14 @@ from common import (
     build_database_cli_args,
     check_version,
     get_invalid_replay_rows,
+    get_runtime_replay_cases,
     get_target_data_dir,
     normalize_op_name,
     print_invalid_replay_summary,
     reset_invalid_replay_rows,
+    reset_runtime_replay_cases,
 )
+from operator_metadata import supports_case_sharding  # noqa: E402
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -128,12 +132,30 @@ def build_argparser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--case-shard-count",
+        type=int,
+        default=1,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--case-shard-index",
+        type=int,
+        default=0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--execution-mode",
         choices=["inprocess", "subprocess"],
         default="inprocess",
         help=(
             "How to invoke each *_run.py script. Default: inprocess."
         ),
+    )
+    parser.add_argument(
+        "--status-path",
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--ops",
@@ -246,6 +268,30 @@ def append_dispatch_ffn_combine_args(
         command.extend(["--master-port", str(dispatch_ffn_combine_master_port)])
 
 
+def append_case_shard_args(
+    command: list[str],
+    script_path: Path,
+    *,
+    case_shard_count: int = 1,
+    case_shard_index: int = 0,
+) -> None:
+    # Most adapters use OpReplay and shard by Runtime case_id or canonical row
+    # signature. A small number of manual adapters do not implement this
+    # worker contract and are assigned to only one worker by parallel_runner.
+    if not supports_case_sharding(normalize_op_name(script_path.stem)):
+        return
+    if case_shard_count <= 1:
+        return
+    command.extend(
+        [
+            "--case-shard-count",
+            str(case_shard_count),
+            "--case-shard-index",
+            str(case_shard_index),
+        ]
+    )
+
+
 def run_script_subprocess(
     script_path: Path,
     *,
@@ -256,6 +302,8 @@ def run_script_subprocess(
     cann_version: str | None,
     repeat_count: int | None,
     update_mode: str,
+    case_shard_count: int = 1,
+    case_shard_index: int = 0,
     dispatch_ffn_combine_ep_size: int | None,
     dispatch_ffn_combine_nproc_per_node: int | None,
     dispatch_ffn_combine_nnodes: int,
@@ -279,6 +327,12 @@ def run_script_subprocess(
     if repeat_count is not None:
         command.extend(["--repeat-count", str(repeat_count)])
     command.extend(["--update-mode", update_mode])
+    append_case_shard_args(
+        command,
+        script_path,
+        case_shard_count=case_shard_count,
+        case_shard_index=case_shard_index,
+    )
     append_dispatch_ffn_combine_args(
         command,
         script_path,
@@ -304,6 +358,8 @@ def run_script_inprocess(
     cann_version: str | None,
     repeat_count: int | None,
     update_mode: str,
+    case_shard_count: int = 1,
+    case_shard_index: int = 0,
     dispatch_ffn_combine_ep_size: int | None,
     dispatch_ffn_combine_nproc_per_node: int | None,
     dispatch_ffn_combine_nnodes: int,
@@ -328,6 +384,12 @@ def run_script_inprocess(
     if repeat_count is not None:
         sys.argv.extend(["--repeat-count", str(repeat_count)])
     sys.argv.extend(["--update-mode", update_mode])
+    append_case_shard_args(
+        sys.argv,
+        script_path,
+        case_shard_count=case_shard_count,
+        case_shard_index=case_shard_index,
+    )
     append_dispatch_ffn_combine_args(
         sys.argv,
         script_path,
@@ -356,6 +418,8 @@ def run_script(
     cann_version: str | None,
     repeat_count: int | None,
     update_mode: str,
+    case_shard_count: int = 1,
+    case_shard_index: int = 0,
     dispatch_ffn_combine_ep_size: int | None,
     dispatch_ffn_combine_nproc_per_node: int | None,
     dispatch_ffn_combine_nnodes: int,
@@ -374,6 +438,8 @@ def run_script(
             cann_version=cann_version,
             repeat_count=repeat_count,
             update_mode=update_mode,
+            case_shard_count=case_shard_count,
+            case_shard_index=case_shard_index,
             dispatch_ffn_combine_ep_size=dispatch_ffn_combine_ep_size,
             dispatch_ffn_combine_nproc_per_node=dispatch_ffn_combine_nproc_per_node,
             dispatch_ffn_combine_nnodes=dispatch_ffn_combine_nnodes,
@@ -391,6 +457,8 @@ def run_script(
         cann_version=cann_version,
         repeat_count=repeat_count,
         update_mode=update_mode,
+        case_shard_count=case_shard_count,
+        case_shard_index=case_shard_index,
         dispatch_ffn_combine_ep_size=dispatch_ffn_combine_ep_size,
         dispatch_ffn_combine_nproc_per_node=dispatch_ffn_combine_nproc_per_node,
         dispatch_ffn_combine_nnodes=dispatch_ffn_combine_nnodes,
@@ -406,6 +474,7 @@ def main() -> None:
     if args.execution_mode == "inprocess":
         # Global invalid-row tracking only works when every operator runs in this process.
         reset_invalid_replay_rows()
+        reset_runtime_replay_cases()
     selected_ops = None
     if args.ops:
         selected_ops = {normalize_op_name(item) for item in args.ops}
@@ -426,68 +495,95 @@ def main() -> None:
     )
     executed_count = 0
     skipped_count = 0
-    run_status = {"success": [], "failed": [], "skipped": []}
+    run_status = {
+        "success": [],
+        "failed": [],
+        "skipped": [],
+        "execution_mode": args.execution_mode,
+        "cases": [],
+        "invalid_rows": [],
+    }
 
-    for script_path in scripts:
-        csv_name = get_csv_name(script_path)
-        if not has_operator_csv(target_data_dir, csv_name):
-            print(f"No {csv_name} operator file found in this database. Skipping.")
-            skipped_count += 1
-            run_status["skipped"].append(script_path.name)
-            continue
+    try:
+        for script_path in scripts:
+            csv_name = get_csv_name(script_path)
+            if not has_operator_csv(target_data_dir, csv_name):
+                print(f"No {csv_name} operator file found in this database. Skipping.")
+                skipped_count += 1
+                run_status["skipped"].append(script_path.name)
+                continue
 
-        try:
-            run_script(
-                script_path=script_path,
-                database_path=args.database_path,
-                device=args.device,
-                vllm_ascend_version=args.vllm_version,
-                torch_version=args.torch_version,
-                cann_version=args.cann_version,
-                repeat_count=args.repeat_count,
-                update_mode=args.update_mode,
-                dispatch_ffn_combine_ep_size=args.dispatch_ffn_combine_ep_size,
-                dispatch_ffn_combine_nproc_per_node=args.dispatch_ffn_combine_nproc_per_node,
-                dispatch_ffn_combine_nnodes=args.dispatch_ffn_combine_nnodes,
-                dispatch_ffn_combine_node_rank=args.dispatch_ffn_combine_node_rank,
-                dispatch_ffn_combine_master_addr=args.dispatch_ffn_combine_master_addr,
-                dispatch_ffn_combine_master_port=args.dispatch_ffn_combine_master_port,
-                execution_mode=args.execution_mode,
-            )
-            executed_count += 1
-            run_status["success"].append(script_path.name)
-        except subprocess.CalledProcessError as exc:
-            if not args.continue_on_error:
-                raise
-            print(f"[FAIL] {script_path.name} exited with code {exc.returncode}")
-            run_status["failed"].append({"op": script_path.name, "reason": f"subprocess exit code {exc.returncode}"})
-        except SystemExit as exc:
-            if exc.code not in (0, None):
-                if not args.continue_on_error:
-                    raise
-                print(f"[FAIL] {script_path.name} exited with code {exc.code}")
-                run_status["failed"].append({"op": script_path.name, "reason": f"SystemExit code {exc.code}"})
-            else:
+            try:
+                run_script(
+                    script_path=script_path,
+                    database_path=args.database_path,
+                    device=args.device,
+                    vllm_ascend_version=args.vllm_version,
+                    torch_version=args.torch_version,
+                    cann_version=args.cann_version,
+                    repeat_count=args.repeat_count,
+                    update_mode=args.update_mode,
+                    case_shard_count=getattr(args, "case_shard_count", 1),
+                    case_shard_index=getattr(args, "case_shard_index", 0),
+                    dispatch_ffn_combine_ep_size=args.dispatch_ffn_combine_ep_size,
+                    dispatch_ffn_combine_nproc_per_node=args.dispatch_ffn_combine_nproc_per_node,
+                    dispatch_ffn_combine_nnodes=args.dispatch_ffn_combine_nnodes,
+                    dispatch_ffn_combine_node_rank=args.dispatch_ffn_combine_node_rank,
+                    dispatch_ffn_combine_master_addr=args.dispatch_ffn_combine_master_addr,
+                    dispatch_ffn_combine_master_port=args.dispatch_ffn_combine_master_port,
+                    execution_mode=args.execution_mode,
+                )
                 executed_count += 1
                 run_status["success"].append(script_path.name)
-        except FileNotFoundError:
-            print(f"No {csv_name} operator file found in this database. Skipping.")
-            skipped_count += 1
-            run_status["skipped"].append(script_path.name)
-        except MemoryError:
-            raise
-        except Exception as exc:
-            if not args.continue_on_error:
+            except subprocess.CalledProcessError as exc:
+                reason = f"subprocess exit code {exc.returncode}"
+                run_status["failed"].append({"op": script_path.name, "reason": reason})
+                if not args.continue_on_error:
+                    raise
+                print(f"[FAIL] {script_path.name} exited with code {exc.returncode}")
+            except SystemExit as exc:
+                if exc.code not in (0, None):
+                    reason = f"SystemExit code {exc.code}"
+                    run_status["failed"].append({"op": script_path.name, "reason": reason})
+                    if not args.continue_on_error:
+                        raise
+                    print(f"[FAIL] {script_path.name} exited with code {exc.code}")
+                else:
+                    executed_count += 1
+                    run_status["success"].append(script_path.name)
+            except FileNotFoundError:
+                print(f"No {csv_name} operator file found in this database. Skipping.")
+                skipped_count += 1
+                run_status["skipped"].append(script_path.name)
+            except MemoryError as exc:
+                run_status["failed"].append({"op": script_path.name, "reason": str(exc)})
                 raise
-            print(f"[FAIL] {script_path.name} raised exception: {exc}")
-            run_status["failed"].append({"op": script_path.name, "reason": str(exc)})
+            except Exception as exc:
+                run_status["failed"].append({"op": script_path.name, "reason": str(exc)})
+                if not args.continue_on_error:
+                    raise
+                print(f"[FAIL] {script_path.name} raised exception: {exc}")
+    finally:
+        # Non-inprocess mode produces no in-memory runtime cases; write an
+        # empty structure with the execution mode so aggregation can detect
+        # mismatches instead of raising "missing case metadata".
+        if args.execution_mode == "inprocess":
+            run_status["cases"] = get_runtime_replay_cases()
+            run_status["invalid_rows"] = get_invalid_replay_rows()
 
-    status_path = SCRIPT_DIR / "run_all_op_status.json"
-    try:
-        with status_path.open("w", encoding="utf-8") as f:
-            json.dump(run_status, f, indent=2)
-    except Exception as e:
-        print(f"Failed to write run_all_op_status.json: {e}")
+        status_path = Path(
+            getattr(args, "status_path", None)
+            or os.environ.get(
+                "MSMODELING_REPLAY_STATUS_PATH",
+                SCRIPT_DIR / "run_all_op_status.json",
+            )
+        )
+        try:
+            status_path.parent.mkdir(parents=True, exist_ok=True)
+            with status_path.open("w", encoding="utf-8") as f:
+                json.dump(run_status, f, indent=2)
+        except Exception as exc:
+            print(f"Failed to write run_all_op_status.json: {exc}")
 
     print(
         f"Executed {executed_count} operator run script(s), skipped {skipped_count} "
@@ -502,5 +598,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

@@ -12,6 +12,115 @@ import re
 
 DISPATCH_FFN_OP = "DispatchFFNCombine"
 MATMUL_FAMILY_OPS = {"MatMulV2", "MatMulV3", "MatMulCommon"}
+RUNTIME_CASE_ID = "Runtime case_id"
+CASE_ID_ONLY_RUNTIME_OPS = {"mla_preprocess_0_mix_aic"}
+RUNTIME_AWARE_OPS = {"LightningIndexer", "SparseFlashAttention", *CASE_ID_ONLY_RUNTIME_OPS}
+FIA_OP = "FusedInferAttentionScore"
+FIA_RUNTIME_SIGNATURE_COLUMNS = (
+    "Runtime actual_seq_lengths_shape",
+    "Runtime actual_seq_lengths_values",
+    "Runtime actual_seq_lengths_kv_shape",
+    "Runtime actual_seq_lengths_kv_values",
+    "Runtime avg_seq_len",
+    "Runtime block_table_shape",
+    "Runtime block_table_valid_blocks",
+    "Runtime num_heads",
+    "Runtime num_key_value_heads",
+    "Runtime sparse_mode",
+    "Runtime input_layout",
+    "Runtime block_size",
+    "Runtime attn_state",
+    "Runtime phase",
+    "Runtime topk",
+    "Runtime cache_layout",
+    "Runtime kv_cache_mode",
+    "Runtime sparse_block_size",
+    "Runtime sparse_indices_pattern",
+    "Runtime sparse_indices_valid_count",
+)
+
+SHAPE_COLUMNS = ("Input Shapes", "Output Shapes")
+
+
+def _strip_balanced_outer_quotes(value: str) -> str:
+    """Remove storage-only quote pairs while tolerating legacy over-quoting."""
+    cleaned = (value or "").strip()
+    while len(cleaned) >= 2 and cleaned.startswith('"') and cleaned.endswith('"'):
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
+def normalize_shape_semantics(value: str) -> str:
+    """Return quote-free, whitespace-normalized shape-cell semantics."""
+    cleaned = _strip_balanced_outer_quotes(value)
+    if not cleaned:
+        return ""
+    slots = []
+    for slot in cleaned.split(";"):
+        normalized_slot = _strip_balanced_outer_quotes(slot)
+        slots.append(
+            ",".join(dimension.strip() for dimension in normalized_slot.split(","))
+            if normalized_slot
+            else ""
+        )
+    return ";".join(slots)
+
+
+def canonicalize_shape_storage(value: str) -> str:
+    """Wrap a non-empty shape value in one literal outer quote pair."""
+    semantic = normalize_shape_semantics(value)
+    return f'"{semantic}"' if semantic else ""
+
+
+def canonicalize_shape_columns(row: dict[str, str]) -> dict[str, str]:
+    """Return a row whose core shape columns use canonical CSV storage."""
+    normalized = dict(row)
+    for column in SHAPE_COLUMNS:
+        if column in normalized:
+            normalized[column] = canonicalize_shape_storage(normalized[column])
+    return normalized
+
+
+_DTYPE_CANONICAL = {
+    "BF16": "DT_BF16",
+    "BFLOAT16": "DT_BF16",
+    "DT_BFLOAT16": "DT_BF16",
+    "FP16": "DT_FLOAT16",
+    "FLOAT16": "DT_FLOAT16",
+    "HALF": "DT_FLOAT16",
+    "FLOAT": "DT_FLOAT",
+    "FP32": "DT_FLOAT",
+    "FLOAT32": "DT_FLOAT",
+    "FLOAT64": "DT_FLOAT64",
+    "FP64": "DT_FLOAT64",
+    "DOUBLE": "DT_FLOAT64",
+    "INT4": "DT_INT4",
+    "INT8": "DT_INT8",
+    "UINT8": "DT_UINT8",
+    "INT16": "DT_INT16",
+    "INT32": "DT_INT32",
+    "INT64": "DT_INT64",
+    "BOOL": "DT_BOOL",
+    "UNDEFINED": "DT_UNDEFINED",
+}
+
+
+def _canonical_dtype_name(value: str) -> str:
+    """Normalize a dtype token to its canonical ``DT_*`` form.
+
+    Profiler op_summary rows record dtypes such as ``FLOAT16`` or
+    ``BFLOAT16`` while the database CSV stores ``DT_FLOAT16`` / ``DT_BF16``;
+    signatures must canonicalize both sides or otherwise replay rows can
+    never be matched back (missing shapes).  Unknown tokens such as opaque
+    dtype IDs used by Triton kernels are preserved verbatim.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return ""
+    upper = cleaned.upper()
+    if upper in _DTYPE_CANONICAL:
+        return _DTYPE_CANONICAL[upper]
+    return cleaned
 
 
 def normalize_op_name(name: str) -> str:
@@ -25,8 +134,25 @@ def normalize_op_name(name: str) -> str:
     return normalized
 
 
+def get_runtime_signature_context(
+    row: dict[str, str],
+    op_name: str | None = None,
+) -> dict[str, str]:
+    """Return semantic runtime fields needed to match a replay case exactly."""
+    resolved_op_name = normalize_op_name(
+        (op_name or row.get("OP Type", "") or row.get("OP State", "") or "").strip().strip('"')
+    )
+    if resolved_op_name != FIA_OP:
+        return {}
+    return {
+        column: (row.get(column, "") or "").strip()
+        for column in FIA_RUNTIME_SIGNATURE_COLUMNS
+        if column in row
+    }
+
+
 def _split_slot_cell(value: str) -> list[str]:
-    cleaned = (value or "").strip().strip('"')
+    cleaned = _strip_balanced_outer_quotes(value)
     if not cleaned:
         return []
     return [part.strip().strip('"') for part in cleaned.split(";")]
@@ -123,7 +249,7 @@ def canonicalize_matmul_family_signature(
     input_formats = _split_slot_cell(row.get("Input Formats", ""))
     canonical_input_shapes = f"{m_dim},{k_dim};{n_dim},{k_dim}"
     canonical_output_shapes = f"{m_dim},{n_dim}"
-    canonical_input_dtypes = ";".join(input_dtypes[:2])
+    canonical_input_dtypes = ";".join(_canonical_dtype_name(dtype) for dtype in input_dtypes[:2])
     canonical_input_formats = ";".join(input_formats[:2])
     return (
         canonical_input_shapes,
@@ -161,8 +287,23 @@ def canonicalize_profile_signature(
         keep_input_slots([0])
         if input_formats:
             input_formats[0] = "ND"
+    elif resolved_op_name in {"ScatterNdUpdate", "ScatterNdUpdateAiCore"}:
+        # msprof records the data tensor as a flattened (total_slots, head_dim)
+        # because vLLM-Ascend calls .view(-1, head_dim) before the op.  Flatten
+        # the first input's leading dims so the profiling signature matches the
+        # CSV row regardless of whether the data shape is 2D or 3D paged.
+        if input_shapes and input_shapes[0].count(",") >= 2:
+            dims = input_shapes[0].split(",")
+            total_slots = 1
+            for d in dims[:-1]:
+                total_slots *= int(d.strip())
+            input_shapes[0] = str(total_slots) + "," + dims[-1].strip()
 
-    return (";".join(input_shapes), ";".join(input_dtypes), ";".join(input_formats))
+    return (
+        ";".join(input_shapes),
+        ";".join(_canonical_dtype_name(dtype) for dtype in input_dtypes),
+        ";".join(input_formats),
+    )
 
 
 def get_sig(
@@ -174,6 +315,11 @@ def get_sig(
         (op_name or row.get("OP Type", "") or row.get("OP State", "") or "").strip().strip('"')
     )
 
+    if resolved_op_name in CASE_ID_ONLY_RUNTIME_OPS:
+        case_id = (row.get(RUNTIME_CASE_ID, "") or "").strip()
+        if case_id:
+            return case_id if as_str else ("runtime_case_id", case_id)
+
     if is_matmul_family(resolved_op_name):
         matmul_sig = canonicalize_matmul_family_signature(row)
         if matmul_sig is not None:
@@ -184,9 +330,11 @@ def get_sig(
             )
             vals = (input_shapes, input_dtypes, input_formats, output_shapes, output_dtypes)
             if as_str:
-                inp = row.get("Input Shapes", "") or "N/A"
-                out = row.get("Output Shapes", "") or "N/A"
-                return f"{inp} -> {out}"
+                # Serialize the full canonical identity (shapes, dtypes and
+                # formats) so that rows sharing shapes but differing in dtype,
+                # e.g. FLOAT vs BF16 MatMul variants, do not collapse into one
+                # row during parallel-shard merge dedup.
+                return _serialize_sig(vals)
             return vals
 
     raw_input_shapes, raw_input_dtypes, raw_input_formats = canonicalize_profile_signature(
@@ -198,14 +346,44 @@ def get_sig(
         row.get("Output Shapes", ""),
         row.get("Output Data Types", ""),
     )
+    output_dtypes = ";".join(_canonical_dtype_name(dtype) for dtype in output_dtypes.split(";"))
     vals = (input_shapes, input_dtypes, input_formats, output_shapes, output_dtypes)
-
-    if as_str:
-        inp = row.get("Input Shapes", "") or "N/A"
-        out = row.get("Output Shapes", "") or "N/A"
-        return f"{inp} -> {out}"
 
     if resolved_op_name == normalize_op_name(DISPATCH_FFN_OP):
         vals = vals + ((row.get("EP Size", "") or "").strip(),)
 
+    if resolved_op_name == FIA_OP:
+        runtime_context = get_runtime_signature_context(row, resolved_op_name)
+        vals = vals + tuple(runtime_context.get(column, "") for column in FIA_RUNTIME_SIGNATURE_COLUMNS)
+
+    if resolved_op_name in RUNTIME_AWARE_OPS:
+        case_id = (row.get(RUNTIME_CASE_ID, "") or "").strip()
+        if case_id:
+            vals = vals + (case_id,)
+
+    if as_str:
+        # Serialize the full canonical identity (shapes, dtypes and formats)
+        # plus any runtime context (EP / FIA columns / case_id) so that rows
+        # with identical Input Shapes but different dtype or runtime semantics
+        # do not collide when deduping via the string signature (used by
+        # merge_shard_results.py). Without the dtype/formats components, FLOAT
+        # and BF16 variants of the same shape (e.g. MatMul) silently collapse
+        # into one row during parallel-shard merge, dropping measured data.
+        return _serialize_sig(vals)
     return vals
+
+
+def _serialize_sig(vals: tuple[str, ...]) -> str:
+    """Serialize a signature tuple into a lossless, canonical string key."""
+    return "|".join(str(value) for value in vals)
+
+
+
+
+def get_case_shard_key(row: dict[str, str], op_name: str) -> str:
+    """Return the exact stable key used to assign one CSV row to a worker."""
+    case_id = (row.get(RUNTIME_CASE_ID, "") or "").strip()
+    if case_id:
+        return case_id
+    normalized_op = normalize_op_name(op_name)
+    return f"{normalized_op}:{get_sig(row, as_str=True, op_name=normalized_op)}"

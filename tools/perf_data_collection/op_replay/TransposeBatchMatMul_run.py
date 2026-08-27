@@ -40,9 +40,9 @@ def _validate_input_metadata(
     rhs_batch, rhs_k, rhs_n = input_shapes[1]
     if lhs_batch != rhs_batch or lhs_k != rhs_k:
         raise ValueError(f"TransposeBatchMatMul input shapes are not bmm-compatible: {input_shapes}")
-    if lhs_k % 128 != 0 or rhs_n % 128 != 0:
+    if lhs_k % 64 != 0 or rhs_n % 64 != 0:
         raise ValueError(
-            "TransposeBatchMatMul requires K and N to be divisible by 128, "
+            "TransposeBatchMatMul requires K and N to be divisible by 64, "
             f"got K={lhs_k}, N={rhs_n}"
         )
 

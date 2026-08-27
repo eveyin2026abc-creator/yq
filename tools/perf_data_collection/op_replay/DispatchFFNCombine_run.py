@@ -394,7 +394,7 @@ def infer_max_output_size(
         return max_output_size
     if MAX_OUTPUT_SIZE is not None:
         return MAX_OUTPUT_SIZE
-    # GLM5 service code in vLLM-Ascend passes a fixed 65536 here. Keep the
+    # The supported vLLM-Ascend serving path passes a fixed 65536 here. Keep the
     # replay default aligned with the production path; smaller values such as
     # m * topk are useful only for the upstream unit-test shape.
     return DEFAULT_DFC_MAX_OUTPUT_SIZE

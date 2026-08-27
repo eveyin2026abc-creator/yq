@@ -1,38 +1,123 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol
 
 try:
     from .common import (
         build_input_tensor,
         build_standard_argparser,
+        case_belongs_to_shard,
         ensure_npu_available,
         get_replay_repeat_count,
         get_runtime_modules,
         get_target_data_dir,
         init_runtime,
+        MICROBENCH_DURATION,
         normalize_dtype_name,
         parse_list_field,
         parse_shape,
         print_invalid_replay_summary,
         process_replay_csvs,
+        record_runtime_replay_case,
     )
 except ImportError:
     from common import (
         build_input_tensor,
         build_standard_argparser,
+        case_belongs_to_shard,
         ensure_npu_available,
         get_replay_repeat_count,
         get_runtime_modules,
         get_target_data_dir,
         init_runtime,
+        MICROBENCH_DURATION,
         normalize_dtype_name,
         parse_list_field,
         parse_shape,
         print_invalid_replay_summary,
         process_replay_csvs,
+        record_runtime_replay_case,
     )
+
+# signature_utils is a top-level module under tools/perf_data_collection/.
+try:
+    from signature_utils import get_case_shard_key
+except ImportError:
+    from ..signature_utils import get_case_shard_key
+
+
+RUNTIME_SIGNATURE_CONTEXT_COLUMNS = (
+    "Input Shapes",
+    "Input Data Types",
+    "Input Formats",
+    "Output Shapes",
+    "Output Data Types",
+    "Output Formats",
+    "Runtime case_id",
+    "Runtime avg_seq_len",
+    "Runtime actual_seq_lengths_values",
+    "Runtime actual_seq_lengths_kv_values",
+    "Runtime block_table_valid_blocks",
+    "Runtime num_heads",
+    "Runtime sparse_mode",
+    "Runtime source_profile",
+)
+
+
+@dataclass(frozen=True)
+class ShardSpec:
+    """Validated stable-sharding selection shared by replay adapters."""
+
+    count: int = 1
+    index: int = 0
+
+    def __post_init__(self) -> None:
+        if self.count <= 0 or not 0 <= self.index < self.count:
+            raise ValueError("case shard index must be in [0, case shard count)")
+
+    def accepts(self, key: str) -> bool:
+        return self.count == 1 or case_belongs_to_shard(key, self.count, self.index)
+
+
+@dataclass(frozen=True)
+class RuntimeReplayCase:
+    """Typed identity of one CSV row captured by the profiler."""
+
+    kernel_type: str
+    csv_path: Path
+    row_index: int
+    row: dict[str, str]
+    exact_runtime_match: bool = False
+
+    @property
+    def case_id(self) -> str:
+        case_id = (self.row.get("Runtime case_id", "") or "").strip()
+        if not case_id and self.exact_runtime_match:
+            return f"{self.kernel_type}:{self.csv_path}:{self.row_index}"
+        return case_id
+
+    @property
+    def signature_context(self) -> dict[str, str]:
+        return {
+            column: self.row.get(column, "")
+            for column in RUNTIME_SIGNATURE_CONTEXT_COLUMNS
+            if column in self.row
+        }
+
+
+class ReplayAdapter(Protocol):
+    """Minimal callable contract implemented by replay adapters."""
+
+    kernel_type: str
+
+    def build_case(self, row: dict[str, str]) -> dict[str, Any]: ...
+
+    def run_case(self, case: dict[str, Any]) -> Any: ...
+
+    def synchronize(self) -> None: ...
 
 
 class OpReplay:
@@ -50,7 +135,10 @@ class OpReplay:
         prepare: Callable[[], None] | None = None,
         build_case: Callable[[dict[str, str]], dict[str, Any]] | None = None,
         run_case: Callable[[dict[str, Any]], Any] | None = None,
-        format_success: Callable[[str, int, dict[str, str], dict[str, Any], Any], str] | None = None,
+        format_success: Callable[[str, int, dict[str, str], dict[str, Any], Any], str]
+        | None = None,
+        exact_runtime_match: bool = False,
+        runtime_warmup_count: int = 0,
     ):
         self.kernel_type = kernel_type
         self.api_path = api_path
@@ -64,6 +152,10 @@ class OpReplay:
         self._build_case_override = build_case
         self._run_case_override = run_case
         self._format_success_override = format_success
+        self.exact_runtime_match = exact_runtime_match
+        if runtime_warmup_count < 0:
+            raise ValueError("runtime_warmup_count must be non-negative")
+        self.runtime_warmup_count = runtime_warmup_count
 
     def build_argparser(self):
         return build_standard_argparser(
@@ -95,7 +187,9 @@ class OpReplay:
 
     def build_inputs(self, row: dict[str, str]) -> list[Any]:
         init_runtime()
-        input_shapes = [parse_shape(item) for item in parse_list_field(row["Input Shapes"])]
+        input_shapes = [
+            parse_shape(item) for item in parse_list_field(row["Input Shapes"])
+        ]
         input_formats = parse_list_field(row["Input Formats"])
         input_dtypes = [
             normalize_dtype_name(item)
@@ -136,7 +230,9 @@ class OpReplay:
         if self._run_case_override is not None:
             return self._run_case_override(case)
         if case["api"] is None:
-            raise ValueError(f"{self.kernel_type} replay requires api or custom run_case")
+            raise ValueError(
+                f"{self.kernel_type} replay requires api or custom run_case"
+            )
         return case["api"](*case["inputs"], **case["kwargs"])
 
     def synchronize(self) -> None:
@@ -165,10 +261,127 @@ class OpReplay:
             f"dtypes={row['Input Data Types']} output={output_shape}"
         )
 
-    def run_row(self, csv_path, row_index: int, row: dict[str, str]) -> None:
+    def _runtime_case_id(self, csv_path, row_index: int, row: dict[str, str]) -> str:
+        return RuntimeReplayCase(
+            kernel_type=self.kernel_type,
+            csv_path=Path(csv_path),
+            row_index=row_index,
+            row=row,
+            exact_runtime_match=self.exact_runtime_match,
+        ).case_id
+
+    def _shard_key(self, csv_path, row_index: int, row: dict[str, str]) -> str:
+        """Stable key for distributing rows across replay shards (cards).
+
+        Runtime-aware ops (SparseFlashAttention, LightningIndexer,
+        mla_preprocess_0_mix_aic) carry a ``Runtime case_id`` and shard on it.
+        For all other ops the case_id is empty, so fall back to the row
+        signature (``get_sig``) so that every operator can be sharded across
+        cards via ``--case-shard-count``/``--case-shard-index``. The signature
+        is stable across shard runs, so each (op, shape) row lands on the same
+        card regardless of which shard directory it is read from.
+        """
+        return get_case_shard_key(row, self.kernel_type)
+
+    def _record_runtime_case(
+        self,
+        csv_path,
+        row_index: int,
+        row: dict[str, str],
+        *,
+        warmup_count: int,
+        repeat_count: int,
+    ) -> None:
+        replay_case = RuntimeReplayCase(
+            kernel_type=self.kernel_type,
+            csv_path=Path(csv_path),
+            row_index=row_index,
+            row=row,
+            exact_runtime_match=self.exact_runtime_match,
+        )
+        if replay_case.case_id:
+            record_runtime_replay_case(
+                kernel_type=self.kernel_type,
+                case_id=replay_case.case_id,
+                csv_path=csv_path,
+                row_index=row_index,
+                warmup_count=warmup_count,
+                repeat_count=repeat_count,
+                signature_context=replay_case.signature_context,
+            )
+
+    def run_row(
+        self,
+        csv_path,
+        row_index: int,
+        row: dict[str, str],
+        *,
+        repeat_count: int = 1,
+    ) -> None:
+        """Run one kernel row with direct NPU event timing.
+
+        Unlike run_runtime_row (which relies on an external profiler to
+        capture per-case timing), this path measures the kernel directly
+        with torch.npu.Event and writes the averaged duration back into
+        row["Average Duration(us)"] so that process_replay_csvs can
+        persist it to the shard CSV.
+        """
         case = self.build_case(row)
-        result = self.run_case(case)
-        self.synchronize()
+
+        # Warm up (2 iterations or repeat_count, whichever is smaller)
+        warmup = min(2, repeat_count)
+        for _ in range(warmup):
+            self.run_case(case)
+            self.synchronize()
+
+        # Timed measurement
+        runtime_torch, _ = get_runtime_modules()
+        start = runtime_torch.npu.Event(enable_timing=True)
+        end = runtime_torch.npu.Event(enable_timing=True)
+        durations: list[float] = []
+        for _ in range(repeat_count):
+            start.record()
+            result = self.run_case(case)
+            end.record()
+            self.synchronize()
+            durations.append(start.elapsed_time(end) * 1000.0)  # ms -> us
+
+        avg_duration = sum(durations) / len(durations)
+        row["Average Duration(us)"] = f"{avg_duration:.6f}"
+
+        self._record_runtime_case(
+            csv_path,
+            row_index,
+            row,
+            warmup_count=warmup,
+            repeat_count=repeat_count,
+        )
+        print(self.format_success(csv_path, row_index, row, case, result))
+
+    def run_runtime_row(
+        self,
+        csv_path,
+        row_index: int,
+        row: dict[str, str],
+        *,
+        repeat_count: int,
+    ) -> None:
+        """Warm up and measure one runtime-aware row as an atomic case."""
+        case = self.build_case(row)
+        for _ in range(self.runtime_warmup_count):
+            self.run_case(case)
+            self.synchronize()
+        result = None
+        for _ in range(repeat_count):
+            result = self.run_case(case)
+            self.synchronize()
+        self._record_runtime_case(
+            csv_path,
+            row_index,
+            row,
+            warmup_count=self.runtime_warmup_count,
+            repeat_count=repeat_count,
+        )
         print(self.format_success(csv_path, row_index, row, case, result))
 
     def prepare(self) -> None:
@@ -178,6 +391,10 @@ class OpReplay:
     def main(self) -> None:
         args = self.build_argparser().parse_args()
         repeat_count = get_replay_repeat_count(args.repeat_count)
+        shard = ShardSpec(
+            count=getattr(args, "case_shard_count", 1),
+            index=getattr(args, "case_shard_index", 0),
+        )
         ensure_npu_available()
         self.prepare()
 
@@ -193,12 +410,36 @@ class OpReplay:
         if not csv_paths:
             raise FileNotFoundError(f"No {csv_name} found under {target_data_dir}")
 
+        def should_skip_row(csv_path, row_index: int, row: dict[str, str]) -> bool:
+            shard_key = self._shard_key(csv_path, row_index, row)
+            return not shard.accepts(shard_key)
+
+        if self.runtime_warmup_count:
+
+            def run_row_fn(csv_path, row_index, row):
+                self.run_runtime_row(
+                    csv_path,
+                    row_index,
+                    row,
+                    repeat_count=repeat_count,
+                )
+
+            process_repeat_count = 1
+        else:
+
+            def run_row_fn(csv_path, row_index, row):
+                self.run_row(csv_path, row_index, row, repeat_count=repeat_count)
+
+            process_repeat_count = 1
+
         total_rows, invalid_rows, _, skipped_rows = process_replay_csvs(
             kernel_type=self.kernel_type,
             csv_paths=csv_paths,
-            repeat_count=repeat_count,
-            run_row_fn=self.run_row,
+            repeat_count=process_repeat_count,
+            run_row_fn=run_row_fn,
             update_mode=args.update_mode,
+            should_skip_row=should_skip_row,
+            copy_back_fields=(MICROBENCH_DURATION,),
         )
 
         print(
@@ -206,5 +447,7 @@ class OpReplay:
             f"under {target_data_dir}."
         )
         if args.update_mode == "missing-only":
-            print(f"[SUMMARY] {self.kernel_type}: skipped {skipped_rows} row(s) due to missing-only mode.")
+            print(
+                f"[SUMMARY] {self.kernel_type}: skipped {skipped_rows} row(s) due to missing-only mode."
+            )
         print_invalid_replay_summary(invalid_rows, label=self.kernel_type)

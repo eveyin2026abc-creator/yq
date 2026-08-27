@@ -6,6 +6,7 @@ End-to-end tests require NPU and are marked with @pytest.mark.npu.
 
 import csv
 import importlib
+import json
 from types import SimpleNamespace
 import sys
 from pathlib import Path
@@ -18,7 +19,9 @@ if str(PERF_DATA_COLLECTION_DIR) not in sys.path:
     sys.path.insert(0, str(PERF_DATA_COLLECTION_DIR))
 
 start_microbench = importlib.import_module("start_microbench")
+parallel_runner = importlib.import_module("parallel_runner")
 aggregate_summary = start_microbench.aggregate_summary
+build_argparser = start_microbench.build_argparser
 build_msprof_cmd = start_microbench.build_msprof_cmd
 GapRecord = start_microbench.GapRecord
 get_cols = start_microbench.get_cols
@@ -30,6 +33,8 @@ should_skip_dispatch_ffn_msprof = start_microbench.should_skip_dispatch_ffn_mspr
 update_csv = start_microbench.update_csv
 update_db = start_microbench.update_db
 UpdateResult = start_microbench.UpdateResult
+validate_case_shard_options = start_microbench.validate_case_shard_options
+validate_num_devices_options = start_microbench.validate_num_devices_options
 
 
 # =============================================================================
@@ -67,6 +72,537 @@ class TestMdTable:
         lines = result.split("\n")
         # All lines should have same length for each column
         assert len(lines) == 4  # header, separator, 2 data rows
+
+
+class TestCaseShardOptions:
+    def test_rejects_pruning_during_multi_shard_collection(self):
+        with pytest.raises(ValueError, match="cannot be combined with multi-shard replay"):
+            validate_case_shard_options(4, 0, prune_empty_duration_rows=True)
+
+    def test_accepts_multi_shard_collection_without_pruning(self):
+        validate_case_shard_options(4, 3, prune_empty_duration_rows=False)
+
+    def test_rejects_out_of_range_shard_index(self):
+        with pytest.raises(ValueError, match="case shard index"):
+            validate_case_shard_options(4, 4, prune_empty_duration_rows=False)
+
+
+class TestPublicParallelOptions:
+    def test_public_help_exposes_num_devices_and_hides_worker_shards(self):
+        parser = build_argparser()
+
+        assert parser.parse_args([]).num_devices == 1
+        help_text = parser.format_help()
+        assert "--num-devices" in help_text
+        assert "--case-shard-count" not in help_text
+        assert "--case-shard-index" not in help_text
+
+    def test_rejects_non_positive_num_devices(self):
+        with pytest.raises(ValueError, match="--num-devices must be a positive integer"):
+            validate_num_devices_options(
+                0,
+                case_shard_count=1,
+                case_shard_index=0,
+                prune_empty_duration_rows=False,
+            )
+
+    def test_public_parallelism_cannot_mix_with_internal_shard_options(self):
+        with pytest.raises(ValueError, match="internal worker options"):
+            validate_num_devices_options(
+                2,
+                case_shard_count=2,
+                case_shard_index=0,
+                prune_empty_duration_rows=False,
+            )
+
+    def test_public_parallelism_cannot_prune_other_workers_rows(self):
+        with pytest.raises(ValueError, match="cannot be combined with --num-devices"):
+            validate_num_devices_options(
+                2,
+                case_shard_count=1,
+                case_shard_index=0,
+                prune_empty_duration_rows=True,
+            )
+
+    def test_device_count_selects_first_visible_device_ids(self):
+        assert parallel_runner.resolve_worker_device_ids(2, 2) == (0, 1)
+
+    def test_device_count_rejects_non_positive_value(self):
+        with pytest.raises(ValueError, match="--num-devices must be a positive integer"):
+            parallel_runner.resolve_worker_device_ids(0, 2)
+
+    def test_device_count_rejects_more_than_available(self):
+        with pytest.raises(ValueError, match="only 2 Ascend NPU"):
+            parallel_runner.resolve_worker_device_ids(3, 2)
+
+    def test_dispatch_ffn_combine_rejects_case_parallelism(self):
+        with pytest.raises(ValueError, match="cannot use --num-devices"):
+            start_microbench.resolve_parallel_ops(["DispatchFFNCombine"])
+
+    def test_parallel_ops_are_deduplicated_before_worker_assignment(self):
+        assert start_microbench.resolve_parallel_ops(["Add", "Add"]) == ["Add"]
+
+    def test_worker_command_contains_every_internal_shard(self, tmp_path: Path):
+        command = parallel_runner.build_parallel_worker_command(
+            start_script=Path("start_microbench.py"),
+            database_path=tmp_path,
+            shard_count=2,
+            shard_index=1,
+            selected_ops=["Add", "SparseFlashAttention"],
+            repeat_count=3,
+            update_mode="missing-only",
+            fail_fast=True,
+        )
+
+        assert command[command.index("--case-shard-count") + 1] == "2"
+        assert command[command.index("--case-shard-index") + 1] == "1"
+        assert command[command.index("--ops") + 1 :] == [
+            "Add",
+            "SparseFlashAttention",
+            "--fail-fast",
+        ]
+
+    def test_manual_adapters_run_once_while_shardable_ops_use_every_worker(self):
+        assignments = parallel_runner.partition_worker_ops(
+            ["Add", "FusedInferAttentionScore", "QuantBatchMatmulV3"],
+            2,
+        )
+
+        assert assignments == [
+            ["Add", "FusedInferAttentionScore"],
+            ["Add", "QuantBatchMatmulV3"],
+        ]
+
+    def test_partition_rejects_non_positive_worker_count(self):
+        with pytest.raises(ValueError, match="worker_count must be positive"):
+            parallel_runner.partition_worker_ops(["Add"], 0)
+
+    def test_parallel_runner_validates_database_and_devices(self, tmp_path: Path):
+        with pytest.raises(FileNotFoundError, match="database directory does not exist"):
+            parallel_runner.run_parallel_microbench(
+                start_script=Path("start_microbench.py"),
+                database_path=tmp_path / "missing",
+                device_ids=(0,),
+                selected_ops=["Add"],
+                repeat_count=1,
+                update_mode="all",
+                fail_fast=False,
+            )
+
+        database_path = tmp_path / "database"
+        database_path.mkdir()
+        with pytest.raises(ValueError, match="requires at least one device"):
+            parallel_runner.run_parallel_microbench(
+                start_script=Path("start_microbench.py"),
+                database_path=database_path,
+                device_ids=(),
+                selected_ops=["Add"],
+                repeat_count=1,
+                update_mode="all",
+                fail_fast=False,
+            )
+
+    def test_parallel_runner_reports_worker_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        database_path = tmp_path / "database"
+        database_path.mkdir()
+        (database_path / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+        work_root = tmp_path / "worker_data"
+
+        class FailedProcess:
+            @staticmethod
+            def wait(*_args, **_kwargs) -> int:
+                return 7
+
+            @staticmethod
+            def poll() -> int:
+                return 7
+
+        monkeypatch.setattr(parallel_runner.subprocess, "Popen", lambda *_args, **_kwargs: FailedProcess())
+
+        def fake_mkdtemp(*, prefix: str) -> str:
+            assert prefix == "msmodeling_microbench_shards_"
+            work_root.mkdir()
+            return str(work_root)
+
+        monkeypatch.setattr(parallel_runner.tempfile, "mkdtemp", fake_mkdtemp)
+
+        with pytest.raises(RuntimeError, match="shard 0 exited with 7"):
+            parallel_runner.run_parallel_microbench(
+                start_script=Path("start_microbench.py"),
+                database_path=database_path,
+                device_ids=(0,),
+                selected_ops=["Add"],
+                repeat_count=1,
+                update_mode="all",
+                fail_fast=False,
+            )
+
+        assert work_root.is_dir()
+
+    def test_parallel_runner_launches_and_merges_every_worker(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        database_path = tmp_path / "database"
+        database_path.mkdir()
+        (database_path / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+        work_root = tmp_path / "worker_data"
+        calls: list[tuple[list[str], dict[str, str]]] = []
+
+        class FakeProcess:
+            def wait(self) -> int:
+                return 0
+
+        def fake_popen(command, *, env, **_kwargs):
+            calls.append((command, env))
+            return FakeProcess()
+
+        def fake_merge(shards: list[Path], out_dir: Path, **_kwargs) -> int:
+            out_dir.mkdir()
+            (out_dir / "Add.csv").write_text(
+                (shards[0] / "Add.csv").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            return 1
+
+        def fake_mkdtemp(*, prefix: str) -> str:
+            assert prefix == "msmodeling_microbench_shards_"
+            work_root.mkdir()
+            return str(work_root)
+
+        monkeypatch.setattr(parallel_runner.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(parallel_runner, "merge_shard_directories", fake_merge)
+        monkeypatch.setattr(parallel_runner.tempfile, "mkdtemp", fake_mkdtemp)
+
+        result = parallel_runner.run_parallel_microbench(
+            start_script=Path("start_microbench.py"),
+            database_path=database_path,
+            device_ids=(0, 1),
+            selected_ops=["Add"],
+            repeat_count=1,
+            update_mode="missing-only",
+            fail_fast=False,
+        )
+
+        assert len(calls) == 2
+        assert [call[1]["MB_DEVICE_ID"] for call in calls] == ["0", "1"]
+        assert [call[0][call[0].index("--case-shard-index") + 1] for call in calls] == [
+            "0",
+            "1",
+        ]
+        assert result.device_ids == (0, 1)
+        assert (result.merged_snapshot / "Add.csv").is_file()
+
+    def test_public_num_devices_dispatches_one_complete_parallel_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        database_path = tmp_path / "database"
+        database_path.mkdir()
+        captured: dict[str, object] = {}
+
+        def fake_parallel_run(**kwargs):
+            captured.update(kwargs)
+            return parallel_runner.ParallelRunResult(
+                work_root=tmp_path / "work",
+                merged_snapshot=tmp_path / "snapshot",
+                device_ids=(0, 1),
+            )
+
+        monkeypatch.setattr(start_microbench, "print_logo", lambda: None)
+        monkeypatch.setattr(start_microbench, "get_visible_npu_count", lambda: 2)
+        monkeypatch.setattr(start_microbench, "run_parallel_microbench", fake_parallel_run)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "start_microbench.py",
+                "--database-path",
+                str(database_path),
+                "--num-devices",
+                "2",
+                "--ops",
+                "Add",
+            ],
+        )
+
+        start_microbench.main()
+
+        assert captured["database_path"] == database_path
+        assert captured["device_ids"] == (0, 1)
+        assert captured["selected_ops"] == ["Add"]
+        # Device and version params must be forwarded to parallel workers (#38).
+        assert captured["device"] == start_microbench.DEFAULT_DEVICE
+        assert captured["keep_artifacts"] is False
+
+    def test_complete_missing_only_database_skips_parallel_workers(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        database_path = tmp_path / "database"
+        database_path.mkdir()
+        (database_path / "Add.csv").write_text(
+            "Average Duration(us)\n1.0\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(start_microbench, "print_logo", lambda: None)
+        monkeypatch.setattr(
+            start_microbench,
+            "run_parallel_microbench",
+            lambda **_kwargs: pytest.fail("parallel workers must not start"),
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "start_microbench.py",
+                "--database-path",
+                str(database_path),
+                "--num-devices",
+                "2",
+                "--update-mode",
+                "missing-only",
+                "--ops",
+                "Add",
+            ],
+        )
+
+        start_microbench.main()
+
+    def test_parallel_merge_uses_the_worker_that_owned_the_case(self, tmp_path: Path):
+        from tools.perf_data_collection.op_replay.common import case_belongs_to_shard
+        from tools.perf_data_collection.signature_utils import get_case_shard_key
+
+        row = {
+            "OP State": "static",
+            "Input Shapes": "8;8",
+            "Input Data Types": "FLOAT;FLOAT",
+            "Input Formats": "ND;ND",
+            "Output Shapes": "8",
+            "Output Data Types": "FLOAT",
+            "Average Duration(us)": "",
+        }
+        shard_dirs = [tmp_path / "shard_0", tmp_path / "shard_1"]
+        key = get_case_shard_key(row, "Add")
+        owner = next(index for index in range(2) if case_belongs_to_shard(key, 2, index))
+        fieldnames = list(row)
+        for index, shard_dir in enumerate(shard_dirs):
+            shard_dir.mkdir()
+            shard_row = dict(row)
+            shard_row["Average Duration(us)"] = "9.0" if index == owner else "1.0"
+            with (shard_dir / "Add.csv").open("w", encoding="utf-8", newline="") as output_file:
+                writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(shard_row)
+
+        output_dir = tmp_path / "merged"
+        parallel_runner.merge_shard_directories(
+            shard_dirs,
+            output_dir,
+            case_shard_count=2,
+        )
+
+        with (output_dir / "Add.csv").open("r", encoding="utf-8-sig", newline="") as input_file:
+            merged_rows = list(csv.DictReader(input_file))
+        assert len(merged_rows) == 1
+        assert merged_rows[0]["Average Duration(us)"] == "9.0"
+
+    def test_parallel_merge_only_writes_selected_operator_csvs(self, tmp_path: Path):
+        shard_dirs = [tmp_path / "shard_0", tmp_path / "shard_1"]
+        for shard_dir in shard_dirs:
+            shard_dir.mkdir()
+            (shard_dir / "Add.csv").write_text(
+                "OP State,Input Shapes,Output Shapes\nstatic,8;8,8\n",
+                encoding="utf-8",
+            )
+            (shard_dir / "Mul.csv").write_text(
+                "OP State,Input Shapes,Output Shapes\nstatic,8;8,8\n",
+                encoding="utf-8",
+            )
+
+        output_dir = tmp_path / "merged"
+        parallel_runner.merge_shard_directories(
+            shard_dirs,
+            output_dir,
+            operators=["Add"],
+        )
+
+        assert (output_dir / "Add.csv").is_file()
+        assert not (output_dir / "Mul.csv").exists()
+
+
+def test_worker_command_forwards_device_and_version_params(tmp_path: Path):
+    command = parallel_runner.build_parallel_worker_command(
+        start_script=Path("start_microbench.py"),
+        database_path=tmp_path,
+        shard_count=2,
+        shard_index=1,
+        selected_ops=["Add"],
+        repeat_count=3,
+        update_mode="missing-only",
+        fail_fast=False,
+        device="ATLAS_800_A2_280T_64G",
+        vllm_ascend_version="0.18.0",
+        torch_version="2.9.0",
+        cann_version="8.5",
+    )
+    assert command[command.index("--device") + 1] == "ATLAS_800_A2_280T_64G"
+    assert command[command.index("--vllm-version") + 1] == "0.18.0"
+    assert command[command.index("--torch-version") + 1] == "2.9.0"
+    assert command[command.index("--cann-version") + 1] == "8.5"
+
+
+def test_parallel_runner_cleans_up_work_root_on_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database_path = tmp_path / "database"
+    database_path.mkdir()
+    (database_path / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+    work_root = tmp_path / "worker_data"
+
+    class FakeProcess:
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(command, *, env, **_kwargs):
+        return FakeProcess()
+
+    def fake_merge(shards, out_dir, **_kwargs):
+        out_dir.mkdir()
+        (out_dir / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+        return 1
+
+    def fake_mkdtemp(*, prefix):
+        work_root.mkdir()
+        return str(work_root)
+
+    monkeypatch.setattr(parallel_runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(parallel_runner, "merge_shard_directories", fake_merge)
+    monkeypatch.setattr(parallel_runner.tempfile, "mkdtemp", fake_mkdtemp)
+
+    result = parallel_runner.run_parallel_microbench(
+        start_script=Path("start_microbench.py"),
+        database_path=database_path,
+        device_ids=(0,),
+        selected_ops=["Add"],
+        repeat_count=1,
+        update_mode="all",
+        fail_fast=False,
+        keep_artifacts=False,
+    )
+    # work_root should be cleaned up; work_root now points at the snapshot
+    assert not work_root.is_dir()
+    assert (result.merged_snapshot / "Add.csv").is_file()
+
+
+def test_parallel_runner_keeps_work_root_with_keep_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database_path = tmp_path / "database"
+    database_path.mkdir()
+    (database_path / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+    work_root = tmp_path / "worker_data"
+
+    class FakeProcess:
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(command, *, env, **_kwargs):
+        return FakeProcess()
+
+    def fake_merge(shards, out_dir, **_kwargs):
+        out_dir.mkdir()
+        (out_dir / "Add.csv").write_text("OP State\nstatic\n", encoding="utf-8")
+        return 1
+
+    def fake_mkdtemp(*, prefix):
+        work_root.mkdir()
+        return str(work_root)
+
+    monkeypatch.setattr(parallel_runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(parallel_runner, "merge_shard_directories", fake_merge)
+    monkeypatch.setattr(parallel_runner.tempfile, "mkdtemp", fake_mkdtemp)
+
+    result = parallel_runner.run_parallel_microbench(
+        start_script=Path("start_microbench.py"),
+        database_path=database_path,
+        device_ids=(0,),
+        selected_ops=["Add"],
+        repeat_count=1,
+        update_mode="all",
+        fail_fast=False,
+        keep_artifacts=True,
+    )
+    assert work_root.is_dir()
+    assert (result.merged_snapshot / "Add.csv").is_file()
+
+
+def test_merge_preserves_non_csv_subdirectory_artifacts(tmp_path: Path):
+    shard_dirs = [tmp_path / "shard_0"]
+    shard_dirs[0].mkdir()
+    (shard_dirs[0] / "Add.csv").write_text("OP State,Input Shapes\nstatic,8\n", encoding="utf-8")
+    report_subdir = shard_dirs[0] / "reports"
+    report_subdir.mkdir()
+    (report_subdir / "summary.txt").write_text("ok", encoding="utf-8")
+
+    output_dir = tmp_path / "merged"
+    parallel_runner.merge_shard_directories(shard_dirs, output_dir)
+
+    assert (output_dir / "reports" / "summary.txt").is_file()
+
+
+def test_runtime_case_groups_filters_extra_rows_by_task_type(tmp_path: Path):
+    """Extra profiler rows with a different Task Type are filtered, not truncated."""
+    from tools.perf_data_collection.start_microbench import _runtime_case_groups
+
+    cases = [{"case_id": "c0", "warmup_count": 0, "repeat_count": 1, "expected_task_type": "AICore"}]
+    # 3 rows: 1 AICore + 2 AIV (extra). Only the AICore row should remain.
+    rows = [
+        {"Task Type": "AIV", "Task Start Time(us)": "100", "aicore_time(us)": "1.0"},
+        {"Task Type": "AICore", "Task Start Time(us)": "200", "aicore_time(us)": "2.0"},
+        {"Task Type": "AIV", "Task Start Time(us)": "300", "aicore_time(us)": "3.0"},
+    ]
+    groups = _runtime_case_groups(rows, cases)
+    assert len(groups) == 1
+    assert len(groups[0][1]) == 1
+    assert groups[0][1][0]["Task Type"] == "AICore"
+
+
+def test_runtime_case_groups_raises_when_filtered_rows_too_few(tmp_path: Path):
+    from tools.perf_data_collection.start_microbench import _runtime_case_groups
+
+    cases = [
+        {"case_id": "c0", "warmup_count": 0, "repeat_count": 2, "expected_task_type": "AICore"},
+    ]
+    # 3 rows total (> 2 expected) triggers task-type filtering; only 1 AICore
+    # remains after filtering, which is < 2 expected -> should raise.
+    rows = [
+        {"Task Type": "AIV", "Task Start Time(us)": "100", "aicore_time(us)": "1.0"},
+        {"Task Type": "AICore", "Task Start Time(us)": "200", "aicore_time(us)": "2.0"},
+        {"Task Type": "AIV", "Task Start Time(us)": "300", "aicore_time(us)": "3.0"},
+    ]
+    with pytest.raises(RuntimeError, match="after task-type filtering"):
+        _runtime_case_groups(rows, cases)
+
+
+@pytest.mark.parametrize("duration", ["0", "-1", "inf", "-inf", "nan"])
+def test_profile_aggregation_rejects_non_positive_or_non_finite_duration(duration):
+    with pytest.raises(ValueError, match="non-positive or non-finite"):
+        start_microbench._aggregate_profile_rows(
+            "MatMulV2",
+            [{"Task Duration(us)": duration, "Task Type": "AICore"}],
+            ep_size=None,
+        )
 
 
 class TestDispatchFfnSkip:
@@ -260,6 +796,326 @@ class TestGetSig:
         assert get_sig(transpose_row, op_name="Transpose") == get_sig(transpose_profiler_row, op_name="Transpose")
 
 
+class TestRuntimeAwareAggregation:
+    def test_runtime_cases_separate_same_shape_rows(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        fieldnames = [
+            "OP Type",
+            "Task Start Time(us)",
+            "Task Duration(us)",
+            "Task Type",
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Output Formats",
+        ]
+        rows = []
+        for start, duration in ((1, 11), (2, 10), (3, 21), (4, 20)):
+            rows.append(
+                {
+                    "OP Type": "SparseFlashAttention",
+                    "Task Start Time(us)": str(start),
+                    "Task Duration(us)": str(duration),
+                    "Task Type": "MIX_AIC",
+                    "Input Shapes": "3,16,512",
+                    "Input Data Types": "DT_BF16",
+                    "Input Formats": "ND",
+                    "Output Shapes": "3,16,512",
+                    "Output Data Types": "DT_BF16",
+                    "Output Formats": "ND",
+                }
+            )
+        with summary.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "SparseFlashAttention",
+                    "case_id": "sfa_context_4096",
+                    "warmup_count": 0,
+                    "repeat_count": 2,
+                },
+                {
+                    "kernel_type": "SparseFlashAttention",
+                    "case_id": "sfa_context_8192",
+                    "warmup_count": 0,
+                    "repeat_count": 2,
+                },
+            ]
+        }
+
+        aggregated = aggregate_summary([summary], None, status)
+
+        assert [row["Runtime case_id"] for row in aggregated["SparseFlashAttention"]] == [
+            "sfa_context_4096",
+            "sfa_context_8192",
+        ]
+        assert [row["Average Duration(us)"] for row in aggregated["SparseFlashAttention"]] == [
+            "10.000000",
+            "20.000000",
+        ]
+
+    def test_runtime_cases_reject_profiler_count_mismatch(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        summary.write_text(
+            "OP Type,Task Start Time(us),Task Duration(us)\nLightningIndexer,1,10\n",
+            encoding="utf-8",
+        )
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "LightningIndexer",
+                    "case_id": "li_case",
+                    "warmup_count": 0,
+                    "repeat_count": 2,
+                }
+            ]
+        }
+
+        with pytest.raises(RuntimeError, match="row count mismatch"):
+            aggregate_summary([summary], None, status)
+
+    def test_runtime_cases_reject_missing_timestamps(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        summary.write_text(
+            "OP Type,Task Duration(us)\nLightningIndexer,11\nLightningIndexer,21\n",
+            encoding="utf-8",
+        )
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "LightningIndexer",
+                    "case_id": "first",
+                    "repeat_count": 1,
+                },
+                {
+                    "kernel_type": "LightningIndexer",
+                    "case_id": "second",
+                    "repeat_count": 1,
+                },
+            ]
+        }
+
+        with pytest.raises(RuntimeError, match="requires task start timestamps"):
+            aggregate_summary([summary], None, status)
+
+    def test_runtime_cases_reject_partial_timestamps(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        summary.write_text(
+            "OP Type,Task Start Time(us),Task Duration(us)\nSparseFlashAttention,1,11\nSparseFlashAttention,,21\n",
+            encoding="utf-8",
+        )
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "SparseFlashAttention",
+                    "case_id": "first",
+                    "repeat_count": 1,
+                },
+                {
+                    "kernel_type": "SparseFlashAttention",
+                    "case_id": "second",
+                    "repeat_count": 1,
+                },
+            ]
+        }
+
+        with pytest.raises(RuntimeError, match="requires task start timestamps"):
+            aggregate_summary([summary], None, status)
+
+    def test_runtime_profiler_rows_require_status_metadata(self, tmp_path: Path):
+        """Runtime-aware profiler rows must fail closed without status metadata."""
+        summary = tmp_path / "op_summary.csv"
+        summary.write_text(
+            "OP Type,Task Start Time(us),Task Duration(us)\nSparseFlashAttention,1,11\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(RuntimeError, match="missing replay case metadata"):
+            aggregate_summary([summary], None, status=None)
+
+        # A non-runtime-aware op still aggregates without replay status.
+        summary2 = tmp_path / "op_summary2.csv"
+        summary2.write_text(
+            "OP Type,Task Start Time(us),Task Duration(us)\nAdd,1,11\n",
+            encoding="utf-8",
+        )
+        result2 = aggregate_summary([summary2], None, status=None)
+        assert "Add" in result2
+
+    def test_fia_runtime_context_matches_same_shape_cases_exactly(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        profiler_fields = [
+            "OP Type",
+            "Task Start Time(us)",
+            "Task Duration(us)",
+            "Task Type",
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Output Formats",
+        ]
+        profiler_rows = [
+            {
+                "OP Type": "FusedInferAttentionScore",
+                "Task Start Time(us)": str(index),
+                "Task Duration(us)": str(duration),
+                "Task Type": "MIX_AIC",
+                "Input Shapes": "1,16,512;128,1,128,512",
+                "Input Data Types": "DT_BF16;DT_BF16",
+                "Input Formats": "ND;ND",
+                "Output Shapes": "1,16,512",
+                "Output Data Types": "DT_BF16",
+                "Output Formats": "ND",
+            }
+            for index, duration in ((1, 10), (2, 20))
+        ]
+        with summary.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=profiler_fields)
+            writer.writeheader()
+            writer.writerows(profiler_rows)
+
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "FusedInferAttentionScore",
+                    "case_id": "fia_4096",
+                    "warmup_count": 0,
+                    "repeat_count": 1,
+                    "signature_context": {"Runtime avg_seq_len": "4096"},
+                },
+                {
+                    "kernel_type": "FusedInferAttentionScore",
+                    "case_id": "fia_8192",
+                    "warmup_count": 0,
+                    "repeat_count": 1,
+                    "signature_context": {"Runtime avg_seq_len": "8192"},
+                },
+            ]
+        }
+        aggregated = aggregate_summary([summary], None, status)["FusedInferAttentionScore"]
+        assert [row["Runtime avg_seq_len"] for row in aggregated] == ["4096", "8192"]
+        assert get_sig(aggregated[0], op_name="FusedInferAttentionScore") != get_sig(
+            aggregated[1], op_name="FusedInferAttentionScore"
+        )
+
+        database_csv = tmp_path / "FusedInferAttentionScore.csv"
+        database_fields = [
+            "OP State",
+            "Accelerator Core",
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Output Formats",
+            "Average Duration(us)",
+            "Runtime avg_seq_len",
+        ]
+        database_rows = []
+        for avg_seq_len in ("4096", "8192"):
+            database_rows.append(
+                {
+                    **{key: profiler_rows[0].get(key, "") for key in database_fields},
+                    "OP State": "dynamic",
+                    "Accelerator Core": "MIX_AIC",
+                    "Average Duration(us)": "0",
+                    "Runtime avg_seq_len": avg_seq_len,
+                }
+            )
+        with database_csv.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=database_fields)
+            writer.writeheader()
+            writer.writerows(database_rows)
+
+        update_result = update_csv(database_csv, aggregated, "missing-only", False)
+        assert update_result.updated == 2
+        with database_csv.open("r", encoding="utf-8", newline="") as input_file:
+            written = list(csv.DictReader(input_file))
+        assert [row["Average Duration(us)"] for row in written] == [
+            "10.000000",
+            "20.000000",
+        ]
+
+    def test_add_rms_runtime_projection_writes_back_mixed_rank_signature(self, tmp_path: Path):
+        summary = tmp_path / "op_summary.csv"
+        profiler_fields = [
+            "OP Type",
+            "Task Duration(us)",
+            "Task Type",
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Output Formats",
+        ]
+        physical_row = {
+            "OP Type": "AddRmsNormBias",
+            "Task Type": "AI_VECTOR_CORE",
+            "Input Shapes": "1,5,6144;1,5,6144;6144",
+            "Input Data Types": "DT_BF16;DT_BF16;DT_BF16",
+            "Input Formats": "ND;ND;ND",
+            "Output Shapes": "1,5,6144;1,5,1;1,5,6144",
+            "Output Data Types": "DT_BF16;FLOAT;DT_BF16",
+            "Output Formats": "ND;ND;ND",
+        }
+        with summary.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=profiler_fields)
+            writer.writeheader()
+            writer.writerows([{**physical_row, "Task Duration(us)": duration} for duration in ("8", "6")])
+
+        query_signature = {
+            "Input Shapes": "1,5,6144;5,6144;6144;",
+            "Input Data Types": "DT_BF16;DT_BF16;DT_BF16;DT_UNDEFINED",
+            "Input Formats": "NCL;ND;ND;NULL",
+            "Output Shapes": "1,5,6144;1,5,1;1,5,6144",
+            "Output Data Types": "DT_BF16;FLOAT;DT_BF16",
+            "Output Formats": "NCL;ND;NCL",
+        }
+        status = {
+            "cases": [
+                {
+                    "kernel_type": "AddRmsNormBias",
+                    "case_id": "AddRmsNormBias:/db/AddRmsNormBias.csv:2",
+                    "repeat_count": 2,
+                    "signature_context": query_signature,
+                }
+            ]
+        }
+
+        aggregated = aggregate_summary([summary], None, status)["AddRmsNormBias"]
+        assert len(aggregated) == 1
+        assert aggregated[0]["Average Duration(us)"] == "6.000000"
+        assert aggregated[0]["Input Shapes"] == query_signature["Input Shapes"]
+
+        database_csv = tmp_path / "AddRmsNormBias.csv"
+        database_fields = [
+            "OP State",
+            "Accelerator Core",
+            *query_signature,
+            "Average Duration(us)",
+        ]
+        with database_csv.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=database_fields)
+            writer.writeheader()
+            writer.writerow({"OP State": "static", "Average Duration(us)": "0", **query_signature})
+
+        update_result = update_csv(database_csv, aggregated, "missing-only", False)
+        assert update_result.updated == 1
+        with database_csv.open("r", encoding="utf-8", newline="") as input_file:
+            written = list(csv.DictReader(input_file))
+        assert get_sig(written[0], op_name="AddRmsNormBias") == get_sig(query_signature, op_name="AddRmsNormBias")
+        assert written[0]["Average Duration(us)"] == "6.000000"
+
+
 class TestRunMsprof:
     """Tests for msprof wrapper behavior."""
 
@@ -291,6 +1147,8 @@ class TestRunMsprof:
 
         assert "--dispatch-ffn-combine-node-rank" in cmd
         assert cmd[cmd.index("--dispatch-ffn-combine-node-rank") + 1] == "0"
+        assert "--status-path" in cmd
+        assert Path(cmd[cmd.index("--status-path") + 1]) == tmp_path / "run_all_op_status.json"
 
     def test_nonzero_msprof_exit_uses_generated_summary(
         self,
@@ -591,6 +1449,95 @@ class TestUpdateCsv:
         assert len(rows) == 1
         assert rows[0]["Average Duration(us)"] == "9.5"
 
+    def test_sparse_child_profiler_aliases_are_match_only(self):
+        assert start_microbench.PROFILE_OP_ALIASES["BatchMatMulV2"] == ("BatchMatMulNd",)
+        assert start_microbench.PROFILE_OP_ALIASES["ScatterNdUpdate"] == ("ScatterNdUpdateAiCore",)
+        assert start_microbench.PROFILE_OP_ALIASES["Mul"] == ("MulAiCore",)
+        assert start_microbench.PROFILE_OP_ALIASES["Cast"] == ("CastAiCore",)
+        assert start_microbench.PROFILE_OP_ALIASES["SliceAiCore"] == ("Slice",)
+        assert start_microbench.PROFILE_OP_ALIASES["Transpose"] == ("TransposeAiCore",)
+
+    def test_runtime_aware_rows_never_append_unknown_case_ids(self, tmp_path: Path):
+        csv_path = tmp_path / "SparseFlashAttention.csv"
+        fieldnames = [
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Average Duration(us)",
+            "Runtime case_id",
+        ]
+        shape = {
+            "Input Shapes": "1,16,512",
+            "Input Data Types": "DT_BF16",
+            "Input Formats": "ND",
+            "Output Shapes": "1,16,512",
+            "Output Data Types": "DT_BF16",
+        }
+        with csv_path.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow({**shape, "Runtime case_id": "known", "Average Duration(us)": ""})
+
+        result = update_db(
+            tmp_path,
+            {
+                "SparseFlashAttention": [
+                    {
+                        **shape,
+                        "Runtime case_id": "unknown",
+                        "Average Duration(us)": "11.0",
+                    }
+                ]
+            },
+            ["SparseFlashAttention"],
+            mode="all",
+            prune=False,
+        )[0]
+
+        assert result.added == 0
+        with csv_path.open(encoding="utf-8-sig", newline="") as input_file:
+            rows = list(csv.DictReader(input_file))
+        assert len(rows) == 1
+        assert rows[0]["Runtime case_id"] == "known"
+        assert rows[0]["Average Duration(us)"] == ""
+
+    def test_slice_aicore_backfill_accepts_slice_profiler_alias(self, tmp_path: Path):
+        csv_path = tmp_path / "SliceAiCore.csv"
+        fieldnames = [
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Average Duration(us)",
+        ]
+        shape = {
+            "Input Shapes": "1,1;2;2",
+            "Input Data Types": "DT_BF16;INT64;INT64",
+            "Input Formats": "ND;ND;ND",
+            "Output Shapes": "1,1",
+            "Output Data Types": "DT_BF16",
+        }
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow({**shape, "Average Duration(us)": ""})
+
+        result = update_db(
+            tmp_path,
+            {"Slice": [{**shape, "Average Duration(us)": "7.5"}]},
+            ["SliceAiCore"],
+            mode="missing-only",
+            prune=False,
+        )
+
+        assert result[0].updated == 1
+        with csv_path.open("r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert rows[0]["Average Duration(us)"] == "7.5"
+
     def test_matmul_family_drift_does_not_report_false_missing_rows(self, tmp_path: Path):
         csv_path = tmp_path / "MatMulV2.csv"
         with csv_path.open("w", encoding="utf-8", newline="") as f:
@@ -642,6 +1589,41 @@ class TestUpdateCsv:
         assert result[0].added == 0
         assert result[0].missing == []
 
+    def test_signature_canonicalizes_profile_dtype_names(self):
+        # Profiler op_summary records dtypes as FLOAT16 / BFLOAT16 while the
+        # database CSV stores DT_FLOAT16 / DT_BF16; the signature must treat
+        # the aliases as identical or replay rows can never be matched back.
+        csv_style = {
+            "Input Shapes": '"1,1,1254"',
+            "Input Data Types": "DT_FLOAT16",
+            "Input Formats": "NCL",
+            "Output Shapes": '"1,1,1254;1,1"',
+            "Output Data Types": "INT8;FLOAT",
+        }
+        profiler_style = {
+            "Input Shapes": '"1,1,1254"',
+            "Input Data Types": "FLOAT16",
+            "Input Formats": "NCL",
+            "Output Shapes": '"1,1,1254;1,1"',
+            "Output Data Types": "INT8;FLOAT",
+        }
+        assert get_sig(csv_style, op_name="DynamicQuant") == get_sig(profiler_style, op_name="DynamicQuant")
+
+        bf16_csv = {
+            "Input Shapes": '"1,1,1254"',
+            "Input Data Types": "DT_BF16",
+            "Input Formats": "NCL",
+            "Output Shapes": '"1,1,1254;1,1"',
+            "Output Data Types": "INT8;FLOAT",
+        }
+        bf16_prof = {
+            **bf16_csv,
+            "Input Data Types": "BFLOAT16",
+        }
+        assert get_sig(bf16_csv, op_name="DynamicQuant") == get_sig(bf16_prof, op_name="DynamicQuant")
+        # Genuinely different dtypes must stay distinct.
+        assert get_sig(csv_style, op_name="DynamicQuant") != get_sig(bf16_csv, op_name="DynamicQuant")
+
     def test_signature_normalizes_empty_shape_slots(self):
         generated_style = {
             "Input Shapes": '"1,128,1,512;();();2,16;()"',
@@ -659,6 +1641,50 @@ class TestUpdateCsv:
         }
 
         assert get_sig(generated_style) == get_sig(profiler_style)
+
+    def test_triton_rope_backfill_matches_all_opaque_dtype_ids(self, tmp_path: Path):
+        csv_path = tmp_path / "_triton_rope_siso.csv"
+        fieldnames = [
+            "Input Shapes",
+            "Input Data Types",
+            "Input Formats",
+            "Output Shapes",
+            "Output Data Types",
+            "Average Duration(us)",
+        ]
+        rows = [
+            {
+                "Input Shapes": "24,1,128;24,64;24,64",
+                "Input Data Types": f"DT_BF16;{dtype_id};DT_BF16",
+                "Input Formats": "ND;ND;ND",
+                "Output Shapes": "24,1,128",
+                "Output Data Types": "DT_BF16",
+                "Average Duration(us)": "",
+            }
+            for dtype_id in ("65534", "65535")
+        ]
+        with csv_path.open("w", encoding="utf-8", newline="") as output_file:
+            writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        profiler_row = {
+            **rows[0],
+            # The profiler may preserve one opaque ID exactly; writeback must
+            # still fan out to equivalent historical opaque-ID rows.
+            "Input Data Types": "DT_BF16;65534;DT_BF16",
+            "Average Duration(us)": "7.25",
+        }
+        result = update_csv(csv_path, [profiler_row], mode="missing-only", prune=False)
+
+        assert result.updated == 2
+        with csv_path.open(encoding="utf-8-sig", newline="") as input_file:
+            updated_rows = list(csv.DictReader(input_file))
+        assert [row["Input Data Types"] for row in updated_rows] == [
+            "DT_BF16;65534;DT_BF16",
+            "DT_BF16;65535;DT_BF16",
+        ]
+        assert {row["Average Duration(us)"] for row in updated_rows} == {"7.25"}
 
     def test_missing_only_mode_skips_valid_rows(self, tmp_path: Path):
         """missing-only mode should skip rows with valid duration."""
@@ -740,7 +1766,7 @@ class TestUpdateCsv:
             reader = csv.DictReader(f)
             rows = list(reader)
             assert len(rows) == 1
-            assert rows[0]["Input Shapes"] == "2048"
+            assert rows[0]["Input Shapes"] == '"2048"'
 
     def test_detects_duplicates(self, tmp_path: Path):
         """Should detect duplicate signatures in existing CSV."""
@@ -829,11 +1855,11 @@ class TestUpdateCsv:
             rows = {r["Input Shapes"]: r for r in reader}
 
         # Legacy row should have its duration migrated
-        assert rows["1024,1024"]["Average Duration(us)"] == "12.34"
+        assert rows['"1024,1024"']["Average Duration(us)"] == "12.34"
         # New row should have its duration
-        assert rows["2048,2048"]["Average Duration(us)"] == "56.78"
+        assert rows['"2048,2048"']["Average Duration(us)"] == "56.78"
         # Old column name should not exist
-        assert "MicroBench Duration(us)" not in rows["1024,1024"]
+        assert "MicroBench Duration(us)" not in rows['"1024,1024"']
 
     def test_legacy_mb_dur_preserved_on_prune(self, tmp_path: Path):
         """Legacy 'MicroBench Duration(us)' should prevent row from being pruned.
@@ -883,7 +1909,7 @@ class TestUpdateCsv:
             reader = csv.DictReader(f)
             rows = list(reader)
         assert len(rows) == 1
-        assert rows[0]["Input Shapes"] == "1024,1024"
+        assert rows[0]["Input Shapes"] == '"1024,1024"'
         assert rows[0]["Average Duration(us)"] == "10.0"
 
     def test_includes_extra_columns_for_new_csv(self, tmp_path: Path):
@@ -1139,6 +2165,29 @@ class TestPrintReport:
         assert "## Overview" in content
         assert "## Duration Gap Hotspots" in content
         assert "MatMulV2" in content
+
+    def test_preserves_runtime_status_snapshot_with_report(self, tmp_path: Path):
+        status = {
+            "success": [{"op": "AddRmsNormBias"}],
+            "failed": [],
+            "skipped": [],
+            "cases": [
+                {
+                    "kernel_type": "AddRmsNormBias",
+                    "case_id": "case-1",
+                    "repeat_count": 10,
+                }
+            ],
+        }
+
+        report_result = print_report([], [], status=status, to_file=tmp_path)
+
+        assert report_result is not None
+        report_path, _ = report_result
+        status_paths = list((tmp_path / "reports").glob("run_all_op_status_*.json"))
+        assert len(status_paths) == 1
+        assert json.loads(status_paths[0].read_text(encoding="utf-8")) == status
+        assert f"Run status JSON: {status_paths[0].name}" in report_path.read_text(encoding="utf-8")
 
 
 # =============================================================================
@@ -1488,7 +2537,7 @@ class TestEndToEndWithMockedProfiling:
                 rows = list(reader)
                 # Only the row with matching signature should remain
                 assert len(rows) == 1
-                assert rows[0]["Input Shapes"] == "1024,1024;1024,1024"
+                assert rows[0]["Input Shapes"] == '"1024,1024;1024,1024"'
         finally:
             sys.argv = old_argv
 

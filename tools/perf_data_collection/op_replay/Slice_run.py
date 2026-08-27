@@ -18,8 +18,8 @@ except ImportError:
     from replay_framework import OpReplay
 
 
-def build_case(row: dict[str, str]):
-    inputs = op.build_inputs(row)
+def build_slice_case(replay: OpReplay, row: dict[str, str]):
+    inputs = replay.build_inputs(row)
     if len(inputs) < 1:
         raise ValueError("Slice requires at least one recorded input tensor")
 
@@ -36,6 +36,10 @@ def build_case(row: dict[str, str]):
         },
         "api": op.resolve_api(),
     }
+
+
+def build_case(row: dict[str, str]):
+    return build_slice_case(op, row)
 
 
 def run_case(case):
@@ -72,6 +76,7 @@ op = OpReplay(
     build_case=build_case,
     run_case=run_case,
     format_success=format_success,
+    exact_runtime_match=True,
 )
 
 

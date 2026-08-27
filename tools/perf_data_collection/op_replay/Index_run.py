@@ -66,12 +66,25 @@ def build_case(row: dict[str, str]):
     if not output_shape:
         raise ValueError("Index replay requires a parseable output shape")
 
-    index_len = output_shape[0]
+    if len(output_shape) != len(source_shape):
+        raise ValueError(
+            f"Index replay requires source/output ranks to match: source={source_shape}, output={output_shape}"
+        )
+    indexed_axes = [
+        axis for axis, (source_dim, output_dim) in enumerate(zip(source_shape, output_shape))
+        if source_dim != output_dim
+    ]
+    if len(indexed_axes) > 1:
+        raise ValueError(
+            f"Index replay supports one indexed axis, got source={source_shape}, output={output_shape}"
+        )
+    index_axis = indexed_axes[0] if indexed_axes else 0
+    index_len = output_shape[index_axis]
     if index_len == 0:
         raise ValueError(f"Index replay requires non-empty output: {output_shape}")
     if index_len < 0:
         raise ValueError(f"Invalid output shape for Index: {output_shape}")
-    if source_shape[0] < index_len:
+    if source_shape[index_axis] < index_len:
         raise ValueError(
             f"Index output rows exceed source capacity: source={source_shape}, output={output_shape}"
         )
@@ -98,6 +111,7 @@ def build_case(row: dict[str, str]):
         "source_shape": source_shape,
         "output_shape": output_shape,
         "index_len": index_len,
+        "index_axis": index_axis,
         "index_dtype": index_dtype_name,
         "api": None,
     }
@@ -105,7 +119,9 @@ def build_case(row: dict[str, str]):
 
 def run_case(case):
     source_tensor, index_tensor = case["inputs"]
-    return source_tensor[index_tensor]
+    indices = [slice(None)] * source_tensor.ndim
+    indices[case["index_axis"]] = index_tensor
+    return source_tensor[tuple(indices)]
 
 
 def format_success(csv_path: str, row_index: int, row: dict[str, str], case: dict, result) -> str:
@@ -113,6 +129,7 @@ def format_success(csv_path: str, row_index: int, row: dict[str, str], case: dic
     return (
         f"[OK] {csv_path}:{row_index} "
         f"source={case['source_shape']} index_len={case['index_len']} "
+        f"index_axis={case['index_axis']} "
         f"index_dtype={case['index_dtype']} output={output_shape}"
     )
 

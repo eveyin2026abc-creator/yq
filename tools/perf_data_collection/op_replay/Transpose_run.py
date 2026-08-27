@@ -82,6 +82,7 @@ op = OpReplay(
     build_case=build_case,
     run_case=run_case,
     format_success=format_success,
+    exact_runtime_match=True,
 )
 
 

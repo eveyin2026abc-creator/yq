@@ -43,6 +43,7 @@ op = OpReplay(
     version_help="vLLM-Ascend version, e.g. 0.13.0.",
     input_count=2,
     format_success=format_success,
+    exact_runtime_match=True,
 )
 
 

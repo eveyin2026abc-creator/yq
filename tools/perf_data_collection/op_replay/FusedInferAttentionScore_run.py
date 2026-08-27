@@ -37,6 +37,7 @@ try:
         parse_shape_or_none,
         print_invalid_replay_summary,
         process_replay_csvs,
+        record_runtime_replay_case,
     )
 except ImportError:
     from common import (
@@ -50,6 +51,7 @@ except ImportError:
         parse_shape_or_none,
         print_invalid_replay_summary,
         process_replay_csvs,
+        record_runtime_replay_case,
     )
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -58,6 +60,7 @@ if str(PARENT_DIR) not in sys.path:
     sys.path.insert(0, str(PARENT_DIR))
 
 from fia_common import parse_runtime_int, parse_runtime_int_list, shape_numel, split_metadata_field
+from signature_utils import get_runtime_signature_context
 
 
 QUERY_INDEX = 0
@@ -582,6 +585,16 @@ def run_row(
             f"[RUN] {csv_path}:{row_index} "
             f"repeat={repeat_index + 1}/{repeat_count}"
         )
+
+    record_runtime_replay_case(
+        kernel_type="FusedInferAttentionScore",
+        case_id=f"FusedInferAttentionScore:{Path(csv_path).name}:{row_index}",
+        csv_path=csv_path,
+        row_index=row_index,
+        repeat_count=repeat_count,
+        require_task_start_time=True,
+        signature_context=get_runtime_signature_context(row, "FusedInferAttentionScore"),
+    )
 
     softmax_shape = None if softmax_lse is None else tuple(softmax_lse.shape)
     print(

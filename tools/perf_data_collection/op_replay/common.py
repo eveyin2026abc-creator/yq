@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import argparse
 import csv
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+import hashlib
 from importlib import import_module, metadata
+import math
 import os
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING
+
+try:
+    from signature_utils import canonicalize_shape_columns
+except ModuleNotFoundError:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from signature_utils import canonicalize_shape_columns
 
 if TYPE_CHECKING:
     import torch
@@ -334,6 +344,18 @@ def ensure_npu_available() -> None:
     has_npu = hasattr(runtime_torch, "npu") and runtime_torch.npu.is_available()
     if not has_npu:
         raise RuntimeError("NPU not found")
+    # The multi-device parent sets MB_DEVICE_ID=<local device ID> so every
+    # worker explicitly selects its own NPU before replay and msprof startup.
+    device_id = os.environ.get("MB_DEVICE_ID")
+    if device_id is not None:
+        try:
+            resolved_device_id = int(device_id)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid MB_DEVICE_ID={device_id!r}; expected a local integer device ID") from exc
+        try:
+            runtime_torch.npu.set_device(resolved_device_id)
+        except RuntimeError as exc:
+            raise RuntimeError(f"failed to select Ascend NPU device {resolved_device_id}") from exc
 
 
 def parse_list_field(raw_value: str) -> list[str]:
@@ -541,7 +563,7 @@ def write_csv_rows(
     with csv_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(canonicalize_shape_columns(row) for row in rows)
 
 
 def reset_invalid_replay_rows() -> None:
@@ -580,6 +602,11 @@ def is_fatal_replay_exception(exc: Exception) -> bool:
     return type(exc).__name__.endswith("OutOfMemoryError")
 
 
+def is_replay_contract_exception(exc: Exception) -> bool:
+    """Return whether a failure proves that the CSV row itself is malformed."""
+    return isinstance(exc, (ValueError, TypeError, KeyError, IndexError))
+
+
 def parse_float(value: str | None) -> float:
     try:
         return float((value or "").strip())
@@ -587,8 +614,13 @@ def parse_float(value: str | None) -> float:
         return 0.0
 
 
+def is_positive_finite(value: float) -> bool:
+    """Return whether a measured duration is usable by the performance model."""
+    return math.isfinite(value) and value > 0.0
+
+
 def has_real_duration(row: dict[str, str], column: str) -> bool:
-    return parse_float(row.get(column, "")) > 0.0
+    return is_positive_finite(parse_float(row.get(column, "")))
 
 
 def row_has_only_invalid_durations(
@@ -601,7 +633,86 @@ def row_has_only_invalid_durations(
 
 
 def row_has_valid_duration(row: dict[str, str]) -> bool:
-    return not row_has_only_invalid_durations(row)
+    # The microbench Average Duration column is what downstream performance
+    # model queries read, so a row is only "valid" for missing-only skip
+    # purposes when that column holds a real (>0) value.  A row with
+    # Average Duration=0 but Profiling Average Duration>0 (e.g. a vector-core
+    # op whose Task Duration was not captured on the first pass) must still be
+    # re-profiled so the microbench column gets backfilled.  Pruning still
+    # uses row_has_only_invalid_durations (both columns empty) separately.
+    return has_real_duration(row, MICROBENCH_DURATION)
+
+
+_RUNTIME_REPLAY_CASES: list[dict[str, object]] = []
+# Note: deduplication in record_runtime_replay_case only merges *adjacent*
+# repeats (checking the last element). This is intentional because profiler
+# segment execution order is significant — the same case_id appearing in
+# non-contiguous segments (A, B, A) represents distinct profiler events.
+# This list is only populated in inprocess mode; subprocess mode does not
+# use it. Future parallel/out-of-order replay would require a dict-based
+# deduplication approach instead.
+
+
+def reset_runtime_replay_cases() -> None:
+    _RUNTIME_REPLAY_CASES.clear()
+
+
+def record_runtime_replay_case(
+    *,
+    kernel_type: str,
+    case_id: str,
+    csv_path: Path | str,
+    row_index: int,
+    warmup_count: int = 0,
+    repeat_count: int = 1,
+    aggregation: str = "min",
+    require_task_start_time: bool = False,
+    kernel_name_prefix: str | None = None,
+    profile_kernel_type: str | None = None,
+    expected_task_type: str | None = None,
+    signature_context: dict[str, str] | None = None,
+) -> None:
+    """Record one ordered profiler segment and its database attribution metadata.
+
+    Only adjacent repeats are merged: execution order is significant when the
+    same case_id appears in non-contiguous profiler segments (A, B, A).
+    """
+    if not case_id:
+        return
+    if (
+        _RUNTIME_REPLAY_CASES
+        and _RUNTIME_REPLAY_CASES[-1]["kernel_type"] == kernel_type
+        and _RUNTIME_REPLAY_CASES[-1]["case_id"] == case_id
+        and _RUNTIME_REPLAY_CASES[-1]["csv_path"] == str(csv_path)
+        and _RUNTIME_REPLAY_CASES[-1]["row_index"] == row_index
+    ):
+        _RUNTIME_REPLAY_CASES[-1]["warmup_count"] = int(
+            _RUNTIME_REPLAY_CASES[-1]["warmup_count"]
+        ) + warmup_count
+        _RUNTIME_REPLAY_CASES[-1]["repeat_count"] = int(
+            _RUNTIME_REPLAY_CASES[-1]["repeat_count"]
+        ) + repeat_count
+        return
+    _RUNTIME_REPLAY_CASES.append(
+        {
+            "kernel_type": kernel_type,
+            "case_id": case_id,
+            "csv_path": str(csv_path),
+            "row_index": row_index,
+            "warmup_count": warmup_count,
+            "repeat_count": repeat_count,
+            "aggregation": aggregation,
+            "require_task_start_time": require_task_start_time,
+            "kernel_name_prefix": kernel_name_prefix or "",
+            "profile_kernel_type": profile_kernel_type or kernel_type,
+            "expected_task_type": expected_task_type or "",
+            "signature_context": dict(signature_context or {}),
+        }
+    )
+
+
+def get_runtime_replay_cases() -> list[dict[str, object]]:
+    return [dict(item) for item in _RUNTIME_REPLAY_CASES]
 
 
 def csv_has_complete_microbench(rows: list[dict[str, str]]) -> bool:
@@ -619,6 +730,7 @@ def process_replay_csvs(
     on_row_finally: Callable[[], None] | None = None,
     can_write_cleanup: Callable[[], bool] | None = None,
     on_cleanup_written: Callable[[], None] | None = None,
+    copy_back_fields: Collection[str] = (),
 ) -> tuple[int, list[dict[str, str]], int, int]:
     total_rows = 0
     invalid_rows: list[dict[str, str]] = []
@@ -629,6 +741,7 @@ def process_replay_csvs(
         fieldnames, rows = load_csv_rows(csv_path)
         kept_rows: list[dict[str, str]] = []
         deleted_count = 0
+        processed_count = 0
         source_row_count += len(rows)
 
         if update_mode == "missing-only" and csv_has_complete_microbench(rows):
@@ -648,16 +761,28 @@ def process_replay_csvs(
                 kept_rows.append(row)
                 skipped_rows += 1
                 continue
+            runtime_case_checkpoint = len(_RUNTIME_REPLAY_CASES)
             try:
+                pending_write_back: dict[str, str] = {}
                 for _ in range(repeat_count):
                     # Each repeat gets a fresh row mapping in case run_row_fn mutates it.
-                    run_row_fn(csv_path, row_index, dict(row))
+                    repeat_row = dict(row)
+                    run_row_fn(csv_path, row_index, repeat_row)
+                    pending_write_back.update(
+                        {field: repeat_row[field] for field in copy_back_fields if field in repeat_row}
+                    )
                     total_rows += 1
+                    processed_count += 1
+                row.update(pending_write_back)
                 kept_rows.append(row)
             except Exception as exc:
+                # A runtime-aware row is only valid when every configured
+                # repeat succeeds. Drop any cases recorded by earlier repeats
+                # of this row so profiler output can never be attributed to a
+                # row that was retained for retry or removed as malformed.
+                del _RUNTIME_REPLAY_CASES[runtime_case_checkpoint:]
                 if is_fatal_replay_exception(exc):
                     raise
-                deleted_count += 1
                 entry = register_invalid_replay_row(
                     kernel_type=kernel_type,
                     csv_path=csv_path,
@@ -666,11 +791,22 @@ def process_replay_csvs(
                     exc=exc,
                 )
                 invalid_rows.append(entry)
-                print(
-                    f"[DROP] {csv_path}:{row_index} "
-                    f"shapes={row.get('Input Shapes', '')} "
-                    f"error={type(exc).__name__}: {exc}"
-                )
+                if is_replay_contract_exception(exc):
+                    deleted_count += 1
+                    entry["action"] = "deleted"
+                    print(
+                        f"[DROP] {csv_path}:{row_index} "
+                        f"shapes={row.get('Input Shapes', '')} "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                else:
+                    kept_rows.append(row)
+                    entry["action"] = "retained"
+                    print(
+                        f"[FAIL] {csv_path}:{row_index} retained for retry "
+                        f"shapes={row.get('Input Shapes', '')} "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
             finally:
                 if on_row_finally is not None:
                     on_row_finally()
@@ -681,6 +817,11 @@ def process_replay_csvs(
 
         if deleted_count and on_cleanup_written is not None:
             on_cleanup_written()
+
+        # Write back rows that were processed (e.g. direct-timing results
+        # written by run_row) even when no rows were deleted.
+        if processed_count and not deleted_count and (can_write_cleanup is None or can_write_cleanup()):
+            write_csv_rows(csv_path, fieldnames, kept_rows)
 
     return total_rows, invalid_rows, source_row_count, skipped_rows
 
@@ -696,12 +837,18 @@ def print_invalid_replay_summary(
         return
 
     summary_label = label or "Invalid replay rows"
-    print(f"[SUMMARY] {summary_label}: deleted {len(invalid_rows)} invalid row(s).")
+    deleted_count = sum(entry.get("action") == "deleted" for entry in invalid_rows)
+    retained_count = len(invalid_rows) - deleted_count
+    print(
+        f"[SUMMARY] {summary_label}: deleted {deleted_count} malformed row(s); "
+        f"retained {retained_count} runtime-failed row(s) for retry."
+    )
     for entry in invalid_rows:
         print(
             f"[SUMMARY] op={entry['kernel_type']} "
             f"file={entry['csv_path']}:{entry['row_index']} "
             f"shapes={entry['input_shapes']} "
+            f"action={entry.get('action', 'retained')} "
             f"error={entry['error_type']}: {entry['error']}"
         )
 
@@ -712,6 +859,16 @@ def get_replay_repeat_count(args_repeat_count: int | None) -> int:
             raise ValueError(f"--repeat-count must be positive, got {args_repeat_count}")
         return args_repeat_count
     return DEFAULT_REPLAY_REPEAT_COUNT
+
+
+def case_belongs_to_shard(case_id: str, shard_count: int, shard_index: int) -> bool:
+    """Return whether a runtime case belongs to a stable replay shard."""
+    if shard_count <= 0 or not 0 <= shard_index < shard_count:
+        raise ValueError("case shard index must be in [0, case shard count)")
+    if not case_id:
+        raise ValueError("Runtime-aware replay sharding requires a non-empty case_id")
+    shard_value = int.from_bytes(hashlib.sha256(case_id.encode("utf-8")).digest()[:8], "big")
+    return shard_value % shard_count == shard_index
 
 
 def build_standard_argparser(
@@ -790,5 +947,17 @@ def build_standard_argparser(
             "`missing-only`: replay only rows whose Average/Profiling durations are both invalid. "
             f"Default: {DEFAULT_UPDATE_MODE}."
         ),
+    )
+    parser.add_argument(
+        "--case-shard-count",
+        type=int,
+        default=1,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--case-shard-index",
+        type=int,
+        default=0,
+        help=argparse.SUPPRESS,
     )
     return parser
