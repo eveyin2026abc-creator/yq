@@ -235,6 +235,7 @@ def generate_inputs(model, requests: list[RequestInfo], block_size: int = 128):
         "qwen3_next",
         "qwen3_5",
         "qwen3_5_moe",
+        "qwen3_5_moe_text",
     ):
         cache_position = torch.arange(context_length, context_length + num_tokens, dtype=torch.long, device="cpu")
         cache_position.tensor_cast_query_lens = tuple(query_len for _ in range(batch_size))
@@ -762,7 +763,7 @@ def kv_cache_excluded_layer_indices(model) -> set[int]:
         "model_type",
         None,
     )
-    if model_type not in ("qwen3_5", "qwen3_5_moe"):
+    if model_type not in ("qwen3_5", "qwen3_5_moe", "qwen3_5_moe_text"):
         return set()
     layer_types = getattr(getattr(model, "text_config", None), "layer_types", None)
     if not isinstance(layer_types, list):
@@ -1272,6 +1273,7 @@ def generate_inputs_varlen(model, requests: list[RequestInfo], block_size):
         "qwen3_next",
         "qwen3_5",
         "qwen3_5_moe",
+        "qwen3_5_moe_text",
     ):
         cache_positions = []
         first_context_length = 0

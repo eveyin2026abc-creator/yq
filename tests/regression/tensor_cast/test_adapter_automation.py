@@ -781,6 +781,28 @@ cases:
         self.assertNotIn("moe_gate_returns_raw_logits", review)
         self.assertNotIn("moe_route_after_dp_transform", review)
 
+    def test_qwen3_5_moe_text_profile_is_qwen3_5_family_member(self):
+        """qwen3_5_moe_text (Qwen3.8 text MoE) must stay in the qwen3_5 family.
+
+        The Gated DeltaNet ``linear_attn`` TP plan in ``transformations.py`` is gated
+        on ``model_family == "qwen3_5"``, and the profile reuses
+        ``patch_method_for_qwen3_5`` (which sets ``tensor_cast_tp_size`` per head).
+        Splitting the family off to a private ``qwen3_8`` breaks TP>1 GDN sharding.
+        Regression for review feedback: family must not be split off.
+        """
+        profile = get_model_profile("qwen3_5_moe_text")
+        self.assertIsNotNone(profile)
+        # Family is the gate variable for the linear_attn TP plan branch.
+        self.assertEqual(profile.model_family, "qwen3_5")
+        # Shares the family (and thus the TP plan gate) with the sibling qwen3_5_moe.
+        self.assertEqual(get_model_profile("qwen3_5_moe").model_family, "qwen3_5")
+        # Text-only variant: no visual/language module path (no VL path).
+        self.assertIsNone(profile.visual_module_path)
+        # num_experts lives at the top level of config.json, not nested under text_config.
+        self.assertEqual(profile.moe_num_experts_key, "num_experts")
+        # Reuses the Qwen3.5 patch, so the family must match the gate the patch assumes.
+        self.assertIs(profile.patch_method, get_model_profile("qwen3_5_moe").patch_method)
+
     def test_visual_linear_mapping_uses_detected_visual_prefix(self):
         root = torch.nn.Module()
         root.model = torch.nn.Module()

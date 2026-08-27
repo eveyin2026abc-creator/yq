@@ -300,6 +300,32 @@ def test_qwen3_5_decode_mtp_cache_position_metadata(_mock_kv_cache, _mock_sparse
     assert cache_position.tensor_cast_effective_decode_steps == 4
 
 
+@patch(
+    "tensor_cast.core.input_generator.get_sparse_attention_indexer_cache_info",
+    return_value={},
+)
+@patch("tensor_cast.core.input_generator._get_kv_cache_info", return_value=({}, 0))
+def test_varlen_qwen3_5_moe_text_cache_position_starts_at_context(_mock_kv_cache, _mock_sparse_cache):
+    model = SimpleNamespace(
+        model_config=SimpleNamespace(
+            hf_config=SimpleNamespace(model_type="qwen3_5_moe_text"),
+            mtp_config=None,
+            parallel_config=SimpleNamespace(decode_context_parallel_size=1),
+        )
+    )
+    requests = [
+        RequestInfo(query_len=1, seq_len=2199, is_decode=True, context_length=2198),
+        RequestInfo(query_len=2, seq_len=12, is_decode=True, context_length=10),
+    ]
+
+    inputs = generate_inputs_varlen(model, requests, 128)
+
+    assert torch.equal(inputs["cache_position"], torch.tensor([2198, 10, 11], dtype=torch.long))
+    assert inputs["cache_position"].tensor_cast_query_lens == (1, 2)
+    assert inputs["cache_position"].tensor_cast_is_decode == (True, True)
+    assert inputs["cache_position"].tensor_cast_has_previous_state
+
+
 def test_kv_cache_excluded_layer_indices_qwen3_5():
     """Qwen3.5 returns the indices of linear_attention placeholder layers."""
     model = SimpleNamespace(
@@ -318,6 +344,20 @@ def test_kv_cache_excluded_layer_indices_qwen3_5_moe():
         text_config=SimpleNamespace(layer_types=["linear_attention", "attention"]),
     )
     assert kv_cache_excluded_layer_indices(model) == {0}
+
+
+def test_kv_cache_excluded_layer_indices_qwen3_5_moe_text():
+    """qwen3_5_moe_text (Qwen3.8 text MoE) is covered by the same exclusion rule.
+
+    Counting the linear_attention placeholder KV inflates kv_cache_per_token
+    (root cause of device_memory_available_gb == 0). Regression for review
+    feedback: the model_type must be in the exclusion list.
+    """
+    model = SimpleNamespace(
+        model_config=SimpleNamespace(hf_config=SimpleNamespace(model_type="qwen3_5_moe_text")),
+        text_config=SimpleNamespace(layer_types=["linear_attention", "attention", "linear_attention"]),
+    )
+    assert kv_cache_excluded_layer_indices(model) == {0, 2}
 
 
 def test_kv_cache_excluded_layer_indices_non_qwen3_5_returns_empty():
