@@ -633,8 +633,11 @@ class ParallelRunner:
             disagg_mode: Optional override for strategy selection.
             is_prefill: When generating configs internally, force dcp=1 for the Prefill
                 phase (DCP is decode-only). Ignored when ``user_configs`` is provided.
-            process_context: Multiprocessing context for the executor. PD ratio
-                sub-phases pass a spawn context to avoid forking from threads.
+            process_context: Multiprocessing context for ProcessPoolExecutor.
+                When ``None``, ProcessPoolExecutor uses ``mp.get_context("spawn")``.
+                Spawn avoids deadlocks when the parent already has threads
+                (xdist, leftover resource_sharer, PD-ratio ThreadPool).
+                Pass ``mp.get_context("fork")`` explicitly to keep fork.
 
         Returns:
             List of OptimizerSummary (non-None results only).
@@ -645,8 +648,13 @@ class ParallelRunner:
             "max_workers": self.args.jobs,
             "initializer": self._worker_initializer,
         }
-        if process_context is not None and issubclass(self._executor_class, ProcessPoolExecutor):
-            executor_kwargs["mp_context"] = process_context
+        try:
+            use_process_pool = issubclass(self._executor_class, ProcessPoolExecutor)
+        except TypeError:
+            # Injected executor_class may be a Mock or factory instance, not a type.
+            use_process_pool = False
+        if use_process_pool:
+            executor_kwargs["mp_context"] = process_context or mp.get_context("spawn")
 
         with self._executor_class(**executor_kwargs) as executor:
             results = executor.map(

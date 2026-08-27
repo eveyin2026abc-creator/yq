@@ -781,6 +781,32 @@ class TestParallelRunnerPDMode(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertIs(ProcessContextRecordingExecutor.init_kwargs["mp_context"], process_context)
 
+    def test_get_df_list_uses_spawn_for_process_pool_without_pd_context(self):
+        """Default ProcessPoolExecutor must spawn, not inherit Linux fork."""
+        import multiprocessing as mp
+
+        class ProcessContextRecordingExecutor(ProcessPoolExecutor):
+            init_kwargs = None
+
+            def __init__(self, **kwargs):
+                type(self).init_kwargs = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def map(self, fn, *iterables, timeout=None, chunksize=1):
+                return []
+
+        task_runner = ParallelRunner(self.args, executor_class=ProcessContextRecordingExecutor)
+        result = task_runner._get_df_list(task_runner.optimizer_data, user_configs=[])
+
+        self.assertEqual(result, [])
+        mp_context = ProcessContextRecordingExecutor.init_kwargs["mp_context"]
+        self.assertEqual(mp_context.get_start_method(), mp.get_context("spawn").get_start_method())
+
     def test_get_df_list_ignores_pd_process_context_for_injected_executor(self):
         """Injected non-process executors must not receive unsupported mp_context."""
         import multiprocessing as mp
