@@ -17,5 +17,6 @@ from . import (  # noqa: F401
     rotary_embedding,
     static_mask,
     minimax_m3_sparse_attention,
+    situ,
     swiglu,
 )

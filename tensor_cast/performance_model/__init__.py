@@ -2679,6 +2679,34 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     )
 
 
+# ---------------------------------------------------------------------------
+# SiTU activation performance models (Kimi K3)
+#
+# SiTU: beta * tanh(gate/beta) * sigmoid(gate) * up
+# When linear_beta is set: up = linear_beta * tanh(up/linear_beta)
+#
+# Elementwise cost per output element (approximate, pending profiling):
+#   gate path:  div(1) + tanh(~5) + sigmoid(~5) + mul×2 = ~13 ops
+#   up path (linear_beta): div(1) + tanh(~5) + mul(1) = ~7 ops
+#   final mul: 1 op
+#   Total: ~21 ops/elem (linear_beta enabled, K3 default)
+# Conservative estimate: 18 ops/elem (design doc §5.1).
+# ---------------------------------------------------------------------------
+
+_SITU_OPS_PER_ELEM = 18  # tanh×2 + sigmoid + mul×3 (conservative, design doc §5.1)
+
+
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.situ.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    gate = op_invoke_info.args[0]
+    dtype = gate.dtype
+    properties = op_invoke_info.get_memory_access_properties()
+    # gate and up have the same shape; output has the same shape as gate.
+    output_numel = gate.numel()
+    _accumulate_compute_ops(properties, dtype, gp_ops=output_numel * _SITU_OPS_PER_ELEM)
+    return properties
+
+
 @OpInvokeInfo.register_op_properties(torch.ops.aten.addmm.default)
 def _(
     op_invoke_info: OpInvokeInfo,

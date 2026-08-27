@@ -89,12 +89,12 @@ class VllmBenchMark(BenchmarkInterface):
             with open(file, mode='r', encoding="utf-8") as f:
                 data = json.load(f)
             performance_index.generate_speed = data.get("output_throughput", 0)
-            performance_index.time_to_first_token = data.get(
-                self.config.performance_config.time_to_first_token.metric,
-                0) / 10 ** 3
-            performance_index.time_per_output_token = data.get(
-                self.config.performance_config.time_per_output_token.metric,
-                0) / 10 ** 3
+            performance_index.time_to_first_token = (
+                data.get(self.config.performance_config.time_to_first_token.metric, 0) / 10**3
+            )
+            performance_index.time_per_output_token = (
+                data.get(self.config.performance_config.time_per_output_token.metric, 0) / 10**3
+            )
             num_prompts = data.get("num_prompts", 1)
             completed = data.get("completed", 0)
             performance_index.success_rate = completed / num_prompts

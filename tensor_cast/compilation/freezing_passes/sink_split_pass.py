@@ -216,6 +216,9 @@ class SinkSplitPass(TensorCastGraphModulePass):
             torch.ops.aten.mul.Tensor,
             torch.ops.tensor_cast.swiglu.default,
             torch.ops.tensor_cast.m3_swiglu.default,
+            # SiTU activation (Kimi K3) — same split consumer shape as swiglu:
+            # consumes two getitems of a single split, outputs one tensor.
+            torch.ops.tensor_cast.situ.default,
         ]
         for op in binary_ops:
             add_config(op, {0, 1}, {0})

@@ -11,6 +11,7 @@ transformers>=5.13.0,<5.14.0
 modelscope
 diffusers>=0.38.0
 compressed-tensors
+einops
 
 strenum
 aenum

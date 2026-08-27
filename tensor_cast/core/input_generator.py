@@ -757,18 +757,69 @@ def kv_cache_excluded_layer_indices(model) -> set[int]:
     docs/RFC/fix_memory_available_zero_port_zh.md). Centralising the judgement
     here keeps every consumer (``_get_kv_cache_info`` and ``ModelRunner``) on a
     single, consistent accounting scope.
+
+    Kimi K3 hybrid attention follows the same principle: KDA layers
+    (``KimiDeltaAttention``, ~69/93 layers) use a recurrent state, not a paged
+    KV cache. They are identified by ``is_linear_attn`` (bool) on each decoder
+    layer (set by ``KimiDecoderLayer``, propagated through ``CopyLayerWrapper``
+    by P1.8). Without this exclusion, KDA layers' KV cache is counted in the
+    memory budget, inflating it by ~74% (69/93 layers are false positives).
     """
     model_type = getattr(
         getattr(getattr(model, "model_config", None), "hf_config", None),
         "model_type",
         None,
     )
-    if model_type not in ("qwen3_5", "qwen3_5_moe", "qwen3_5_moe_text"):
+    if model_type in ("qwen3_5", "qwen3_5_moe", "qwen3_5_moe_text"):
+        layer_types = getattr(getattr(model, "text_config", None), "layer_types", None)
+        if not isinstance(layer_types, list):
+            return set()
+        return {idx for idx, layer_type in enumerate(layer_types) if layer_type == "linear_attention"}
+
+    # Kimi K3: KDA layers (KimiDeltaAttention, ~69/93 layers) use a recurrent
+    # state, not a paged KV cache. Their indices are listed in
+    # ``text_config.linear_attn_config['kda_layers']`` (1-based, matching the
+    # config's ``full_attn_layers`` which includes ``num_hidden_layers`` as the
+    # last entry). Convert to 0-based to match the ``range(num_hidden_layers)``
+    # convention used by ``_get_kv_cache_info`` and ``ModelRunner``.
+    if model_type != "kimi_k3":
         return set()
-    layer_types = getattr(getattr(model, "text_config", None), "layer_types", None)
-    if not isinstance(layer_types, list):
+    linear_attn_cfg = getattr(
+        getattr(model, "text_config", None),
+        "linear_attn_config",
+        None,
+    )
+    if not isinstance(linear_attn_cfg, dict):
         return set()
-    return {idx for idx, layer_type in enumerate(layer_types) if layer_type == "linear_attention"}
+    kda_layers = linear_attn_cfg.get("kda_layers")
+    if not isinstance(kda_layers, (list, tuple)) or not kda_layers:
+        return set()
+    n_layers = getattr(
+        getattr(model, "text_config", None),
+        "num_hidden_layers",
+        0,
+    )
+    # Detect 1-based vs 0-based indexing. K3's config lists layers starting from
+    # 1 (e.g. kda_layers=[1,2,3,5,...,91], full_attn_layers=[4,8,...,92,93]).
+    # The max-based check (max >= n_layers) is unreliable here because
+    # kda_layers tops out at 91 while n_layers=93 (only full_attn_layers
+    # reaches 93). Instead, probe whether index 0 appears in EITHER list: if
+    # it does not, the indexing is 1-based and we subtract 1 to convert to the
+    # 0-based convention used by range(num_hidden_layers).
+    full_attn_layers = linear_attn_cfg.get("full_attn_layers")
+    union_indices = set(kda_layers)
+    if isinstance(full_attn_layers, (list, tuple)):
+        union_indices.update(full_attn_layers)
+    offset = 0 if 0 in union_indices else -1
+    excluded = {idx + offset for idx in kda_layers if isinstance(idx, int) and idx + offset >= 0}
+    logger.info(
+        "kv_cache_excluded_layer_indices: kimi_k3 excluded %d KDA layers "
+        "from KV cache accounting (out of %d total layers, offset=%d).",
+        len(excluded),
+        n_layers,
+        offset,
+    )
+    return excluded
 
 
 def _get_kv_cache_info(

@@ -224,6 +224,12 @@ def _permission_bits_may_be_synthetic(fs_type: str | None) -> bool:
 
 
 def _find_mount_type(path: Path) -> str | None:
+    # Windows native (nt) has no /proc/mounts and exposes synthetic POSIX
+    # permission bits on NTFS; treat it as drvfs so group/world-writable mode
+    # bits are not rejected (symlink and owner checks still run where available).
+    if sys.platform == "win32":
+        return "drvfs"
+
     mounts_path = Path("/proc/mounts")
     if not mounts_path.is_file():
         return None

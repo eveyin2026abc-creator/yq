@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Any, Callable, List
 
 from ..passes.pattern_match_pass import PatternMatchPass
-from . import gated_residual, gelu, rms_norm, rotary_embedding, silu, swiglu
+from . import gated_residual, gelu, rms_norm, rotary_embedding, silu, situ, swiglu
 
 # three levels of graph passes, apply them in order
 all_passes = [
@@ -40,3 +40,4 @@ def lazy_init():
     gelu.register_all_patterns()
     silu.register_all_patterns()
     gated_residual.register_all_patterns()
+    situ.register_all_patterns()

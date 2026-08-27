@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import re
 import sys
 from typing import Any, Optional
@@ -148,6 +149,10 @@ def parse_int_range(value: str, name: str) -> tuple[int, int]:
 def check_string_valid(string: str, max_len=256):
     if len(string) > max_len:
         raise argparse.ArgumentTypeError(f"String length exceeds {max_len} characters: {string!r}")
+    # Allow existing local filesystem paths (including Windows absolute paths with
+    # drive letters and backslashes) to bypass the model-id character whitelist.
+    if os.path.exists(string):
+        return string
     if not re.match(r"^[a-zA-Z0-9_/.-]+$", string):
         raise argparse.ArgumentTypeError(f"String contains invalid characters: {string!r}")
     return string

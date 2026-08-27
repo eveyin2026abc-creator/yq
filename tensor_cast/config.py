@@ -49,6 +49,10 @@ class compilation:
         enable_matmul_allreduce = False
         enable_grouped_matmul_swiglu = True
         enable_dispatch_ffn_combine = False
+        # SiTU activation pattern.  Enabled by default; only models whose
+        # graphs contain the SiTU decomposition (e.g. Kimi K3) will match.
+        # Other models are unaffected — the pattern simply never fires.
+        enable_situ = True
 
     class debug:
         graph_log_url = None
