@@ -15,6 +15,7 @@
 - [device_config](#device_config)
 - [op_mapping](#op_mapping)
 - [microbench](#microbench)
+- [profiling-database-lifecycle](#profiling-database-lifecycle)
 - [profiling-database-axis-density](#profiling-database-axis-density)
 - [text-generate-executor](#text-generate-executor)
 - [throughput-optimizer-executor](#throughput-optimizer-executor)
@@ -34,6 +35,7 @@
 | `sig-review` | 评论 /merge 启动合入、深度检视、CLI 行内评论、风险评级和合入建议 |
 | `msmodeling-ci-recovery` | 读取 openLiBing 结果、定位日志、修复、复验并循环至通过或明确阻塞 |
 | `msmodeling-review-feedback` | 分析和处理 PR 检视意见，验证修改并通过 CLI 回复 |
+| `profiling-database-lifecycle` | 串联轴密度规则、Shape 生成、NPU 采集、生产回放、异常审计和数据库 PR 发布 |
 
 默认是逐阶段确认的 `guided` 模式。用户明确给出仓库、Issue、分支和目标范围后，可切换为
 `autonomous`；安全、权限、门禁绕过、强制推送、审批和合并仍是硬停止点。
@@ -226,6 +228,33 @@ Microbench Run Script 生成器——从 profiling CSV 生成可在 NPU 上重�
 - repo 缺失时按 `SKILL.md` 中提供的 clone 命令获取。
 
 - 生成的 run script 由 `run_all_op.py` / `profile_and_update_db.py` 调用。
+
+---
+
+## profiling-database-lifecycle
+
+实测算子性能数据库端到端工作流。它按生命周期设计调用现有 Skill 和生产工具，不新增重复的采集或审计算法。
+
+### What it does
+
+冻结基线，按轴密度 YAML 生成候选 Shape，在候选库采集 latency，执行生产 query replay 和异常审计，并携带证据形成数据库 PR。
+
+### File layout
+
+| File | Purpose |
+| ---- | ------- |
+| `profiling_database_lifecycle/SKILL.md` | 各阶段入口、命令、handoff、失败处理和交付要求 |
+| `../docs/design/profiling_database_lifecycle.md` | 生命周期流程、最低可用条件和阶段职责 |
+
+### Quick start
+
+在执行“数据库标准到采集、审计和发布”的完整更新，或需要定位每一步应该调用哪个 Skill、脚本和文件时使用该 Skill。
+
+### Key constraints
+
+- 基线数据库只读，Shape 生成和实测写回只操作候选目录。
+- 新轴或密度变化先调用轴密度 Skill；已有规则直接读取 YAML。
+- PR673 未合入时，异常审计阶段保持阻塞，不用自建替代实现。
 
 ---
 

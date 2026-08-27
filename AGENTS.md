@@ -51,6 +51,7 @@ GitCode 配置：
 | 查看、分析或修复 PR 流水线 | `msmodeling-ci-recovery` |
 | 处理 PR 检视意见 | `msmodeling-review-feedback` |
 | 请求检视或启动合入流程 | `sig-review` |
+| 执行实测算子数据库从密度规则、采集、审计到发布的完整流程 | `profiling-database-lifecycle` |
 
 | Skill | 触发词 | 用途 |
 |-------|--------|------|
@@ -141,6 +142,7 @@ python scripts/ai/resolve_repository_context.py --json
 | `sig-review` | 评论 /merge 启动合入、深度检视、inline comment、风险评级和合入建议 |
 | `msmodeling-ci-recovery` | openLiBing 流水线监控与修复循环 |
 | `msmodeling-review-feedback` | 检视意见分析、修复、回复和解决 |
+| `profiling-database-lifecycle` | 实测算子数据库从基线、采集计划、实测、质量检查到发布反馈的完整闭环 |
 
 ### 7.2 GitCode CLI Skills
 
