@@ -222,10 +222,10 @@ hccn_tool -i 0 -ping -g address x.x.x.x
 本插件涉及两个配置文件：
 
 
-| 配置文件 | 位置                                                   | 职责                                        |
-| -------- | ------------------------------------------------------ | ------------------------------------------- |
-| 集群配置 | 插件目录下`config.toml`                                | 节点 SSH 连接信息、网卡名等集群拓扑         |
-| 寻优配置 | `ms_serviceparam_optimizer/config.toml` 的 `[vllm]` 段 | vllm 服务参数、寻优变量定义（target_field） |
+| 配置文件 | 位置                               | 职责                                        |
+| -------- | ---------------------------------- | ------------------------------------------- |
+| 集群配置 | 插件目录下`config.toml`            | 节点 SSH 连接信息、网卡名等集群拓扑         |
+| 寻优配置 | `optix/config.toml` 的 `[vllm]` 段 | vllm 服务参数、寻优变量定义（target_field） |
 
 ### 集群配置（插件 config.toml）
 
@@ -255,7 +255,7 @@ password = "<ssh_password>"      # 明文或 Base64；建议改用 SSH 密钥免
 
 ### 寻优配置（优化器 config.toml）
 
-在 `ms_serviceparam_optimizer/config.toml` 的 `[vllm]` 段配置服务命令和寻优变量：
+在 `/config.toml` 的 `[vllm]` 段配置服务命令和寻优变量：
 
 ```toml
 [vllm]
