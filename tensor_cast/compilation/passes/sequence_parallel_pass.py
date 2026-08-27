@@ -49,12 +49,12 @@ _SLICE = torch.ops.aten.slice.Tensor
 _MOE_TOPK = torch.ops.tensor_cast.moe_gating_top_k_softmax.default
 _INIT_ROUTING = torch.ops.tensor_cast.init_routing_v2.default
 _UNPERMUTE_TOKENS = torch.ops.tensor_cast.unpermute_tokens.default
+_AUTO_FUNCTIONALIZED_V2 = torch.ops.higher_order.auto_functionalized_v2
+_DSA_INDEXER = torch.ops.tensor_cast.dsa_indexer.default
 _DSA_ATTENTION_OPS = {
     torch.ops.tensor_cast.mla_sparse_attention.default,
     torch.ops.tensor_cast.mla_sparse_attention_quant.default,
 }
-_STATIC_QUANT_LINEAR = torch.ops.tensor_cast.static_quant_linear.default
-_OPROJ_LINEAR_OPS = {_STATIC_QUANT_LINEAR, torch.ops.aten.mm.default}
 _TRANSPARENT_OPS = _VIEW_OPS | {_REGION_BEGIN, _REGION_END, _COPY_REGION}
 
 
@@ -78,6 +78,49 @@ def _meta_shape(node):
     if meta is None or not hasattr(meta, "shape"):
         return None
     return tuple(meta.shape)
+
+
+def _is_dsa_topk_indices(node) -> bool:
+    if (
+        not isinstance(node, Node)
+        or node.op != "call_function"
+        or node.target is not operator.getitem
+        or len(node.args) < 2
+        or node.args[1] != 0
+    ):
+        return False
+    source = node.args[0]
+    return (
+        isinstance(source, Node)
+        and source.op == "call_function"
+        and source.target is _AUTO_FUNCTIONALIZED_V2
+        and bool(source.args)
+        and source.args[0] is _DSA_INDEXER
+    )
+
+
+def _set_local_token_meta(node, full_tokens, local_tokens):
+    """Change the token dimension in an FX node's value metadata."""
+
+    def rewrite(meta):
+        if isinstance(meta, (tuple, list)):
+            return type(meta)(rewrite(value) for value in meta)
+        if not isinstance(meta, torch.Tensor) or full_tokens is None or local_tokens is None:
+            return meta
+
+        shape = list(meta.shape)
+        if not shape:
+            return meta
+        # Batched activations use [1, tokens, ...]; flattened activations and
+        # DSA attention outputs use [tokens, ...]. Do not replace another
+        # dimension that happens to equal full_tokens.
+        token_dim = 1 if len(shape) >= 3 and shape[0] == 1 else 0
+        if token_dim >= len(shape) or shape[token_dim] != full_tokens:
+            return meta
+        shape[token_dim] = local_tokens
+        return meta.new_empty(shape)
+
+    node.meta["val"] = rewrite(node.meta["val"])
 
 
 def _is_sp_local_shape(shape, expected_shape) -> bool:
@@ -271,13 +314,15 @@ def _p2_moe_match(node):
 
 def _insert_all_gather(graph, node, dim, rank, rank_group):
     """Insert all_gather after *node* and redirect all downstream users."""
-    if any(u.op == "call_function" and u.target is _ALL_GATHER for u in node.users):
-        return
+    existing = next((u for u in node.users if u.op == "call_function" and u.target is _ALL_GATHER), None)
+    if existing is not None:
+        return existing
     with graph.inserting_after(node):
         ag = graph.call_function(_ALL_GATHER, (node, dim, rank, rank_group))
     for u in list(node.users):
         if u is not ag:
             u.replace_input_with(node, ag)
+    return ag
 
 
 def _unwrap_comm(node):
@@ -450,6 +495,65 @@ def _is_p2_chain_tail(getitem_node):
     return False
 
 
+def is_dsa_attention(norm: Node) -> bool:
+    """Return whether the current norm directly feeds a DSA attention region."""
+    queue, visited = list(norm.users), set()
+    boundaries = _SINGLE_OUTPUT_NORMS | {_ADD_RMS_NORM2, _ALL_REDUCE, _REDUCE_SCATTER, _MOE_TOPK}
+    while queue:
+        node = queue.pop()
+        if node in visited or node.op == "output":
+            continue
+        visited.add(node)
+        if node.op == "call_function" and node.target in _DSA_ATTENTION_OPS:
+            return True
+        if node.op == "call_function" and node.target in boundaries:
+            continue
+        queue.extend(node.users)
+    return False
+
+
+def _keep_dsa_attention_local(graph, comm, norm, rank, rank_group):
+    """Keep the DSA attention region local and restore its output boundary."""
+    full_shape = _meta_shape(norm)
+    local_shape = _infer_rs_shape(comm, _world_size(rank_group))
+    if full_shape is None or local_shape is None:
+        logger.warning("Falling back to full-token DSA attention because required shape metadata is missing")
+        _insert_all_gather(graph, norm, _shard_dim(norm), rank, rank_group)
+        return
+
+    # Keep the DSA attention input, internal tensors, and output in local-token
+    # shape. Static view/reshape arguments must be updated as part of this step.
+    norm.meta["tensor_cast_sp_local"] = True
+    seq_dim = _shard_dim(norm)
+    full_tokens = full_shape[seq_dim]
+    local_tokens = local_shape[seq_dim]
+    MoeLocalTokenRewriter._mark_local_descendants(
+        norm,
+        full_tokens=full_tokens,
+        local_tokens=local_tokens,
+    )
+
+    # Restore the full-token branch after DSA attention. Dense FFN consumes this
+    # all-gather directly; the MoE rewrite keeps gate local while routing the
+    # hidden-state branch through this all-gather.
+    post_attention_norm = _first_descendant(
+        norm,
+        lambda node: node.op == "call_function" and node.target is _ADD_RMS_NORM2,
+        lambda node: node.op == "call_function" and node.target in {_ALL_GATHER, _ALL_REDUCE, _REDUCE_SCATTER},
+    )
+    if post_attention_norm is None:
+        return
+    post_attention_norm.meta["tensor_cast_sp_local"] = True
+    for user in list(post_attention_norm.users):
+        if user.op != "call_function" or user.target is not operator.getitem:
+            continue
+        user.meta["tensor_cast_sp_local"] = True
+        if isinstance(user, Node) and "val" in user.meta:
+            _set_local_token_meta(user, full_tokens, local_tokens)
+        if user.args[1] == 0:
+            _insert_all_gather(graph, user, _shard_dim(post_attention_norm), rank, rank_group)
+
+
 # ===================================================================
 # Pattern3Rewriter
 # ===================================================================
@@ -547,8 +651,10 @@ class Pattern3Rewriter:
             m.add_node.replace_input_with(m.comm_node, rs)
         else:
             m.comm_output.replace_input_with(m.comm_node, rs)
-        ag_dim = _shard_dim(m.norm_node)
-        _insert_all_gather(graph, m.norm_node, ag_dim, rank, rg)
+        if is_dsa_attention(m.norm_node):
+            _keep_dsa_attention_local(graph, m.comm_node, m.norm_node, rank, rg)
+        else:
+            _insert_all_gather(graph, m.norm_node, _shard_dim(m.norm_node), rank, rg)
 
     def _apply_moe(self, graph):
         matches = self._find_moe(graph)
@@ -640,8 +746,10 @@ class Pattern1Rewriter:
                     and user.args[0] is comm
                 ):
                     user.replace_input_with(comm, rs)
-        ag_dim = _shard_dim(norm)
-        _insert_all_gather(graph, norm, ag_dim, rank, rg)
+        if is_dsa_attention(norm):
+            _keep_dsa_attention_local(graph, comm, norm, rank, rg)
+        else:
+            _insert_all_gather(graph, norm, _shard_dim(norm), rank, rg)
 
 
 class Pattern2Rewriter:
@@ -672,6 +780,9 @@ class Pattern2Rewriter:
         ag_dim = _shard_dim(norm2)
         for u in list(norm2.users):
             if u.op != "call_function" or u.target is not operator.getitem:
+                continue
+            if u.args[1] == 0 and is_dsa_attention(u):
+                _keep_dsa_attention_local(graph, comm, u, rank, rg)
                 continue
             if u.args[1] == 1 and (_is_p3_tail(u) or _is_p2_chain_tail(u)):
                 continue  # residual stays local for P3
@@ -706,25 +817,28 @@ class Pattern2Rewriter:
         for user in list(norm2.users):
             if user.op != "call_function" or user.target is not operator.getitem:
                 continue
+            if user.args[1] == 0 and is_dsa_attention(user):
+                _keep_dsa_attention_local(graph, comm, user, rank, rg)
+                continue
             if user.args[1] == 1 and (_is_moe_p3_tail(user) or _is_p2_chain_tail(user) or _is_moe_residual_add(user)):
                 continue
             _insert_all_gather(graph, user, ag_dim, rank, rg)
 
 
-def _first_ancestor(node, predicate, visited=None):
+def _first_ancestor(node, predicate):
+    """Find an upstream FX node without recursing through an expanded model."""
     if not isinstance(node, Node):
         return None
-    if predicate(node):
-        return node
-    if visited is None:
-        visited = set()
-    if node in visited:
-        return None
-    visited.add(node)
-    for arg in node.args:
-        found = _first_ancestor(arg, predicate, visited) if isinstance(arg, Node) else None
-        if found is not None:
-            return found
+    stack, visited = [node], set()
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        if predicate(current):
+            return current
+        # Push in reverse so traversal preserves the previous recursive order.
+        stack.extend(arg for arg in reversed(current.args) if isinstance(arg, Node))
     return None
 
 
@@ -833,30 +947,57 @@ class MoeLocalTokenRewriter:
         )
         if exit_gather is None:
             return None
-        return full_view, local_value, logits_slice, gate_logits, hidden_slices[0], exit_gather
+        if any(_meta_shape(node) is None for node in (full_view, gate_logits, exit_gather)):
+            logger.warning("Skipping SP MoE local-token rewrite because required shape metadata is missing")
+            return None
+        return full_view, local_value, gate_logits, hidden_slices[0], exit_gather
 
     @staticmethod
-    def _rewrite(graph, full_view, local_value, logits_slice, gate_logits, hidden_slice, exit_gather):
-        # The view uses -1 for the token dimension in traced MoE graphs, so it
-        # remains valid after replacing the full-token gather with a local value.
-        full_view.replace_input_with(full_view.args[0], local_value)
-        topk = next(iter(logits_slice.users))
-        topk.replace_input_with(logits_slice, gate_logits)
+    def _rewrite(graph, full_view, local_value, gate_logits, hidden_slice, exit_gather):
+        entry_gather = full_view.args[0]
+        rank, rank_group = entry_gather.args[2], entry_gather.args[3]
 
-        # The hidden slice now selects the entire local tensor.  Bypass it at
-        # the routing boundary instead of relying on stale FX shape metadata.
-        for user in list(hidden_slice.users):
-            if user.op == "call_function" and user.target is _INIT_ROUTING:
-                user.replace_input_with(hidden_slice, full_view)
+        # Gate runs on local tokens. Keep the original gathered full-token view
+        # for _dp_transform_enter's padding and TP slice on the hidden path.
+        with graph.inserting_after(full_view):
+            local_view = graph.call_function(full_view.target, (local_value, full_view.args[1]))
+        local_view.meta = dict(full_view.meta)
+        for user in list(full_view.users):
+            if user is hidden_slice or user is local_view:
+                continue
+            user.replace_input_with(full_view, local_view)
+        gate_full_shape = _meta_shape(full_view)
+        gate_seq_dim = _shard_dim(full_view)
+        gate_full_tokens = gate_full_shape[gate_seq_dim] if gate_full_shape else None
+        gate_local_tokens = gate_full_tokens // _world_size(rank_group) if gate_full_tokens else None
+        MoeLocalTokenRewriter._mark_local_descendants(
+            local_view,
+            gate_full_tokens,
+            gate_local_tokens,
+        )
 
-        # Routed and shared branches meet downstream of this gather.  Keeping
-        # the value local lets a following P2 match consume the local residual.
+        # Non-multistream vLLM Ascend runs the gate projection locally, then
+        # restores full-token hidden states and router logits before the MoE
+        # prepare stage pads/slices both tensors. Keep the original logits
+        # slice so top-k consumes the same TP-local token range as hidden_slice.
+        gate_gather = _insert_all_gather(graph, gate_logits, _shard_dim(gate_logits), rank, rank_group)
+        if gate_gather is not None:
+            gate_gather.meta = dict(gate_logits.meta)
+            if isinstance(gate_gather, Node) and "val" in gate_gather.meta:
+                _set_local_token_meta(gate_gather, gate_local_tokens, gate_full_tokens)
+
+        # _dp_transform_exit restores full tokens. Reduce-scatter that result
+        # back to the sequence-local residual domain.
         full_shape = _meta_shape(exit_gather)
-        local_shape = _meta_shape(exit_gather.args[0])
-        full_tokens = full_shape[0] if full_shape else None
-        local_tokens = local_shape[0] if local_shape else None
+        seq_dim = _shard_dim(exit_gather)
+        full_tokens = full_shape[seq_dim] if full_shape else None
+        local_tokens = full_tokens // _world_size(rank_group) if full_tokens else None
+        with graph.inserting_after(exit_gather):
+            local_output = graph.call_function(_REDUCE_SCATTER, (exit_gather, seq_dim, rank, rank_group))
         for user in list(exit_gather.users):
-            user.replace_input_with(exit_gather, exit_gather.args[0])
+            if user is local_output:
+                continue
+            user.replace_input_with(exit_gather, local_output)
             MoeLocalTokenRewriter._mark_local_descendants(user, full_tokens, local_tokens)
 
         # In an expanded graph, the local MoE output is fused with the next
@@ -889,6 +1030,8 @@ class MoeLocalTokenRewriter:
                 continue
             visited.add(node)
             node.meta["tensor_cast_sp_local"] = True
+            if isinstance(node, Node) and "val" in node.meta:
+                _set_local_token_meta(node, full_tokens, local_tokens)
             if (
                 node.target in _VIEW_OPS
                 and len(node.args) > 1
@@ -901,76 +1044,23 @@ class MoeLocalTokenRewriter:
                 seq_dim = _shard_dim(node)
                 if len(shape) == 3 and seq_dim < len(shape) and shape[seq_dim] == full_tokens:
                     shape[seq_dim] = local_tokens
+                elif len(shape) == 2 and shape[0] == full_tokens:
+                    shape[0] = local_tokens
                 node.args = (node.args[0], shape, *node.args[2:])
+            if _is_dsa_topk_indices(node):
+                continue
             if node.target is _ADD_RMS_NORM2:
+                queue.extend(
+                    user
+                    for user in node.users
+                    if user.op == "call_function"
+                    and user.target is operator.getitem
+                    and len(user.args) > 1
+                    and user.args[1] == 0
+                    and is_dsa_attention(user)
+                )
                 continue
             queue.extend(node.users)
-
-
-class DsaFullOProjRewriter:
-    """Slice full-token DSA attention output before a replicated o_proj."""
-
-    def apply(self, graph):
-        matches = self._find(graph)
-        for match in matches:
-            self._rewrite(graph, *match)
-        return len(matches)
-
-    @staticmethod
-    def _find(graph):
-        matches = []
-        for norm2 in graph.nodes:
-            if norm2.op != "call_function" or norm2.target is not _ADD_RMS_NORM2:
-                continue
-            o_proj_out = next(
-                (
-                    arg
-                    for arg in norm2.args[:2]
-                    if isinstance(arg, Node)
-                    and arg.op == "call_function"
-                    and arg.target in _VIEW_OPS
-                    and arg.args
-                    and isinstance(arg.args[0], Node)
-                    and arg.args[0].target in _OPROJ_LINEAR_OPS
-                ),
-                None,
-            )
-            if o_proj_out is None:
-                continue
-            linear = o_proj_out.args[0]
-            attention = _first_ancestor(linear.args[0], lambda node: node.target in _DSA_ATTENTION_OPS)
-            gather = _first_ancestor(linear.args[0], lambda node: node.target is _ALL_GATHER)
-            if attention is None or gather is None or len(gather.args) < 4:
-                continue
-            full_shape = _meta_shape(attention)
-            world_size = _world_size(gather.args[3])
-            if not full_shape or world_size <= 1 or full_shape[0] % world_size != 0:
-                continue
-            full_tokens = full_shape[0]
-            local_tokens = full_tokens // world_size
-            matches.append((attention, norm2, gather.args[2], gather.args[3], full_tokens, local_tokens))
-        return matches
-
-    @staticmethod
-    def _rewrite(graph, attention, norm2, rank, rank_group, full_tokens, local_tokens):
-        with graph.inserting_after(attention):
-            offset = rank_group.index(rank) * local_tokens
-            local_attention = graph.call_function(_SLICE, (attention, 0, offset, offset + local_tokens))
-        for user in list(attention.users):
-            if user is not local_attention:
-                user.replace_input_with(attention, local_attention)
-        MoeLocalTokenRewriter._mark_local_descendants(local_attention, full_tokens, local_tokens)
-        norm2.meta["tensor_cast_sp_local"] = True
-        ag_dim = _shard_dim(norm2)
-        for user in list(norm2.users):
-            if user.op != "call_function" or user.target is not operator.getitem:
-                continue
-            # The normalized output returns to the full-token attention domain.
-            # The residual output remains local across decoder layers and feeds
-            # the next local o_proj/norm boundary directly.
-            if user.args[1] == 1:
-                continue
-            _insert_all_gather(graph, user, ag_dim, rank, rank_group)
 
 
 # ===================================================================
@@ -986,7 +1076,6 @@ class SequenceParallelPass(TensorCastGraphModulePass):
         self._p2_rewriter = Pattern2Rewriter()
         self._p3_rewriter = Pattern3Rewriter()
         self._moe_rewriter = MoeLocalTokenRewriter()
-        self._dsa_o_proj_rewriter = DsaFullOProjRewriter()
 
     def __call__(self, gm):
         if not config.compilation.passes.enable_sequence_parallel:
@@ -1004,15 +1093,13 @@ class SequenceParallelPass(TensorCastGraphModulePass):
         # preceding layer.  P3 and MoE then consume the graph state established
         # by the completed P2 batch.
         p1 = self._p1_rewriter.apply(graph)
-        dsa_o_proj = self._dsa_o_proj_rewriter.apply(graph)
         p2 = self._p2_rewriter.apply(graph)
         p3 = self._p3_rewriter.apply(graph)
         moe = self._moe_rewriter.apply(graph)
         logger.debug("SP ordered rewrites: %d P1, %d P2, %d MoE matches", p1, p2, moe)
         logger.debug("SP ordered rewrites: %d P3 matches", p3)
-        logger.debug("SP ordered rewrites: %d DSA full-o_proj matches", dsa_o_proj)
 
-        if p1 == 0 and p2 == 0 and p3 == 0 and moe == 0 and dsa_o_proj == 0:
+        if p1 == 0 and p2 == 0 and p3 == 0 and moe == 0:
             return gm
 
         gm.graph.eliminate_dead_code()

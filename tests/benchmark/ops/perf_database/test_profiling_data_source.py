@@ -3624,11 +3624,9 @@ def _make_glm5_dsa_op(
             128,
             64,
             2048,
+            torch.tensor(query_lens_values, dtype=torch.int64),
         ],
-        kwargs={
-            "query_lens": torch.tensor(query_lens_values, dtype=torch.int64),
-            "is_decode_values": is_decode_values,
-        },
+        kwargs={"is_decode_values": is_decode_values},
     )
     return op
 
@@ -3805,7 +3803,7 @@ def test_glm5_runtime_list_and_tp_projection_helpers():
 
 def test_glm5_sparse_mla_projects_sequence_parallel_shapes():
     specs = _decompose_mla_common(
-        _make_glm5_sparse_mla_op(),
+        _make_glm5_sparse_mla_op(query_len=256, query_lens_values=[4096]),
         {
             "_runtime_tp_size": 16,
             "_runtime_sequence_parallel": True,
@@ -3828,7 +3826,7 @@ def test_glm5_sparse_mla_projects_sequence_parallel_shapes():
 
 def test_glm5_sparse_mla_chunked_prefill_keeps_sequence_parallel_shapes():
     specs = _decompose_mla_common(
-        _make_glm5_sparse_mla_op(seq_len=8192, is_decode=False),
+        _make_glm5_sparse_mla_op(query_len=256, query_lens_values=[4096], seq_len=8192, is_decode=False),
         {
             "_runtime_tp_size": 16,
             "_runtime_sequence_parallel": True,
@@ -3864,7 +3862,7 @@ def test_glm5_sparse_mla_interpolation_keeps_runtime_sequence_parallel_shapes(mo
         parallel_config=_make_parallel_config(ep_size=32, world_size=32, tp_size=16),
     )
     interpolating = InterpolatingDataSource(base)
-    op = _make_glm5_sparse_mla_op(seq_len=8192, is_decode=False)
+    op = _make_glm5_sparse_mla_op(query_len=256, query_lens_values=[4096], seq_len=8192, is_decode=False)
     mapping = base._op_mapping["operator_mappings"]["tensor_cast.mla_sparse_attention.default"]
     exact_compute_hit = MagicMock(latency_us=1.0, kernel_type="mock_compute")
     captured_attention_params = []
@@ -3916,7 +3914,9 @@ def test_glm5_dsa_chunked_prefill_interpolation_uses_specialized_scatter_lookup(
     )
     monkeypatch.setattr(profiling_data_source.config.compilation.passes, "enable_sequence_parallel", True)
 
-    result = InterpolatingDataSource(base).lookup(_make_glm5_dsa_op(seq_len=8192, is_decode=False))
+    result = InterpolatingDataSource(base).lookup(
+        _make_glm5_dsa_op(query_len=256, query_lens_values=[4096], seq_len=8192, is_decode=False)
+    )
 
     assert result is not None
     assert result.source == QuerySource.INTERPOLATED
@@ -4017,7 +4017,7 @@ def test_glm5_sparse_mla_chunked_prefill_dsa_cp_does_not_reconstruct_global_head
     op = _make_op_info(
         _FakeTorchOp("tensor_cast.mla_sparse_attention.default"),
         [
-            torch.empty(4096, 64, 256, device="meta", dtype=torch.bfloat16),
+            torch.empty(256, 64, 256, device="meta", dtype=torch.bfloat16),
             torch.empty(64, 128, 576, device="meta", dtype=torch.bfloat16),
             None,
             None,
@@ -4056,6 +4056,46 @@ def test_glm5_sparse_mla_chunked_prefill_dsa_cp_does_not_reconstruct_global_head
     assert specs[1].attention_params["q_shape_3d"] == (256, 64, 512)
     assert specs[2].input_shapes == [(64, 256, 512), (64, 512, 256)]
     assert specs[-1].input_shapes == [(256, 16, 1024), (3,)]
+
+
+def test_glm5_sparse_mla_dsa_cp_does_not_shard_local_tokens_twice():
+    op = _make_op_info(
+        _FakeTorchOp("tensor_cast.mla_sparse_attention.default"),
+        [
+            torch.empty(1024, 64, 256, device="meta", dtype=torch.bfloat16),
+            torch.empty(129, 128, 576, device="meta", dtype=torch.bfloat16),
+            None,
+            None,
+            torch.tensor([16384], dtype=torch.int64),
+            torch.tensor([16384], dtype=torch.int64),
+            torch.empty(64, 192, 512, device="meta", dtype=torch.bfloat16),
+            torch.empty(64, 512, 256, device="meta", dtype=torch.bfloat16),
+            None,
+            None,
+            2048,
+        ],
+        kwargs={"is_decode_values": [False]},
+    )
+    specs = _decompose_mla_common(
+        op,
+        {
+            "_runtime_tp_size": 16,
+            "_runtime_sequence_parallel": True,
+            "decomposer_options": {
+                "dsa_cp_layout": {
+                    "attention_heads_already_global": True,
+                    "tail_width_partition": "tp",
+                }
+            },
+        },
+        "BatchMatMulV2",
+        attention_kernel_type="SparseFlashAttention",
+    )
+
+    assert specs is not None
+    assert specs[1].attention_params["q_shape_3d"] == (1024, 64, 512)
+    assert specs[1].attention_params["actual_seq_lengths_values"] == [1024]
+    assert specs[1].attention_params["actual_seq_lengths_kv_values"] == [1024]
 
 
 def test_glm5_mlapo_quant_dsa_cp_uses_global_q_head_count_once():
@@ -4328,7 +4368,7 @@ def test_glm5_mtp_projection_hit_and_measured_main_kernel_fallback(tmp_path):
 
 def test_glm5_lightning_indexer_uses_rank_zero_sp_context():
     specs = _decompose_dsa_indexer(
-        _make_glm5_dsa_op(),
+        _make_glm5_dsa_op(query_len=256, query_lens_values=[4096]),
         {
             "primary_kernel_type": "LightningIndexer",
             "_runtime_tp_size": 16,
@@ -4345,7 +4385,7 @@ def test_glm5_lightning_indexer_uses_rank_zero_sp_context():
 
 def test_glm5_lightning_indexer_chunked_prefill_keeps_sequence_parallel_shapes():
     specs = _decompose_dsa_indexer(
-        _make_glm5_dsa_op(seq_len=8192, is_decode=False),
+        _make_glm5_dsa_op(query_len=256, query_lens_values=[4096], seq_len=8192, is_decode=False),
         {
             "primary_kernel_type": "LightningIndexer",
             "_runtime_tp_size": 16,
@@ -4363,6 +4403,7 @@ def test_glm5_lightning_indexer_chunked_prefill_keeps_sequence_parallel_shapes()
 def test_glm5_lightning_indexer_preserves_heterogeneous_query_boundaries():
     specs = _decompose_dsa_indexer(
         _make_glm5_dsa_op(
+            query_len=256,
             query_lens_values=[128, 3968],
             seq_lens_values=[4096, 8192],
             is_decode_values=[False, False],
@@ -4381,11 +4422,12 @@ def test_glm5_lightning_indexer_preserves_heterogeneous_query_boundaries():
 
 def test_glm5_lightning_indexer_multiple_requests_without_query_boundaries_fail_closed(caplog):
     op = _make_glm5_dsa_op(
+        query_len=256,
         query_lens_values=[128, 3968],
         seq_lens_values=[4096, 8192],
         is_decode_values=[False, False],
     )
-    op.kwargs["query_lens"] = None
+    op.args = (*op.args[:16], None)
     caplog.set_level("WARNING")
 
     specs = _decompose_dsa_indexer(

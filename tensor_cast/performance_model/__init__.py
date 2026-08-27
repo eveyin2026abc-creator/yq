@@ -3652,11 +3652,6 @@ def _dsa_indexer_request_accounting(
     if query_values is None:
         tokens_per_request, remainder = divmod(total_query_tokens, request_count)
         query_values = [tokens_per_request + int(index < remainder) for index in range(request_count)]
-    elif len(query_values) != request_count or sum(query_values) != total_query_tokens:
-        raise ValueError(
-            "dsa_indexer query_lens must contain one packed boundary per request "
-            f"and sum to {total_query_tokens} tokens (got {query_values!r})"
-        )
 
     if seq_values is None:
         active_cache_len = _dsa_indexer_metadata_cache_len(indexer_cache, block_tables)

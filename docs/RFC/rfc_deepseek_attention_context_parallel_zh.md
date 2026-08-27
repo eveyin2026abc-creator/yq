@@ -305,3 +305,70 @@ Performance model + memory tracker
 - 首阶段不改 ServingCast。
 - SFA profiling 数据缺失时，性能结果只能依赖 analytic fallback，无法完全对齐真实 profile。
 - 静态显存统计在迁移到 MemoryTracker 口径前，仍可能和真实引擎执行期物化行为存在偏差。
+
+---
+
+# 2026-08-24：Local-Token 实现
+
+本次更新描述当前代码实现。若本节与 RFC 前文存在差异，以本节描述的已实现行为为准。前文保留方案设计和演进过程，其中可能仍包含之前的 full-token attention 或在 `o_proj` 前插入 slice 的方案。
+
+本节实现和验证范围为 GLM-5.1。修改仅涉及 DSA attention 和 MoE 周边的 token layout，不修改 DSA 权重、replicated `o_proj` 权重或静态权重显存统计。对于尚未验证的其他模型类型，本节不作结论。
+
+## 1. DSA Attention 边界
+
+`SequenceParallelPass` 使用 `is_dsa_attention` 按图结构识别 DSA attention 区域。从候选 norm 输出开始沿消费者向后搜索，直到发现 DSA sparse-attention 算子，或遇到通信、norm、MoE 边界。该判断不依赖模型名白名单。
+
+对于匹配到的 DSA 区域，pass 保留已有的 `all_reduce -> reduce_scatter` 改写，但不再在 attention 前插入常规 `all_gather`。因此 norm 输出、DSA indexer、sparse attention 和 attention 输出都保持在 sequence-local token 域。
+
+Pass 在 DSA 区域内传播 `tensor_cast_sp_local`，并把 FX value metadata 中的 full token 数改为 local token 数。对于包含显式 token 长度的静态 `view` 和 `reshape` 参数，同时修复其 shape，避免实际 tensor 已经是 local token，但仍使用 `[1, 16384, 768]` 之类的 full-token shape。
+
+Attention 之后，`_keep_dsa_attention_local` 查找后续 `add_rms_norm2` 边界。Residual 输出继续保持 local；只有需要返回 full-token 消费者的 normalized 输出才插入 `all_gather`。这样可以让 decoder layer 之间的 residual 链保持 local，同时保证 dense full-token 消费者的输入正确。
+
+之前的 `DsaFullOProjRewriter` 会在 `o_proj` 前切分 full-token attention 输出。当前 attention 已直接产生 local token，不再需要 attention 后的 slice，因此该 rewriter 已删除。
+
+## 2. MoE Token 域
+
+未开启 multistream 的 DSA-CP MoE 路径包含三种 token 域：
+
+```text
+local attention output
+        |
+        +-- local view -> local gate projection
+        |                   |
+        |                   +-- all_gather router logits
+        |                               |
+        |                               +-- existing TP-local logits slice -> top-k
+        |
+        +-- original full-token view -> existing hidden-state pad/slice -> routed experts
+                                            |
+                                            +-- full-token MoE exit -> reduce_scatter
+                                                                            |
+                                                                            +-- local residual
+```
+
+`MoeLocalTokenRewriter` 让 gate projection 在 local token 上执行，但不会绕过已有的 logits slice。它在 local gate projection 后插入 `all_gather`，原有 slice 再选择与 hidden-state 分支相同的 TP-local token 范围，然后进入 `moe_gating_top_k_softmax`。
+
+Hidden-state 路径保留原来的 gathered view，因为 `_dp_transform_enter` 已负责对 hidden states 和 router logits 执行 full-token pad 与 TP slice。`_dp_transform_exit` 恢复 full-token MoE 输出后，sequence-parallel pass 插入 `reduce_scatter`，使后续 residual 链重新回到 local token 域。
+
+Flattened gate 和 MoE exit tensor 的 token 维通过 `_shard_dim` 获取。Rewrite 要求 full view、gate logits 和 exit gather 都具备 shape metadata。缺少 metadata 时输出 warning 并跳过匹配，避免使用 `_shard_dim` 的 batched-tensor 默认值，从而把 collective 错误地应用到 hidden 维。
+
+## 3. FX Metadata 处理
+
+所有 local-token value metadata 修改统一由 `_set_local_token_meta` 完成。调用方先确认对象是 FX `Node`，且存在 `node.meta["val"]`。该函数支持 tensor 以及 tuple/list 返回值，保留 dtype 和 device，并且只修改识别出的 token 维：
+
+- `[1, tokens, ...]` 使用维度 1。
+- Flattened `[tokens, ...]` 和 DSA attention `[tokens, heads, head_dim]` 使用维度 0。
+- 只有当前维度长度等于 `full_tokens` 时才进行替换，避免误改数值上碰巧等于 `full_tokens` 的 hidden 维。
+
+通信插入具备幂等性。若下游已存在 `all_gather`，`_insert_all_gather` 返回已有节点；否则插入新节点、重定向消费者并返回新节点，以便统一修复其 metadata。
+
+## 4. GLM-5.1 验证
+
+改写后的图应满足以下条件：
+
+- 78 个 DSA layer 的 attention 输入和输出均为 local token。
+- 输入长度为 4096、TP size 为 16 时，每个 rank 的 DSA attention 和 local gate 处理 256 个 token。
+- Router logits 在已有 TP-local slice 和 top-k 前执行 `all_gather`。
+- MoE hidden-state prepare 继续使用已有的 full-token pad/slice 转换。
+- MoE 输出在重新进入 local residual 链前执行 `reduce_scatter`。
+- 静态 view 参数、FX metadata 和运行时 local-token 元素数保持一致。

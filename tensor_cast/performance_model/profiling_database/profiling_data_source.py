@@ -971,14 +971,15 @@ def _decompose_mla_common(
                 and isinstance(tp_size, int)
                 and tp_size > 1
             ):
-                work_tokens = math.ceil(num_tokens / tp_size)
+                query_lens = args[5] if isinstance(args[5], torch.Tensor) else None
+                global_query_tokens = sum(_tensor_int_values(query_lens) or [num_tokens])
                 if not sp_heads_already_global:
                     work_heads = num_heads * tp_size
                 runtime_vectors = _rank_zero_sparse_runtime_vectors(
                     seq_lens=seq_lens,
-                    global_query_tokens=num_tokens,
+                    global_query_tokens=global_query_tokens,
                     local_query_tokens=work_tokens,
-                    query_lens=args[5] if isinstance(args[5], torch.Tensor) else None,
+                    query_lens=query_lens,
                 )
 
         if is_sparse_attention:
@@ -1094,25 +1095,23 @@ def _decompose_mla_common(
         if attention_kernel_type == "SparseFlashAttention":
             # GLM5's SFA call consumes the latent 512-wide ql_nope tensor,
             # not the 192-wide pre-absorption MLA query.  With sequence
-            # parallel enabled, vllm-ascend shards tokens across TP ranks and
-            # gathers the TP-local heads into the TND head axis:
-            #   (T, N_local, D) -> (T / TP, N_local * TP, D)
-            # This projection is guarded by both runtime SP state and an
-            # explicit versioned mapping rule; it must never be inferred from
-            # T=4096 alone.
+            # parallel enabled, the input token axis is already SP-local. The
+            # query metadata still describes the complete request and is used
+            # to recover the rank-local query/KV boundaries below.
             sfa_tokens = num_tokens
             sfa_heads = num_heads
             runtime_vectors = None
             tp_size = mapping.get("_runtime_tp_size")
             if mapping.get("_runtime_sequence_parallel") and isinstance(tp_size, int) and tp_size > 1:
-                sfa_tokens = math.ceil(num_tokens / tp_size)
+                query_lens = args[5] if isinstance(args[5], torch.Tensor) else None
+                global_query_tokens = sum(_tensor_int_values(query_lens) or [num_tokens])
                 if not sp_heads_already_global:
                     sfa_heads = num_heads * tp_size
                 runtime_vectors = _rank_zero_sparse_runtime_vectors(
                     seq_lens=seq_lens,
-                    global_query_tokens=num_tokens,
+                    global_query_tokens=global_query_tokens,
                     local_query_tokens=sfa_tokens,
-                    query_lens=args[5] if isinstance(args[5], torch.Tensor) else None,
+                    query_lens=query_lens,
                 )
             topk_limit = args[10] if len(args) > 10 and isinstance(args[10], int) else None
             topk_indices = args[11] if len(args) > 11 else None
@@ -1483,7 +1482,7 @@ def _decompose_dsa_indexer(op_invoke_info: "OpInvokeInfo", mapping: dict) -> Opt
 
     hidden_states, qa_normed = args[0], args[1]
     indexer_cache, block_tables, seq_lens = args[4], args[6], args[7]
-    query_lens = op_invoke_info.kwargs.get("query_lens")
+    query_lens = args[16] if len(args) > 16 else None
     wq_b_weight, wk_weight = args[8], args[9]
     weights_proj_weight, k_norm_weight = args[10], args[11]
     num_heads, head_dim, topk_limit = args[12], args[13], args[15]
@@ -1544,10 +1543,10 @@ def _decompose_dsa_indexer(op_invoke_info: "OpInvokeInfo", mapping: dict) -> Opt
     runtime_vectors = None
     tp_size = mapping.get("_runtime_tp_size")
     if phase == "prefill" and mapping.get("_runtime_sequence_parallel") and isinstance(tp_size, int) and tp_size > 1:
-        indexer_tokens = math.ceil(num_tokens / tp_size)
+        global_query_tokens = sum(_tensor_int_values(query_lens) or [num_tokens])
         runtime_vectors = _rank_zero_sparse_runtime_vectors(
             seq_lens=seq_lens,
-            global_query_tokens=num_tokens,
+            global_query_tokens=global_query_tokens,
             local_query_tokens=indexer_tokens,
             query_lens=query_lens if isinstance(query_lens, torch.Tensor) else None,
             require_query_lens_for_multiple_requests=True,
@@ -1639,7 +1638,7 @@ def _decompose_dsa_indexer(op_invoke_info: "OpInvokeInfo", mapping: dict) -> Opt
             kernel_type="ScatterNdUpdate",
             alternate_kernel_types=["ScatterNdUpdateAiCore"],
             input_shapes=[
-                tuple(indexer_cache.shape),
+                (indexer_cache.numel() // head_dim, head_dim),
                 (num_tokens, 1),
                 (num_tokens, head_dim),
             ],

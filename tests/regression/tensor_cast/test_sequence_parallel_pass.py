@@ -195,8 +195,8 @@ class SequenceParallelPassRegressionTestCase(unittest.TestCase):
             "Optimizer should produce an overall best configuration",
         )
 
-    def test_moe_sp_rewrite_keeps_gate_experts_and_output_local(self):
-        """Fold the generic TP full/local wrapper around an expanded MoE graph."""
+    def test_moe_sp_rewrite_keeps_gate_local_and_hidden_transform_full(self):
+        """Keep gate local while preserving MoE DP enter/exit transforms."""
         graph = Graph()
         local = graph.placeholder("local")
         local.meta["tensor_cast_sp_local"] = True
@@ -219,12 +219,25 @@ class SequenceParallelPassRegressionTestCase(unittest.TestCase):
         shared = graph.call_function(torch.ops.aten.mm.default, (full_view, shared_weight))
         output = graph.call_function(torch.ops.aten.add.Tensor, (exit_gather, shared))
         graph.output(output)
+        self.assertIsNone(MoeLocalTokenRewriter._find_one(topk))
+        full_view.meta["val"] = torch.empty((8, 16), device="meta")
+        gate_logits.meta["val"] = torch.empty((8, 8), device="meta")
+        exit_gather.meta["val"] = torch.empty((8, 16), device="meta")
 
         self.assertEqual(MoeLocalTokenRewriter().apply(graph), 1)
-        self.assertIs(full_view.args[0], local)
-        self.assertIs(topk.args[0], gate_logits)
-        self.assertIs(routed.args[0], full_view)
-        self.assertIs(output.args[0], routed_local)
+        self.assertIs(full_view.args[0], gathered)
+        local_view = gate_logits.args[0]
+        self.assertIs(local_view.args[0], local)
+        self.assertIs(topk.args[0], logits_slice)
+        gate_gather = logits_slice.args[0]
+        self.assertIs(gate_gather.target, torch.ops.tensor_cast.all_gather.default)
+        self.assertIs(gate_gather.args[0], gate_logits)
+        self.assertEqual(gate_gather.args[1], 0)
+        self.assertIs(routed.args[0], hidden_slice)
+        local_output = output.args[0]
+        self.assertIs(local_output.target, torch.ops.tensor_cast.reduce_scatter.default)
+        self.assertIs(local_output.args[0], exit_gather)
+        self.assertEqual(local_output.args[1], 0)
         self.assertTrue(output.meta["tensor_cast_sp_local"])
 
     def test_moe_p2_preserves_shared_expert_all_reduce_on_local_tokens(self):

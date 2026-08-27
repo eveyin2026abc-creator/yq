@@ -3319,6 +3319,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                         spec.input_shapes,
                         spec.dtype,
                         spec.tc_input_count,
+                        input_dtypes=spec.input_dtypes,
                     )
                 if result_interp is not None:
                     lat = result_interp.latency_us
@@ -3393,6 +3394,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         input_shapes: List[Tuple[int, ...]],
         dtype_str: str,
         tc_input_count: Optional[int] = None,
+        input_dtypes: Optional[List[str]] = None,
     ) -> Optional[QueryResult]:
         """Interpolate a compute sub-kernel by explicit shapes.
 
@@ -3411,6 +3413,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                 dtype_str,
                 tc_input_count,
                 policy_kernel_type=policy_kernel_type,
+                input_dtypes=input_dtypes,
             )
             if result is not None:
                 return result
@@ -3423,6 +3426,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
         dtype_str: str,
         tc_input_count: Optional[int] = None,
         policy_kernel_type: Optional[str] = None,
+        input_dtypes: Optional[List[str]] = None,
     ) -> Optional[QueryResult]:
         effective_tc_input_count = tc_input_count if tc_input_count is not None else len(input_shapes)
         if kernel_type in _INTERPOLATION_MATMUL_KERNELS:
@@ -3451,6 +3455,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
             kernel_type,
             input_shapes,
             dtype_str,
+            dtype_values=input_dtypes,
             tc_input_count=effective_tc_input_count,
             query_mode="compute",
             policy_kernel_type=policy_kernel_type,

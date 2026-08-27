@@ -15,7 +15,6 @@ from torch.fx.passes.shape_prop import ShapeProp
 from tensor_cast import config
 import tensor_cast.ops  # noqa: F401
 from tensor_cast.compilation.passes.sequence_parallel_pass import (
-    DsaFullOProjRewriter,
     Pattern1Rewriter,
     Pattern2Rewriter,
     Pattern3Rewriter,
@@ -107,159 +106,6 @@ def _get_node_index(graph_module, node):
         if current_node is node:
             return index
     raise AssertionError("node not found in graph")
-
-
-class DsaFullOProjRewriterTestCase(unittest.TestCase):
-    def test_slices_tokens_before_replicated_o_proj(self):
-        graph = fx.Graph()
-        hidden = graph.placeholder("hidden")
-        weight = graph.placeholder("weight")
-        gathered = graph.call_function(
-            torch.ops.tensor_cast.all_gather.default,
-            (hidden, 1, 0, RANK_GROUP),
-        )
-        attention = graph.call_function(
-            torch.ops.tensor_cast.mla_sparse_attention.default,
-            (gathered,),
-        )
-        attention.meta["val"] = _meta_tensor((128, 8, 256))
-        linear = graph.call_function(
-            torch.ops.tensor_cast.static_quant_linear.default,
-            (attention, weight),
-        )
-        o_proj = graph.call_function(torch.ops.aten.view.default, (linear, [1, 128, 4096]))
-        norm2 = graph.call_function(
-            torch.ops.tensor_cast.add_rms_norm2.default,
-            (hidden, o_proj, weight, EPS),
-        )
-        normalized = graph.call_function(operator.getitem, (norm2, 0))
-        residual = graph.call_function(operator.getitem, (norm2, 1))
-        graph.output(norm2)
-
-        self.assertEqual(DsaFullOProjRewriter().apply(graph), 1)
-
-        [token_slice] = [
-            node for node in graph.nodes if node.op == "call_function" and node.target is torch.ops.aten.slice.Tensor
-        ]
-        self.assertEqual(token_slice.args, (attention, 0, 0, 64))
-        self.assertIs(linear.args[0], token_slice)
-        self.assertEqual(o_proj.args[1], [1, 64, 4096])
-        self.assertTrue(norm2.meta["tensor_cast_sp_local"])
-        self.assertTrue(_has_user(normalized, torch.ops.tensor_cast.all_gather.default))
-        self.assertFalse(_has_user(residual, torch.ops.tensor_cast.all_gather.default))
-
-    def test_slices_tokens_with_rank_offset(self):
-        """DSA slice uses rank * local_tokens as start offset, not always 0."""
-        graph = fx.Graph()
-        hidden = graph.placeholder("hidden")
-        weight = graph.placeholder("weight")
-        gathered = graph.call_function(
-            torch.ops.tensor_cast.all_gather.default,
-            (hidden, 1, 1, RANK_GROUP),  # rank=1
-        )
-        attention = graph.call_function(
-            torch.ops.tensor_cast.mla_sparse_attention.default,
-            (gathered,),
-        )
-        attention.meta["val"] = _meta_tensor((128, 8, 256))
-        linear = graph.call_function(
-            torch.ops.tensor_cast.static_quant_linear.default,
-            (attention, weight),
-        )
-        o_proj = graph.call_function(torch.ops.aten.view.default, (linear, [1, 128, 4096]))
-        norm2 = graph.call_function(
-            torch.ops.tensor_cast.add_rms_norm2.default,
-            (hidden, o_proj, weight, EPS),
-        )
-        normalized = graph.call_function(operator.getitem, (norm2, 0))
-        residual = graph.call_function(operator.getitem, (norm2, 1))
-        graph.output(norm2)
-
-        self.assertEqual(DsaFullOProjRewriter().apply(graph), 1)
-
-        [token_slice] = [
-            node for node in graph.nodes if node.op == "call_function" and node.target is torch.ops.aten.slice.Tensor
-        ]
-        # rank=1, local_tokens=64 → offset=64, end=128
-        self.assertEqual(token_slice.args, (attention, 0, 64, 128))
-        self.assertIs(linear.args[0], token_slice)
-        self.assertEqual(o_proj.args[1], [1, 64, 4096])
-        self.assertTrue(norm2.meta["tensor_cast_sp_local"])
-        self.assertTrue(_has_user(normalized, torch.ops.tensor_cast.all_gather.default))
-        self.assertFalse(_has_user(residual, torch.ops.tensor_cast.all_gather.default))
-
-    def test_slices_tokens_with_nonzero_starting_rank_group(self):
-        """DSA slice uses the rank index within a nonzero-starting TP group."""
-        graph = fx.Graph()
-        hidden = graph.placeholder("hidden")
-        weight = graph.placeholder("weight")
-        rank_group = [2, 3]
-        gathered = graph.call_function(
-            torch.ops.tensor_cast.all_gather.default,
-            (hidden, 1, 2, rank_group),
-        )
-        attention = graph.call_function(
-            torch.ops.tensor_cast.mla_sparse_attention.default,
-            (gathered,),
-        )
-        attention.meta["val"] = _meta_tensor((128, 8, 256))
-        linear = graph.call_function(
-            torch.ops.tensor_cast.static_quant_linear.default,
-            (attention, weight),
-        )
-        o_proj = graph.call_function(torch.ops.aten.view.default, (linear, [1, 128, 4096]))
-        norm2 = graph.call_function(
-            torch.ops.tensor_cast.add_rms_norm2.default,
-            (hidden, o_proj, weight, EPS),
-        )
-        graph.output(norm2)
-
-        self.assertEqual(DsaFullOProjRewriter().apply(graph), 1)
-
-        [token_slice] = [
-            node for node in graph.nodes if node.op == "call_function" and node.target is torch.ops.aten.slice.Tensor
-        ]
-        # Global rank 2 is rank 0 within [2, 3], so it owns the first token shard.
-        self.assertEqual(token_slice.args, (attention, 0, 0, 64))
-
-    def test_slices_tokens_with_bf16_mm_o_proj(self):
-        """DSA rewriter also matches BF16 aten.mm o_proj, not only static_quant_linear."""
-        graph = fx.Graph()
-        hidden = graph.placeholder("hidden")
-        weight = graph.placeholder("weight")
-        gathered = graph.call_function(
-            torch.ops.tensor_cast.all_gather.default,
-            (hidden, 1, 0, RANK_GROUP),
-        )
-        attention = graph.call_function(
-            torch.ops.tensor_cast.mla_sparse_attention.default,
-            (gathered,),
-        )
-        attention.meta["val"] = _meta_tensor((128, 8, 256))
-        linear = graph.call_function(
-            torch.ops.aten.mm.default,
-            (attention, weight),
-        )
-        o_proj = graph.call_function(torch.ops.aten.view.default, (linear, [1, 128, 4096]))
-        norm2 = graph.call_function(
-            torch.ops.tensor_cast.add_rms_norm2.default,
-            (hidden, o_proj, weight, EPS),
-        )
-        normalized = graph.call_function(operator.getitem, (norm2, 0))
-        residual = graph.call_function(operator.getitem, (norm2, 1))
-        graph.output(norm2)
-
-        self.assertEqual(DsaFullOProjRewriter().apply(graph), 1)
-
-        [token_slice] = [
-            node for node in graph.nodes if node.op == "call_function" and node.target is torch.ops.aten.slice.Tensor
-        ]
-        self.assertEqual(token_slice.args, (attention, 0, 0, 64))
-        self.assertIs(linear.args[0], token_slice)
-        self.assertEqual(o_proj.args[1], [1, 64, 4096])
-        self.assertTrue(norm2.meta["tensor_cast_sp_local"])
-        self.assertTrue(_has_user(normalized, torch.ops.tensor_cast.all_gather.default))
-        self.assertFalse(_has_user(residual, torch.ops.tensor_cast.all_gather.default))
 
 
 def _trace_p1_graph(
@@ -378,6 +224,26 @@ class Pattern1RewriterTestCase(unittest.TestCase):
 
         [view] = _find_calls(graph_module, torch.ops.aten.view.default)
         self.assertEqual(view.args[1], [128, 4096])
+
+    def test_p1_dsa_missing_shape_metadata_falls_back_to_all_gather(self):
+        graph_module = _trace_p1_graph()
+        [norm] = _find_calls(graph_module, torch.ops.tensor_cast.rms_norm.default)
+        output = next(node for node in graph_module.graph.nodes if node.op == "output")
+        with graph_module.graph.inserting_before(output):
+            attention = graph_module.graph.call_function(
+                torch.ops.tensor_cast.mla_sparse_attention.default,
+                (norm,),
+            )
+        output.args = (attention,)
+        norm.meta.pop("val")
+        graph_module.recompile()
+
+        with self.assertLogs("tensor_cast.compilation.passes.sequence_parallel_pass", level="WARNING"):
+            graph_module = _run_pass(graph_module)
+
+        [all_gather] = _find_calls(graph_module, torch.ops.tensor_cast.all_gather.default)
+        self.assertIs(all_gather.args[0], norm)
+        self.assertNotIn("tensor_cast_sp_local", norm.meta)
 
 
 class Pattern2RewriterTestCase(unittest.TestCase):

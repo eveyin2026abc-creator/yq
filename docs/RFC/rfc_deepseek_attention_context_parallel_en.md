@@ -305,3 +305,70 @@ Limitations:
 - ServingCast is not changed in the first phase.
 - When SFA profiling data is missing, performance relies on analytic fallback and cannot fully match real profiles.
 - Before static memory accounting moves to a MemoryTracker-aligned path, it can still diverge from real execution-time materialization.
+
+---
+
+# 2026-08-24: Local-Token Implementation
+
+This dated update describes the current code. Where it differs from the earlier sections of this RFC, this section reflects the implemented behavior. The earlier sections preserve the proposal and design history and may describe the previous full-token-attention or pre-`o_proj` slicing approach.
+
+The implementation and validation in this update cover GLM-5.1. The change is limited to the token layout around DSA attention and MoE. It does not change DSA weights, replicated `o_proj` weights, or static weight-memory accounting. No conclusion is made here about other model families that have not been validated.
+
+## 1. DSA Attention Boundary
+
+`SequenceParallelPass` identifies a DSA attention region structurally with `is_dsa_attention`. Starting from a candidate norm output, the search traverses its consumers until it reaches a DSA sparse-attention operator or a communication, norm, or MoE boundary. It does not depend on a model-name allowlist.
+
+For a matched DSA region, the pass keeps the existing `all_reduce -> reduce_scatter` rewrite but does not insert the usual `all_gather` before attention. Consequently, the norm output, DSA indexer, sparse attention, and attention output all remain in the sequence-local token domain.
+
+The pass propagates `tensor_cast_sp_local` through the DSA region and updates FX value metadata from the full token count to the local token count. Static `view` and `reshape` arguments are repaired at the same time when they contain an explicit token extent. This avoids leaving a full-token shape such as `[1, 16384, 768]` on a tensor that now contains only the local token shard.
+
+After attention, `_keep_dsa_attention_local` locates the following `add_rms_norm2` boundary. The residual output remains local. An `all_gather` is inserted only for the normalized output that must return to a full-token consumer. This preserves the local residual chain between decoder layers while keeping dense full-token consumers correct.
+
+The previous `DsaFullOProjRewriter` sliced a full-token attention result before `o_proj`. It has been removed because attention now produces local tokens directly and does not require a post-attention slice.
+
+## 2. MoE Token Domains
+
+The non-multistream DSA-CP MoE path uses three distinct token domains:
+
+```text
+local attention output
+        |
+        +-- local view -> local gate projection
+        |                   |
+        |                   +-- all_gather router logits
+        |                               |
+        |                               +-- existing TP-local logits slice -> top-k
+        |
+        +-- original full-token view -> existing hidden-state pad/slice -> routed experts
+                                            |
+                                            +-- full-token MoE exit -> reduce_scatter
+                                                                            |
+                                                                            +-- local residual
+```
+
+`MoeLocalTokenRewriter` therefore keeps the gate projection local, but it does not bypass the existing logits slice. It inserts an `all_gather` after the local gate projection; the original slice then selects the same TP-local token range used by the hidden-state branch before `moe_gating_top_k_softmax`.
+
+The original gathered view is retained for the hidden-state path because `_dp_transform_enter` already implements full-token padding and TP slicing for both hidden states and router logits. After `_dp_transform_exit` restores the full-token MoE result, the sequence-parallel pass inserts a `reduce_scatter` so the following residual chain returns to the local token domain.
+
+Token dimensions are obtained with `_shard_dim` for the flattened gate and MoE exit tensors. The rewrite requires shape metadata for the full view, gate logits, and exit gather. If that metadata is unavailable, the pattern is skipped with a warning instead of relying on `_shard_dim`'s batched-tensor default and potentially applying a collective on the hidden dimension.
+
+## 3. FX Metadata Handling
+
+All local-token value-metadata updates are centralized in `_set_local_token_meta`. Its callers first verify that the object is an FX `Node` with `node.meta["val"]`. The helper supports tensor values and tuple/list results, preserves dtype and device, and changes only the recognized token dimension:
+
+- `[1, tokens, ...]` uses dimension 1.
+- Flattened `[tokens, ...]` and DSA attention `[tokens, heads, head_dim]` values use dimension 0.
+- A dimension is changed only when its current extent equals `full_tokens`, preventing an unrelated hidden dimension with the same numeric value from being rewritten.
+
+Communication insertion is idempotent. `_insert_all_gather` returns an existing downstream gather when one is already present; otherwise it inserts one, redirects consumers, and returns the new node so its metadata can be repaired consistently.
+
+## 4. GLM-5.1 Validation
+
+The resulting graph has the following expected properties:
+
+- Each of the 78 DSA layers consumes and produces local attention tokens.
+- For a 4096-token chunk with TP size 16, DSA attention and the local gate operate on 256 tokens per rank.
+- Router logits are gathered before the existing TP-local slice and top-k.
+- The MoE hidden-state preparation continues to use its existing full-token pad/slice transformation.
+- The MoE output is reduced-scattered before it rejoins the local residual chain.
+- Static views and FX metadata agree with the runtime local-token element count.
