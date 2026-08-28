@@ -607,7 +607,7 @@ class BaseThroughputOptimizer(ABC):
                 # Existing MTP / baseline path — keep expression unchanged for G1.
                 resolved_query_len = query_len or self.num_mtp_tokens + 1
             resolved_seq_len = seq_len or (
-                optimizer_data.output_length // 2 + optimizer_data.input_length + resolved_query_len
+                optimizer_data.output_length // 2 + optimizer_data.get_decode_context_length() + resolved_query_len
             )
         else:
             # Full prefill defaults to the effective prompt; chunked prefill provides explicit shapes.

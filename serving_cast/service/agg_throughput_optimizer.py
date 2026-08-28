@@ -296,15 +296,10 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
                 composition_rows,
             )
 
-        decode_query_len = self.num_mtp_tokens + 1
-        decode_seq_len = (
-            optimizer_data.output_length // 2 + optimizer_data.get_effective_input_length() + decode_query_len
-        )
         decode_latency, decode_memory_left_gb, decode_breakdowns, decode_memory_info = self._get_or_compute_latency(
             optimizer_data.batch_size,
             optimizer_data,
             is_decode=True,
-            seq_len=decode_seq_len,
         )
         request_count = sum(row["samples"] for row in composition_rows)
         ttft = first_token_time_sum / request_count

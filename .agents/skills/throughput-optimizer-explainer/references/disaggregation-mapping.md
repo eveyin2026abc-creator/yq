@@ -30,7 +30,7 @@ python -m cli.inference.text_generate <model> \
   --num-devices <num_devices> \
   --num-queries <concurrency> \
   --query-length <num_mtp_tokens + 1> \
-  --context-length <input_length + output_length // 2> \
+  --context-length <decode_context_length + output_length // 2> \
   --decode \
   --tp-size <TP> \
   --dp-size <DP> \
@@ -42,3 +42,5 @@ python -m cli.inference.text_generate <model> \
 
 PD ratio mode combines independently optimized Prefill and Decode rows. Explain Prefill QPS and Decode QPS separately, then explain the selected ratio as balancing the two service rates under the available device budget.
 For op-bound analysis, generate separate Prefill and Decode text_generate commands from the selected rows and compare them phase by phase. Keep the conclusion at simulated operator-attribution level unless real profiler data is provided.
+
+For Decode, `decode_context_length` is the full KV-cache prompt context: use the original `input_length` for fixed-length input, or the weighted raw `num_input_tokens` representative when a length distribution is used. Do not reduce it for prefix-cache hits.

@@ -8,6 +8,7 @@ For an aggregation row:
 
 ```text
 effective_input_length = max(1, input_length - floor(input_length * prefix_cache_hit_rate))
+decode_context_length = get_decode_context_length()
 prefill_batch_size = max_batched_tokens // effective_input_length
 concurrency = batch_size * DP * PP
 ```
@@ -15,7 +16,7 @@ concurrency = batch_size * DP * PP
 The optimizer runs or caches two phase simulations:
 
 - Prefill: `is_decode=False`, `query_len=seq_len=effective_input_length`, `concurrency=prefill_batch_size`.
-- Decode: `is_decode=True`, `query_len=num_mtp_tokens + 1`, `seq_len=input_length + output_length // 2 + query_len`, `concurrency=batch_size * DP * PP`.
+- Decode: `is_decode=True`, `query_len=num_mtp_tokens + 1`, `seq_len=decode_context_length + output_length // 2 + query_len`, `concurrency=batch_size * DP * PP`.
 
 Then it combines these phase latencies into TTFT, TPOT, and output throughput.
 
@@ -47,7 +48,7 @@ python -m cli.inference.text_generate <model> \
   --num-devices <num_devices> \
   --num-queries <concurrency> \
   --query-length <num_mtp_tokens + 1> \
-  --context-length <input_length + output_length // 2> \
+  --context-length <decode_context_length + output_length // 2> \
   --decode \
   --tp-size <TP> \
   --dp-size <DP> \
@@ -64,3 +65,5 @@ For aggregation results, collect op-bound output separately for Prefill and Deco
 ## Prefix Cache
 
 For aggregation validation, prefer passing the already reduced `effective_input_length` to `text_generate` instead of passing the original input length plus `--prefix-cache-hit-rate`. This matches the optimizer's internal Prefill request construction more directly.
+
+`decode_context_length` is the full KV-cache prompt context: it is the original `input_length` for fixed-length input, or the weighted raw `num_input_tokens` representative for a length distribution. Prefix-cache hits reduce Prefill work only; they do not shorten Decode context.

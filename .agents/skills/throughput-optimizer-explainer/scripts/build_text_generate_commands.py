@@ -61,14 +61,32 @@ def shell_join(cmd: list[str]) -> str:
     return " ".join(shlex.quote(str(part)) for part in cmd)
 
 
-def build_aggregation(data: dict, include_op_bound: bool = False) -> dict:
+def get_decode_context_length(data: dict) -> int:
+    """Return the full prompt context recorded for Decode command generation."""
+    context_length = data.get("decode_context_length", data.get("input_length"))
+    if context_length is None:
+        raise ValueError("decode_context_length is required when input_length is unavailable")
+    return int(context_length)
+
+
+def get_effective_input_length(data: dict) -> int:
+    """Return the Prefill token count recorded for command generation."""
+    if data.get("effective_input_length") is not None:
+        return int(data["effective_input_length"])
+    if data.get("input_length") is None:
+        raise ValueError("effective_input_length is required when input_length is unavailable")
     input_length = int(data["input_length"])
+    hit_rate = float(data.get("prefix_cache_hit_rate", 0.0))
+    return max(1, input_length - math.floor(input_length * hit_rate))
+
+
+def build_aggregation(data: dict, include_op_bound: bool = False) -> dict:
     output_length = int(data["output_length"])
     max_batched_tokens = int(data.get("max_batched_tokens", 8192))
-    hit_rate = float(data.get("prefix_cache_hit_rate", 0.0))
     num_mtp_tokens = int(data.get("num_mtp_tokens", 0))
     concurrency = int(data["concurrency"])
-    effective_input_length = max(1, input_length - math.floor(input_length * hit_rate))
+    effective_input_length = get_effective_input_length(data)
+    decode_context_length = get_decode_context_length(data)
     prefill_batch_size = max_batched_tokens // effective_input_length
     if prefill_batch_size < 1:
         raise ValueError("max_batched_tokens must be >= effective_input_length for aggregation validation")
@@ -94,7 +112,7 @@ def build_aggregation(data: dict, include_op_bound: bool = False) -> dict:
             "--query-length",
             str(num_mtp_tokens + 1),
             "--context-length",
-            str(input_length + output_length // 2),
+            str(decode_context_length + output_length // 2),
             "--decode",
         ]
     )
@@ -110,11 +128,10 @@ def build_aggregation(data: dict, include_op_bound: bool = False) -> dict:
 
 
 def build_disaggregation(data: dict, include_op_bound: bool = False) -> dict:
-    input_length = int(data["input_length"])
     output_length = int(data["output_length"])
     concurrency = int(data["concurrency"])
-    hit_rate = float(data.get("prefix_cache_hit_rate", 0.0))
     num_mtp_tokens = int(data.get("num_mtp_tokens", 0))
+    decode_context_length = get_decode_context_length(data)
     phase = data.get("phase")
     if phase not in {"prefill", "decode"}:
         raise ValueError("disaggregation input must include phase='prefill' or phase='decode'")
@@ -122,7 +139,7 @@ def build_disaggregation(data: dict, include_op_bound: bool = False) -> dict:
     cmd = base_cmd(data, parallel, include_op_bound=include_op_bound)
     cmd.extend(["--num-queries", str(concurrency)])
     if phase == "prefill":
-        effective_input_length = max(1, input_length - math.floor(input_length * hit_rate))
+        effective_input_length = get_effective_input_length(data)
         cmd.extend(["--query-length", str(effective_input_length), "--context-length", "0"])
         return {"mode": "disaggregation", "phase": phase, "command": shell_join(cmd)}
     cmd.extend(
@@ -130,7 +147,7 @@ def build_disaggregation(data: dict, include_op_bound: bool = False) -> dict:
             "--query-length",
             str(num_mtp_tokens + 1),
             "--context-length",
-            str(input_length + output_length // 2),
+            str(decode_context_length + output_length // 2),
             "--decode",
         ]
     )

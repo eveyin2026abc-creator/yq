@@ -100,7 +100,7 @@ class CompileDecisionKey:
         """
         if is_decode:
             query_len = user_input.num_mtp_tokens + 1
-            seq_len = optimizer_data.output_length // 2 + optimizer_data.get_effective_input_length() + query_len
+            seq_len = optimizer_data.output_length // 2 + optimizer_data.get_decode_context_length() + query_len
         else:
             query_len = optimizer_data.get_effective_input_length()
             seq_len = query_len

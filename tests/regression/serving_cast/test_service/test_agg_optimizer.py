@@ -362,8 +362,8 @@ class TestAggThroughputOptimizer(unittest.TestCase):
 
                 self.assertTrue(latency.call_args.kwargs["is_decode"])
                 self.assertNotIn("query_len", latency.call_args.kwargs)
-                self.assertEqual(latency.call_args.kwargs["seq_len"], 629)
-                self.assertEqual(resolved_shapes, [(8, 629)])
+                self.assertNotIn("seq_len", latency.call_args.kwargs)
+                self.assertEqual(resolved_shapes, [(8, 636)])
 
     def test_get_inference_info_variable_mode_aggregates_prefill_breakdowns(self):
         optimizer_data = OptimizerData(

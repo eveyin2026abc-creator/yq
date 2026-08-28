@@ -414,6 +414,23 @@ class TestBaseBackend(unittest.TestCase):
 
         self.assertEqual((query_len, seq_len), (3, 235))
 
+    def test_resolve_forward_shape_uses_raw_distribution_context_for_decode(self):
+        self.backend.num_mtp_tokens = 0
+        optimizer_data = OptimizerData(
+            length_distribution=LengthDistribution(
+                bins=[
+                    LengthBin(min_tokens=0, max_tokens=100, weight=1.0),
+                    LengthBin(min_tokens=100, max_tokens=300, weight=1.0),
+                ]
+            ),
+            output_length=64,
+            prefix_cache_hit_rate=0.5,
+        )
+
+        query_len, seq_len = self.backend._resolve_forward_shape(optimizer_data, is_decode=True)
+
+        self.assertEqual((query_len, seq_len), (1, 158))
+
     def test_resolve_forward_shape_uses_dflash_block_for_decode(self):
         self.backend.num_mtp_tokens = 0
         optimizer_data = OptimizerData(

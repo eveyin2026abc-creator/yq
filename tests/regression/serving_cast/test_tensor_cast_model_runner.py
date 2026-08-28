@@ -4,6 +4,8 @@ import tempfile
 import threading
 import unittest
 from dataclasses import dataclass
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 from serving_cast.config import Config, ParallelConfig
@@ -224,6 +226,28 @@ class TestInterpolationPoint(unittest.TestCase):
         point3 = InterpolationPoint(total_seq_len=200, total_query_len=50)
         self.assertEqual(point1, point2)
         self.assertNotEqual(point1, point3)
+
+
+class TestInterpolationBatchGeneration(unittest.TestCase):
+    def test_generate_random_batches_clamps_negative_capacity(self):
+        runner = ModelRunner.__new__(ModelRunner)
+        common_config = SimpleNamespace(
+            serving_config=SimpleNamespace(max_concurrency=10, block_size=128, max_tokens_budget=512),
+            load_gen=SimpleNamespace(num_input_tokens=100, num_output_tokens=50),
+        )
+
+        with (
+            patch(
+                "serving_cast.model_runner.Config.get_instance",
+                return_value=SimpleNamespace(common_config=common_config),
+            ),
+            patch.object(runner, "warmup", return_value=(-22, 128)),
+        ):
+            batches = runner.generate_random_batches()
+
+        self.assertTrue(batches)
+        self.assertTrue(all(request.query_len > 0 and request.seq_len > 0 for batch in batches for request in batch))
+        self.assertEqual(batches[-1][0].query_len, 100)
 
 
 class TestAsyncTask(unittest.TestCase):

@@ -108,6 +108,11 @@ class TestServiceUtils(unittest.TestCase):
         config = OptimizerData(input_length=200, prefix_cache_hit_rate=0.5)
         self.assertEqual(config.get_effective_input_length(is_decode=True), 200)
 
+    def test_optimizer_data_decode_context_length_uses_raw_input_length(self):
+        config = OptimizerData(input_length=200, prefix_cache_hit_rate=0.5)
+
+        self.assertEqual(config.get_decode_context_length(), 200)
+
     def test_optimizer_data_prefill_chunk_plan_single_chunk(self):
         config = OptimizerData(input_length=4096, max_batched_tokens=8192)
         self.assertEqual(
@@ -222,6 +227,14 @@ class TestServiceUtils(unittest.TestCase):
         config = OptimizerData(length_distribution=_simple_length_distribution())
 
         self.assertIsNone(config.get_effective_input_length(is_decode=True))
+
+    def test_optimizer_data_decode_context_length_uses_distribution_before_prefix_cache(self):
+        config = OptimizerData(
+            length_distribution=_simple_length_distribution(),
+            prefix_cache_hit_rate=0.5,
+        )
+
+        self.assertEqual(config.get_decode_context_length(), 550)
 
     def test_optimizer_data_effective_input_length_distribution_has_minimum_one(self):
         config = OptimizerData(

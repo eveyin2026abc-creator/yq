@@ -99,7 +99,7 @@ Compute:
 I_eff = max(1, I - floor(I * H))
 prefill_batch_size = M // I_eff
 decode_query_length = N + 1
-decode_context_length = I + O // 2
+decode_context_length = get_decode_context_length() + O // 2
 decode_num_queries = C
 ```
 

@@ -256,6 +256,12 @@ class ModelRunner:
             num_blocks // ((max_query_len + block_size - 1) // block_size),
             max_concurrency,
         )
+        if upper_batch_size < 1:
+            logger.warning(
+                "Interpolation warmup found no available KV-cache blocks; "
+                "using one-request samples instead of generating invalid negative shapes."
+            )
+            upper_batch_size = 1
 
         max_nums_prefill_req = min(upper_batch_size, (max_tokens_budget + max_query_len - 1) // max_query_len)
         for num_prefill_req in range(1, max_nums_prefill_req + 1):

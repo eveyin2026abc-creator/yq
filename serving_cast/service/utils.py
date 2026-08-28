@@ -147,8 +147,7 @@ class OptimizerData:
         if self.length_distribution is not None:
             if is_decode:
                 return None
-            weighted_average = sum(row["query_len"] * row["request_ratio"] for row in self.get_representative_rows())
-            return max(1, math.floor(weighted_average))
+            return self._weighted_representative_length("query_len")
 
         if self.input_length is None:
             return None
@@ -161,6 +160,23 @@ class OptimizerData:
                 f"Got input_length={self.input_length}, prefix_cache_hit_rate={self.prefix_cache_hit_rate}."
             )
         return effective_input_length
+
+    def _weighted_representative_length(self, field: str) -> int:
+        """Return a weighted, positive representative length from distribution rows."""
+        weighted_average = sum(row[field] * row["request_ratio"] for row in self.get_representative_rows())
+        return max(1, math.floor(weighted_average))
+
+    def get_decode_context_length(self) -> Optional[int]:
+        """Return the representative full prompt length used by decode.
+
+        Decode attends to the complete KV-cache context, so prefix-cache hits
+        reduce prefill work but must not shorten this length.  Distribution mode
+        has no single request length; use its weighted representative raw prompt
+        length, matching the representative strategy used for prefill.
+        """
+        if self.length_distribution is not None:
+            return self._weighted_representative_length("num_input_tokens")
+        return self.input_length
 
     def get_prefill_chunk_plan(self, concurrency: Optional[int] = None) -> list[PrefillChunk]:
         """Split the effective prefill prompt into chunks bounded by max_batched_tokens."""
