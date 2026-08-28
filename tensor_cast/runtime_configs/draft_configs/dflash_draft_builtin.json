@@ -3,12 +3,12 @@
   "block_size": 8,
   "num_hidden_layers": 6,
   "layer_types": [
-    "full_attention",
-    "full_attention",
-    "full_attention",
-    "full_attention",
-    "full_attention",
-    "full_attention"
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention",
+    "sliding_attention"
   ],
   "mask_token_id": 163838,
   "dflash_config": {

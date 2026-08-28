@@ -455,31 +455,41 @@ class BaseThroughputOptimizer(ABC):
 
     @staticmethod
     def _fold_decode_latency_ms(latency_ms: float, optimizer_data: OptimizerData) -> float:
-        """Apply DSpark / Dflash / MTP decode fold (mutually exclusive; never combine)."""
+        """Apply speculative decode fold (mutually exclusive; never combine).
+
+        - DSpark / Dflash: unified clamp to n (= block-1), ``latency / (accept + 1)``.
+        - New MTP (``speculative_method == 'mtp'``): ``latency / (clamp(accept, 0, n) + 1)``.
+        - Legacy MTP (no speculative_method): ``latency / (sum(rates[:N]) + 1)``.
+        """
+        # DSpark: unified clamp to n (block-1)
         dspark_block_size = optimizer_data.dspark_block_size or 0
         if dspark_block_size >= 2:
             accept = optimizer_data.dspark_acceptance_length
             if accept is None:
                 accept = 5.0
-            max_accept = float(dspark_block_size)
-            if accept > max_accept:
-                accept = max_accept
-            if accept < 0:
-                accept = 0.0
-            average_tokens = float(accept) + 1.0
-            return latency_ms / average_tokens
+            n = dspark_block_size - 1
+            accept = min(max(float(accept), 0.0), float(n))
+            return latency_ms / (accept + 1.0)
+        # DFlash: clamp to n (block-1)
         dflash_block_size = optimizer_data.dflash_block_size or 0
         if dflash_block_size >= 2:
             accept = optimizer_data.dflash_acceptance_length
             if accept is None:
                 accept = 5.0
-            max_accept = float(dflash_block_size - 1)
-            if accept > max_accept:
-                accept = max_accept
-            if accept < 0:
-                accept = 0.0
-            average_tokens = float(accept) + 1.0
-            return latency_ms / average_tokens
+            n = dflash_block_size - 1
+            accept = min(max(float(accept), 0.0), float(n))
+            return latency_ms / (accept + 1.0)
+        # New MTP entry (--speculative-method mtp): accept+1 fold
+        if getattr(optimizer_data, "speculative_method", None) == "mtp":
+            n = optimizer_data.num_mtp_tokens or 0
+            if n <= 0:
+                return latency_ms
+            accept = optimizer_data.acceptance_length
+            if accept is None:
+                accept = 5.0
+            accept = min(max(float(accept), 0.0), float(n))
+            return latency_ms / (accept + 1.0)
+        # Legacy MTP path (C1: sum(rates[:N])+1, must not change)
         num_mtp_tokens = optimizer_data.num_mtp_tokens or 0
         mtp_acceptance_rate = optimizer_data.mtp_acceptance_rate or []
         average_tokens = sum(mtp_acceptance_rate[:num_mtp_tokens]) + 1

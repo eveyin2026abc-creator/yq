@@ -113,7 +113,7 @@ class ConfigResolver:
         )
         self.update_mtp_config(num_mtp_tokens=self.user_input.num_mtp_tokens)
         draft_block = self.user_input.draft_block_size()
-        if self.user_input.speculative_method == "dspark":
+        if self.user_input.speculative_method == "dspark" and draft_block >= 2:
             self.update_dspark_config(
                 dspark=True,
                 dspark_block_size=draft_block,
@@ -124,7 +124,7 @@ class ConfigResolver:
                 markov_rank=int(self.user_input.dspark_markov_rank),
                 markov_head_type=str(self.user_input.dspark_markov_head or "vanilla"),
             )
-        elif self.user_input.speculative_method == "dflash":
+        elif self.user_input.speculative_method == "dflash" and draft_block >= 2:
             self.update_dflash_config(
                 dflash=True,
                 dflash_block_size=draft_block,

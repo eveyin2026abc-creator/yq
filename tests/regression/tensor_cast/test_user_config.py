@@ -90,3 +90,33 @@ class TestUserInputConfigWordEmbeddingTp:
 
         with pytest.raises(ValueError, match="word_embedding_tp must be one of"):
             UserInputConfig(word_embedding_tp=123)
+
+
+class TestUserInputConfigSpeculativeExtras:
+    def test_explicit_zero_markov_rank_is_preserved(self):
+        user_config = UserInputConfig(speculative_method="dspark", dspark_markov_rank=0)
+
+        assert user_config.speculative.extras["markov_rank"] == 0
+
+    def test_missing_markov_rank_falls_back_to_256(self):
+        user_config = UserInputConfig(speculative_method="dspark")
+        user_config.dspark_markov_rank = None
+
+        assert user_config.speculative.extras["markov_rank"] == 256
+
+    def test_explicit_zero_acceptance_length_is_preserved(self):
+        user_config = UserInputConfig(
+            speculative_method="dflash",
+            num_speculative_tokens=7,
+            acceptance_length=0.0,
+        )
+
+        spec = user_config.speculative
+        assert spec.acceptance_length == 0.0
+        assert spec.fold_divisor() == 1.0
+
+    def test_missing_acceptance_length_falls_back_to_5(self):
+        user_config = UserInputConfig(speculative_method="dflash", num_speculative_tokens=7)
+        user_config.acceptance_length = None
+
+        assert user_config.speculative.acceptance_length == 5.0

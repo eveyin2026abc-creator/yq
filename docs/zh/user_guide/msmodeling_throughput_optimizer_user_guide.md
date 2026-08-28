@@ -15,7 +15,7 @@
 | PD 分离 | Prefill 与 Decode 分开部署，需要分别评估阶段能力 | `--disagg`、`--ttft-limit` 或 `--tpot-limit` |
 | PD 配比 | 需要规划 Prefill 与 Decode 实例数量比例 | `--enable-optimize-prefill-decode-ratio`、`--prefill-devices-per-instance`、`--decode-devices-per-instance` |
 
-上述任一场景均可叠加 `--speculative-method {dflash,dspark}` 启用投机解码，详见 [2.2 叠加投机解码](#叠加投机解码dflash--dspark)。
+上述任一场景均可叠加 `--speculative-method {dflash,dspark}` 启用投机解码（MTP 建议使用统一接口 `--speculative-method mtp`），详见 [2.2 叠加投机解码](#叠加投机解码dflash--dspark)。
 
 ### 2.1 PD 混部场景
 
@@ -102,7 +102,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 #### 叠加投机解码（Dflash / DSpark）
 
-在 PD 混部、PD 分离或 PD 配比场景下，可通过 `--speculative-method {dflash,dspark}` 叠加草稿投机解码建模，评估其对 Decode 吞吐与 TPOT 的影响。与 MTP（`--num-mtp-tokens` 非 0）互斥；`--num-speculative-tokens`、`--acceptance-length`、`--num-draft-layers`、`--draft-model-config-path` 需先设置 `--speculative-method`；DSpark 另需 `--dspark-markov-rank` / `--dspark-markov-head`。
+在 PD 混部、PD 分离或 PD 配比场景下，可通过 `--speculative-method {dflash,dspark}` 叠加草稿投机解码建模，评估其对 Decode 吞吐与 TPOT 的影响。与 MTP（`--num-mtp-tokens` 非 0）互斥；`--num-speculative-tokens`、`--acceptance-length`、`--num-draft-layers`、`--draft-model-config-path` 需先设置 `--speculative-method`；DSpark 可选用 `--dspark-markov-rank` / `--dspark-markov-head`（默认 `256` / `vanilla`）。
+
+> 补充：MTP 建议优先使用统一接口 `--speculative-method mtp --num-speculative-tokens N [--acceptance-length A]`。旧入口 `--num-mtp-tokens` / `--mtp-acceptance-rates` 与新入口 `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length` 不可混用；选用 `mtp` 时必须同时配置 `--num-speculative-tokens`。原有 `--num-mtp-tokens`（及 `--mtp-acceptance-rates`）目前仍可单独兼容使用，后续版本将逐步弃用。`--num-speculative-tokens` 支持多值搜索；`--acceptance-length` 对所有方法统一 clamp 到 `n`（`= block_size - 1`）。
 
 以下在 PD 分离 Decode 示例基础上追加投机解码参数：
 
@@ -116,7 +118,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action DISABLED \
     --disagg \
-    --tpot-limits 50 \
+    --tpot-limit 50 \
     --speculative-method dflash \
     --num-speculative-tokens 7 \
     --acceptance-length 5 \
@@ -125,6 +127,8 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 说明：
 
+- 已设置 `--speculative-method` 时，`--num-speculative-tokens` 任一候选为 `0` 都会解析失败；关闭请省略 `--speculative-method`。省略该参数时，dflash/dspark 仍使用 builtin `block_size`。`--num-speculative-tokens` 也可传入多个候选值（如 `2 4`）参与搜索。
+- `--num-draft-layers` / `--draft-model-config-path` 仅适用于 `dflash` / `dspark`，不可与 `--speculative-method mtp` 同用。
 - 选用 `dspark` 时将 `--speculative-method` 改为 `dspark`；Markov 参数默认 `--dspark-markov-rank 256`、`--dspark-markov-head vanilla`（可选 `gated`、`rnn`；rank 设为 `0` 时禁用 MarkovHead）。
 - 默认 draft 配置见 `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`；字段说明与自定义方法见 [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md)。
 
@@ -343,19 +347,27 @@ Model & Quantization Options:
                         MTP token count candidate(s). Pass one value for a fixed configuration, or multiple values to
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
-                        TP x EP x MOE-DP x MTP. Mutually exclusive with --speculative-method. (default: None)
-  --speculative-method {dflash,dspark}
-                        Enable draft speculative decoding: dflash or dspark. Mutually exclusive with MTP. (default: None)
-  --num-speculative-tokens NUM_SPECULATIVE_TOKENS
-                        Requires --speculative-method. Speculative tokens excluding anchor; block_size = n + 1 when n >= 1;
-                        0 uses builtin/config default. (default: 0)
+                        TP x EP x MOE-DP x MTP. Legacy MTP entry; cannot be mixed with
+                        --speculative-method / --num-speculative-tokens / --acceptance-length.
+                        MTP can also use --speculative-method mtp --num-speculative-tokens. (default: None)
+  --speculative-method {mtp,dflash,dspark}
+                        Enable speculative decoding: mtp, dflash, or dspark. Mutually exclusive with
+                        the legacy MTP entry (--num-mtp-tokens / --mtp-acceptance-rate).
+                        --speculative-method mtp requires --num-speculative-tokens. (default: None)
+  --num-speculative-tokens NUM_SPECULATIVE_TOKENS [NUM_SPECULATIVE_TOKENS ...]
+                        Requires --speculative-method. Speculative depth excluding anchor; block_size = n + 1 when
+                        n >= 1. Pass multiple values to sweep. Any 0 candidate is rejected; omit
+                        --speculative-method to disable. Omitting keeps builtin block_size for dflash/dspark.
+                        For mtp, n is the MTP token count. (default: None)
   --acceptance-length ACCEPTANCE_LENGTH
-                        Requires --speculative-method. Decode fold scalar; clamped to block_size-1 (dflash) or block_size (dspark).
-                        (default: 5.0)
+                        Requires --speculative-method. Decode fold scalar; clamped to n (= block_size - 1) for all
+                        methods. (default: 5.0)
   --num-draft-layers NUM_DRAFT_LAYERS
-                        Requires --speculative-method. Override draft num_hidden_layers; 0 = config default. (default: 0)
+                        Requires --speculative-method dflash or dspark. Override draft num_hidden_layers; 0 = config
+                        default. (default: 0)
   --draft-model-config-path DRAFT_MODEL_CONFIG_PATH
-                        Requires --speculative-method. Optional path to override builtin draft config.json. (default: None)
+                        Requires --speculative-method dflash or dspark. Optional path to override builtin draft
+                        config.json. (default: None)
   --dspark-markov-rank DSPARK_MARKOV_RANK
                         Requires --speculative-method dspark. Markov embedding rank; 0 disables MarkovHead. (default: 256)
   --dspark-markov-head {vanilla,gated,rnn}
@@ -441,7 +453,7 @@ PD Ratio Optimization Options:
 | `--device` | Options | 可选 | 指定一个或多个设备画像名称；传入多个设备时会输出跨硬件对比结果。<br>1. 类型：Str 或 List[Str]。<br>2. 参考值：任意已注册的 `DeviceProfile` 名称；内置值见 TensorCast 用户指南“设备类型”章节。<br>3. 默认值：未指定时使用 `TEST_DEVICE`。<br>4. 支持一次传入多个已注册 `DeviceProfile` 名称，重复名称会去重并保留输入顺序。 |
 | `--input-length` | Options | 必选 | 输入 prompt 的 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
 | `--output-length` | Options | 必选 | 期望生成的输出 token 长度。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：无。 |
-| `--mtp-acceptance-rates` | Options | 可选 | 指定 MTP token 的接受率列表。<br>1. 类型：List[Float]。<br>2. 取值范围：浮点数列表。<br>3. 默认值：`[0.9, 0.6, 0.4, 0.2]`。 |
+| `--mtp-acceptance-rates` | Options | 可选 | 指定 MTP token 的接受率列表。<br>1. 类型：List[Float]。<br>2. 取值范围：浮点数列表。<br>3. 默认值：`[0.9, 0.6, 0.4, 0.2]`。<br>4. 与原有 `--num-mtp-tokens` 配套，不可与 `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length` 混用。后续版本将随旧 MTP 接口逐步弃用；新接口请使用 `--acceptance-length`。 |
 | `--prefix-cache-hit-rate` | Options | 可选 | 指定 prefix cache 命中率。<br>1. 类型：Float。<br>2. 取值范围：`[0, 1)`。<br>3. 默认值：`0.0`。 |
 | `--dump-original-results` | Options | 可选 | 输出原始搜索结果，便于进一步分析。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `model_id` | General Options | 必选 | 模型 ID 或已审核的本地模型绝对路径。<br>1. 类型：Str。<br>2. 参考值：Hugging Face ID、ModelScope ID 或本地绝对路径。<br>3. 默认值：无。<br>4. 使用远端模型 ID 时，可能通过 `trust_remote_code=True` 执行远端代码。 |
@@ -450,14 +462,14 @@ PD Ratio Optimization Options:
 | `--log-level` | General Options | 可选 | 指定日志级别。<br>1. 类型：Str。<br>2. 参考值：`debug`、`info`、`warning`、`error`、`critical`。<br>3. 默认值：`error`。 |
 | `--compile` | Model & Quantization Options | 可选 | 在推理前对模型调用 `torch.compile()`。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
 | `--compile-allow-graph-break` | Model & Quantization Options | 可选 | 允许 `torch.compile()` 过程中出现 graph break。<br>1. 类型：Bool。<br>2. 取值范围：开关参数。<br>3. 默认值：`False`。 |
-| `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rates) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。<br>6. 与 `--speculative-method` 互斥。 |
-| `--speculative-method` | Model & Quantization Options | 可选 | 指定投机解码方法。<br>1. 类型：Str。<br>2. 取值：`dflash` 或 `dspark`。<br>3. 默认值：未指定（关闭）。<br>4. 与 MTP 互斥；是其余 draft 从属参数的前置开关。 |
-| `--num-speculative-tokens` | Model & Quantization Options | 可选 | 投机 token 数（不含 anchor/bonus）。<br>1. 类型：Int。<br>2. 取值范围：`>= 1` 覆盖 config（内部 `block_size = n + 1`）；`0` 使用 builtin / 外部 config。<br>3. 默认值：`0`。<br>4. 需要 `--speculative-method`。 |
-| `--acceptance-length` | Model & Quantization Options | 可选 | Decode 吞吐折算用接受长度。<br>1. 类型：Float。<br>2. 取值范围：非负；dflash 上界 clamp 到 `block_size - 1`，dspark 上界 clamp 到 `block_size`。<br>3. 默认值：`5.0`。<br>4. 需要 `--speculative-method`；不参与构图，仅影响 Decode 延迟折算。 |
+| `--num-mtp-tokens` | Model & Quantization Options | 可选 | 指定 MTP token 数量候选，支持传入一个或多个值进行搜索；`0` 表示不启用。<br>1. 类型：List[Int]（`nargs="+"`）。<br>2. 取值范围：每个候选为 `0` 到 `9`；可一次传入多个值，例如 `--num-mtp-tokens 0 1 2`。<br>3. 默认值：未指定时等价于 `0`（不启用 MTP）。<br>4. 传入单个值时固定该 MTP 配置；传入多个值时在吞吐寻优中对候选组合进行搜索，并与 TP / EP / MOE-DP 搜索组合相乘。<br>5. 仅支持具备 MTP 能力的模型；每个候选值不能超过 `len(--mtp-acceptance-rates) + 1`（默认接受率列表长度为 `4`，故上限为 `5`；超过时运行时提示 `exceed the supported mtp_acceptance_rate length`）。<br>6. 旧 MTP 入口，不可与 `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length` 混用。<br>7. 建议优先使用统一接口 `--speculative-method mtp --num-speculative-tokens`（语义等价，同样支持多值搜索）。本参数目前仍可单独兼容使用，后续版本将逐步弃用。 |
+| `--speculative-method` | Model & Quantization Options | 可选 | 指定投机解码方法。<br>1. 类型：Str。<br>2. 取值：`mtp`、`dflash` 或 `dspark`。<br>3. 默认值：未指定（关闭）。<br>4. 新投机入口，不可与旧 MTP 入口 `--num-mtp-tokens` / `--mtp-acceptance-rates` 混用。<br>5. 选用 `mtp` 时必须同时配置 `--num-speculative-tokens`。是 `--num-speculative-tokens` / `--acceptance-length` 等从属参数的前置开关。 |
+| `--num-speculative-tokens` | Model & Quantization Options | 可选 | 投机 token 数 / 深度 `n`（不含 anchor/bonus）。<br>1. 类型：List[Int]（`nargs="+"`，可多值搜索）。<br>2. 语义：`>= 1` 时内部 `block_size = n + 1`；**省略**时 dflash/dspark 使用 builtin / 外部 config；已设置 `--speculative-method` 时，任一候选为**显式** `0` 会解析失败（关闭请省略 `--speculative-method`）；对 `mtp` 时 `n` 即 MTP token 数，且必须显式配置。<br>3. 默认值：未指定。<br>4. 需要 `--speculative-method`。传入多个值时与 TP / EP / MOE-DP 组合搜索。 |
+| `--acceptance-length` | Model & Quantization Options | 可选 | Decode 吞吐折算用接受长度。<br>1. 类型：Float。<br>2. 取值范围：非负；对所有方法统一 clamp 到 `n`（`= block_size - 1`）。<br>3. 默认值：`5.0`。<br>4. 需要 `--speculative-method`；不参与构图，仅影响 Decode 延迟折算。 |
 | `--dspark-markov-rank` | Model & Quantization Options | 可选 | Markov embedding 维度。<br>1. 类型：Int。<br>2. 取值范围：非负整数；`0` 禁用 MarkovHead。<br>3. 默认值：`256`。<br>4. 需要 `--speculative-method dspark`。 |
 | `--dspark-markov-head` | Model & Quantization Options | 可选 | Markov head 类型。<br>1. 类型：Str。<br>2. 参考值：`vanilla`、`gated`、`rnn`。<br>3. 默认值：`vanilla`。<br>4. 需要 `--speculative-method dspark`。 |
-| `--num-draft-layers` | Model & Quantization Options | 可选 | 覆盖 draft `num_hidden_layers`。<br>1. 类型：Int。<br>2. 取值范围：正整数；`0` 表示使用 config 默认。<br>3. 默认值：`0`。<br>4. 需要 `--speculative-method`。 |
-| `--draft-model-config-path` | Model & Quantization Options | 可选 | 外部 draft `config.json` 路径（或含该文件的目录）。<br>1. 类型：Str。<br>2. 默认值：`None`（使用 `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`）。<br>3. 需要 `--speculative-method`。<br>4. 字段说明见 [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md)。 |
+| `--num-draft-layers` | Model & Quantization Options | 可选 | 覆盖 draft `num_hidden_layers`。<br>1. 类型：Int。<br>2. 取值范围：非负整数；`0` 表示使用 config 默认。<br>3. 默认值：`0`。<br>4. 需要 `--speculative-method dflash` 或 `dspark`（不可与 `mtp` 同用）。 |
+| `--draft-model-config-path` | Model & Quantization Options | 可选 | 外部 draft `config.json` 路径（或含该文件的目录）。<br>1. 类型：Str。<br>2. 默认值：`None`（使用 `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`）。<br>3. 需要 `--speculative-method dflash` 或 `dspark`（不可与 `mtp` 同用）。<br>4. 字段说明见 [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md)。 |
 | `--quantize-linear-action` | Model & Quantization Options | 可选 | 指定线性层量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`W8A8_DYNAMIC`。<br>4. draft 自有 Linear 不量化。 |
 | `--quantize-non-expert-linear-action` | Model & Quantization Options | 可选 | 为 attention 投影、dense MLP、shared experts 等非 expert 线性层指定独立量化方式。<br>1. 类型：Str。<br>2. 参考值：`DISABLED`、`W8A16_STATIC`、`W8A8_STATIC`、`W4A8_STATIC`、`W8A16_DYNAMIC`、`W8A8_DYNAMIC`、`W4A8_DYNAMIC`、`FP8`、`MXFP4`。<br>3. 默认值：`DISABLED`。<br>4. 主要用于 DeepSeek V4 风格 MoE 模型；路由 MoE experts 仍使用 `--quantize-linear-action`。 |
 | `--mxfp4-group-size` | Model & Quantization Options | 可选 | 指定 mxfp4 量化的 group size。<br>1. 类型：Int。<br>2. 取值范围：正整数。<br>3. 默认值：`32`。 |
@@ -570,7 +582,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-30B-A3B --device ATLAS_8
 
   `tpot = (ttft + decode_latency * output_length) / output_length`
 
-  启用 `--speculative-method` 时，Decode 延迟按 `--acceptance-length` 折算后再参与 TPOT 计算；Prefill 延迟不受 acceptance 折算影响。
+  启用 `--speculative-method` 时，Decode 延迟按 `--acceptance-length`（已按方法 clamp 到 `n = block_size - 1`）折算后再参与 TPOT 计算；Prefill 延迟不受 acceptance 折算影响。
 
 - 输出吞吐量
   `output_throughput = 1000 * (output_length * concurrency) / (ttft + tpot * output_length)`

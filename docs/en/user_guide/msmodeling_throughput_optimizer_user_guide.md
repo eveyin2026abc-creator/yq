@@ -16,7 +16,7 @@ The throughput optimizer supports hardware planning, SLO-constrained throughput 
 | PD Disaggregation | Prefill and Decode are deployed separately. Useful when phase-specific capacity needs to be evaluated. | `--disagg`, `--ttft-limit` or `--tpot-limit` |
 | PD Ratio | Plan the instance ratio between Prefill and Decode. | `--enable-optimize-prefill-decode-ratio`, `--prefill-devices-per-instance`, `--decode-devices-per-instance` |
 
-Any of the scenarios above can overlay `--speculative-method {dflash,dspark}` to enable speculative decoding. See [Overlay Speculative Decoding](#overlay-speculative-decoding-dflash--dspark).
+Any of the scenarios above can overlay `--speculative-method {dflash,dspark}` to enable speculative decoding (for MTP, prefer the unified interface `--speculative-method mtp`). See [Overlay Speculative Decoding](#overlay-speculative-decoding-dflash--dspark).
 
 ### 2.1 PD Aggregation Scenario
 
@@ -103,7 +103,9 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 #### Overlay Speculative Decoding (Dflash / DSpark)
 
-In PD Aggregation, PD Disaggregation, or PD Ratio scenarios, you can overlay draft speculative-decoding modeling with `--speculative-method {dflash,dspark}` to evaluate its impact on Decode throughput and TPOT. This is mutually exclusive with MTP (`--num-mtp-tokens` not 0). `--num-speculative-tokens`, `--acceptance-length`, `--num-draft-layers`, and `--draft-model-config-path` require `--speculative-method` first. DSpark additionally requires `--dspark-markov-rank` / `--dspark-markov-head`.
+In PD Aggregation, PD Disaggregation, or PD Ratio scenarios, you can overlay draft speculative-decoding modeling with `--speculative-method {dflash,dspark}` to evaluate its impact on Decode throughput and TPOT. This is mutually exclusive with MTP (`--num-mtp-tokens` not 0). `--num-speculative-tokens`, `--acceptance-length`, `--num-draft-layers`, and `--draft-model-config-path` require `--speculative-method` first. DSpark can optionally set `--dspark-markov-rank` / `--dspark-markov-head` (defaults `256` / `vanilla`).
+
+> Note: Prefer the unified interface `--speculative-method mtp --num-speculative-tokens N [--acceptance-length A]` for MTP. The legacy `--num-mtp-tokens` / `--mtp-acceptance-rates` entry cannot be mixed with `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length`. `--speculative-method mtp` requires `--num-speculative-tokens`. The legacy options remain accepted on their own for compatibility and will be gradually deprecated in a future release. `--num-speculative-tokens` supports multi-value search; `--acceptance-length` is clamped to `n` (`= block_size - 1`) for all methods.
 
 The following example adds speculative-decoding parameters on top of the PD Disaggregation Decode example:
 
@@ -117,7 +119,7 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
     --quantize-linear-action W8A8_DYNAMIC \
     --quantize-attention-action DISABLED \
     --disagg \
-    --tpot-limits 50 \
+    --tpot-limit 50 \
     --speculative-method dflash \
     --num-speculative-tokens 7 \
     --acceptance-length 5 \
@@ -126,6 +128,8 @@ python -m cli.inference.throughput_optimizer Qwen/Qwen3-32B \
 
 Notes:
 
+- With `--speculative-method` set, any `--num-speculative-tokens` candidate of `0` is rejected; omit `--speculative-method` to disable speculation. Omitting the flag still uses the builtin `block_size` for dflash/dspark. Multiple candidates (e.g. `2 4`) can be passed for search.
+- `--num-draft-layers` / `--draft-model-config-path` apply only to `dflash` / `dspark`, not to `--speculative-method mtp`.
 - For `dspark`, change `--speculative-method` to `dspark`. Markov defaults are `--dspark-markov-rank 256` and `--dspark-markov-head vanilla` (optional `gated`, `rnn`; set rank to `0` to disable MarkovHead).
 - The default draft config is `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`. Field descriptions and customization are in [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md).
 
@@ -297,19 +301,27 @@ Model & Quantization Options:
                         MTP token count candidate(s). Pass one value for a fixed configuration, or multiple values to
                         sweep during throughput optimization. 0 means disabled and only models with MTP support will
                         benefit from non-zero values. When combined with TP/EP/MOE-DP search, total combinations grow as
-                        TP x EP x MOE-DP x MTP. Mutually exclusive with --speculative-method. (default: None)
-  --speculative-method {dflash,dspark}
-                        Enable draft speculative decoding: dflash or dspark. Mutually exclusive with MTP. (default: None)
-  --num-speculative-tokens NUM_SPECULATIVE_TOKENS
-                        Requires --speculative-method. Speculative tokens excluding anchor; block_size = n + 1 when n >= 1;
-                        0 uses builtin/config default. (default: 0)
+                        TP x EP x MOE-DP x MTP. Legacy MTP entry; cannot be mixed with
+                        --speculative-method / --num-speculative-tokens / --acceptance-length.
+                        MTP can also use --speculative-method mtp --num-speculative-tokens. (default: None)
+  --speculative-method {mtp,dflash,dspark}
+                        Enable speculative decoding: mtp, dflash, or dspark. Mutually exclusive with
+                        the legacy MTP entry (--num-mtp-tokens / --mtp-acceptance-rate).
+                        --speculative-method mtp requires --num-speculative-tokens. (default: None)
+  --num-speculative-tokens NUM_SPECULATIVE_TOKENS [NUM_SPECULATIVE_TOKENS ...]
+                        Requires --speculative-method. Speculative depth excluding anchor; block_size = n + 1 when
+                        n >= 1. Pass multiple values to sweep. Any 0 candidate is rejected; omit
+                        --speculative-method to disable. Omitting keeps builtin block_size for dflash/dspark.
+                        For mtp, n is the MTP token count. (default: None)
   --acceptance-length ACCEPTANCE_LENGTH
-                        Requires --speculative-method. Decode fold scalar; clamped to block_size-1 (dflash) or block_size (dspark).
-                        (default: 5.0)
+                        Requires --speculative-method. Decode fold scalar; clamped to n (= block_size - 1) for all
+                        methods. (default: 5.0)
   --num-draft-layers NUM_DRAFT_LAYERS
-                        Requires --speculative-method. Override draft num_hidden_layers; 0 = config default. (default: 0)
+                        Requires --speculative-method dflash or dspark. Override draft num_hidden_layers; 0 = config
+                        default. (default: 0)
   --draft-model-config-path DRAFT_MODEL_CONFIG_PATH
-                        Requires --speculative-method. Optional path to override builtin draft config.json. (default: None)
+                        Requires --speculative-method dflash or dspark. Optional path to override builtin draft
+                        config.json. (default: None)
   --dspark-markov-rank DSPARK_MARKOV_RANK
                         Requires --speculative-method dspark. Markov embedding rank; 0 disables MarkovHead. (default: 256)
   --dspark-markov-head {vanilla,gated,rnn}
@@ -395,7 +407,7 @@ Main parameters:
 | `--device` | Options | Optional | Specifies one or more device profile names. Multiple values enable cross-hardware comparison tables.<br>1. Type: Str or List[Str].<br>2. Reference values: any registered `DeviceProfile` name; see the TensorCast user guide's Device Types section.<br>3. Default: uses `TEST_DEVICE` when omitted.<br>4. Duplicate registered `DeviceProfile` names are removed while preserving input order. |
 | `--input-length` | Options | Required | Input prompt token length.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
 | `--output-length` | Options | Required | Expected generated output token length.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: none. |
-| `--mtp-acceptance-rates` | Options | Optional | MTP token acceptance rate list.<br>1. Type: List[Float].<br>2. Valid range: float list.<br>3. Default: `[0.9, 0.6, 0.4, 0.2]`. |
+| `--mtp-acceptance-rates` | Options | Optional | MTP token acceptance rate list.<br>1. Type: List[Float].<br>2. Valid range: float list.<br>3. Default: `[0.9, 0.6, 0.4, 0.2]`.<br>4. Used with the legacy `--num-mtp-tokens` interface; cannot be mixed with `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length`. This option will be gradually deprecated together with the old MTP interface in a future release. Prefer `--acceptance-length` with the unified interface. |
 | `--prefix-cache-hit-rate` | Options | Optional | Prefix cache hit rate.<br>1. Type: Float.<br>2. Valid range: `[0, 1)`.<br>3. Default: `0.0`. |
 | `--dump-original-results` | Options | Optional | Dumps original search results for further analysis.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `model_id` | General Options | Required | Model ID or reviewed local model absolute path.<br>1. Type: Str.<br>2. Reference values: Hugging Face ID, ModelScope ID, or local absolute path.<br>3. Default: none.<br>4. Remote model IDs may execute remote code through `trust_remote_code=True`. |
@@ -404,14 +416,14 @@ Main parameters:
 | `--log-level` | General Options | Optional | Log level.<br>1. Type: Str.<br>2. Reference values: `debug`, `info`, `warning`, `error`, `critical`.<br>3. Default: `error`. |
 | `--compile` | Model & Quantization Options | Optional | Invokes `torch.compile()` before inference.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
 | `--compile-allow-graph-break` | Model & Quantization Options | Optional | Allows graph breaks during `torch.compile()`.<br>1. Type: Bool.<br>2. Valid range: flag option.<br>3. Default: `False`. |
-| `--num-mtp-tokens` | Model & Quantization Options | Optional | MTP token count candidates. Pass one or more values to search; `0` means disabled.<br>1. Type: List[Int] (`nargs="+"`).<br>2. Valid range: each candidate is an integer from `0` to `9`; multiple values are allowed, for example `--num-mtp-tokens 0 1 2`.<br>3. Default: if omitted, equivalent to `0` (MTP disabled).<br>4. A single value fixes the MTP configuration; multiple values are swept during throughput optimization and multiply with TP / EP / MOE-DP search combinations.<br>5. Only models with MTP support benefit from non-zero values; each candidate value must not exceed `len(--mtp-acceptance-rates) + 1` (default acceptance-rate list length is `4`, so the limit is `5`; exceeding it triggers a runtime error: `exceed the supported mtp_acceptance_rate length`).<br>6. Mutually exclusive with `--speculative-method`. |
-| `--speculative-method` | Model & Quantization Options | Optional | Speculative decoding method.<br>1. Type: Str.<br>2. Values: `dflash` or `dspark`.<br>3. Default: omitted (disabled).<br>4. Mutually exclusive with MTP; this is the prerequisite switch for the remaining draft-dependent parameters. |
-| `--num-speculative-tokens` | Model & Quantization Options | Optional | Number of speculative tokens (excluding anchor/bonus).<br>1. Type: Int.<br>2. Valid range: `>= 1` overrides config (internally `block_size = n + 1`); `0` uses builtin / external config.<br>3. Default: `0`.<br>4. Requires `--speculative-method`. |
-| `--acceptance-length` | Model & Quantization Options | Optional | Acceptance length used to fold Decode throughput.<br>1. Type: Float.<br>2. Valid range: non-negative; clamped to `block_size - 1` for dflash and to `block_size` for dspark.<br>3. Default: `5.0`.<br>4. Requires `--speculative-method`; does not affect graph construction, only Decode latency folding. |
+| `--num-mtp-tokens` | Model & Quantization Options | Optional | MTP token count candidates. Pass one or more values to search; `0` means disabled.<br>1. Type: List[Int] (`nargs="+"`).<br>2. Valid range: each candidate is an integer from `0` to `9`; multiple values are allowed, for example `--num-mtp-tokens 0 1 2`.<br>3. Default: if omitted, equivalent to `0` (MTP disabled).<br>4. A single value fixes the MTP configuration; multiple values are swept during throughput optimization and multiply with TP / EP / MOE-DP search combinations.<br>5. Only models with MTP support benefit from non-zero values; each candidate value must not exceed `len(--mtp-acceptance-rates) + 1` (default acceptance-rate list length is `4`, so the limit is `5`; exceeding it triggers a runtime error: `exceed the supported mtp_acceptance_rate length`).<br>6. Legacy MTP entry; cannot be mixed with `--speculative-method` / `--num-speculative-tokens` / `--acceptance-length`.<br>7. Prefer the unified interface `--speculative-method mtp --num-speculative-tokens` (equivalent semantics; multi-value search supported). This option remains accepted on its own for compatibility and will be gradually deprecated in a future release. |
+| `--speculative-method` | Model & Quantization Options | Optional | Speculative decoding method.<br>1. Type: Str.<br>2. Values: `mtp`, `dflash`, or `dspark`.<br>3. Default: omitted (disabled).<br>4. New speculative entry; cannot be mixed with the legacy `--num-mtp-tokens` / `--mtp-acceptance-rates` entry.<br>5. `--speculative-method mtp` requires `--num-speculative-tokens`. This is the prerequisite switch for `--num-speculative-tokens` / `--acceptance-length` and other dependent parameters. |
+| `--num-speculative-tokens` | Model & Quantization Options | Optional | Number of speculative tokens / depth `n` (excluding anchor/bonus).<br>1. Type: List[Int] (`nargs="+"`; multi-value search supported).<br>2. Semantics: when `>= 1`, internal `block_size = n + 1`; when **omitted**, dflash/dspark use builtin / external config; with `--speculative-method` set, any **explicit** `0` candidate is rejected (omit `--speculative-method` to disable); for `mtp`, `n` is the MTP token count and must be set explicitly.<br>3. Default: omitted.<br>4. Requires `--speculative-method`. Multiple values are swept with TP / EP / MOE-DP. |
+| `--acceptance-length` | Model & Quantization Options | Optional | Acceptance length used to fold Decode throughput.<br>1. Type: Float.<br>2. Valid range: non-negative; clamped to `n` (`= block_size - 1`) for **all** methods.<br>3. Default: `5.0`.<br>4. Requires `--speculative-method`; does not affect graph construction, only Decode latency folding. |
 | `--dspark-markov-rank` | Model & Quantization Options | Optional | Markov embedding rank.<br>1. Type: Int.<br>2. Valid range: non-negative integer; `0` disables MarkovHead.<br>3. Default: `256`.<br>4. Requires `--speculative-method dspark`. |
 | `--dspark-markov-head` | Model & Quantization Options | Optional | Markov head type.<br>1. Type: Str.<br>2. Reference values: `vanilla`, `gated`, `rnn`.<br>3. Default: `vanilla`.<br>4. Requires `--speculative-method dspark`. |
-| `--num-draft-layers` | Model & Quantization Options | Optional | Override draft `num_hidden_layers`.<br>1. Type: Int.<br>2. Valid range: positive integer; `0` uses the config default.<br>3. Default: `0`.<br>4. Requires `--speculative-method`. |
-| `--draft-model-config-path` | Model & Quantization Options | Optional | Path to an external draft `config.json` (or a directory that contains it).<br>1. Type: Str.<br>2. Default: `None` (uses `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`).<br>3. Requires `--speculative-method`.<br>4. Field descriptions are in [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md). |
+| `--num-draft-layers` | Model & Quantization Options | Optional | Override draft `num_hidden_layers`.<br>1. Type: Int.<br>2. Valid range: non-negative integer; `0` uses the config default.<br>3. Default: `0`.<br>4. Requires `--speculative-method dflash` or `dspark` (not valid with `mtp`). |
+| `--draft-model-config-path` | Model & Quantization Options | Optional | Path to an external draft `config.json` (or a directory that contains it).<br>1. Type: Str.<br>2. Default: `None` (uses `tensor_cast/runtime_configs/draft_configs/dflash_draft_builtin.json`).<br>3. Requires `--speculative-method dflash` or `dspark` (not valid with `mtp`).<br>4. Field descriptions are in [`tensor_cast/runtime_configs/draft_configs/README.md`](../../../tensor_cast/runtime_configs/draft_configs/README.md). |
 | `--quantize-linear-action` | Model & Quantization Options | Optional | Linear layer quantization mode.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `W8A8_DYNAMIC`.<br>4. Draft-owned Linear layers are not quantized. |
 | `--quantize-non-expert-linear-action` | Model & Quantization Options | Optional | Separate quantization mode for non-expert linear layers.<br>1. Type: Str.<br>2. Reference values: `DISABLED`, `W8A16_STATIC`, `W8A8_STATIC`, `W4A8_STATIC`, `W8A16_DYNAMIC`, `W8A8_DYNAMIC`, `W4A8_DYNAMIC`, `FP8`, `MXFP4`.<br>3. Default: `DISABLED`.<br>4. Mainly intended for DeepSeek V4-style MoE models. Routed MoE experts still use `--quantize-linear-action`. |
 | `--mxfp4-group-size` | Model & Quantization Options | Optional | mxfp4 quantization group size.<br>1. Type: Int.<br>2. Valid range: positive integer.<br>3. Default: `32`. |
@@ -474,7 +486,7 @@ Main parameters:
 
   `tpot = (ttft + decode_latency * output_length) / output_length`
 
-  When `--speculative-method` is enabled, Decode latency is folded by `--acceptance-length` before TPOT calculation; Prefill latency is not affected by acceptance folding.
+  When `--speculative-method` is enabled, Decode latency is folded by `--acceptance-length` (already clamped to `n = block_size - 1` for all methods) before TPOT calculation; Prefill latency is not affected by acceptance folding.
 
 - Output Throughput
   `output_throughput = 1000 * (output_length * concurrency) / (ttft + tpot * output_length)`

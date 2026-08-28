@@ -699,6 +699,10 @@ def _resolve_main_kv_cache_dtype(model, layer_idx: int) -> torch.dtype:
     in the model working dtype (bf16/fp16) even when activations are FP8-quantized
     elsewhere (model.py:506-507, 527). Indexer cache may still use FP8; see
     ``_resolve_indexer_cache_dtype``.
+
+    Draft attention quantization isolation is handled centrally in
+    ``get_attention_quant_config`` (returns ``None`` for draft layers), so
+    this function does not need to know about draft boundaries.
     """
     model_config = model.model_config
     if _is_v4_model(model):

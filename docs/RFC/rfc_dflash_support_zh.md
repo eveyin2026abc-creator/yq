@@ -202,7 +202,7 @@ builtin 或 --draft-model-config-path 加载的 config
 | `--num-draft-layers` | **共享从属**：覆盖 `num_hidden_layers`（draft N）；需 `--speculative-method` |
 | `--draft-model-config-path` | **共享从属**：可选外部 config 替换 builtin；需 `--speculative-method` |
 
-校验：`max(target_layer_ids) < target.num_hidden_layers`；`H`/`V` 与 target 一致；`len(layer_types) == num_hidden_layers`（覆盖 N 后必须成立）。
+校验：`num_draft_layers <= target.num_hidden_layers`（超出则报错）；`target_layer_ids` 不随 `--num-draft-layers` 拓充；若 `max(id) >= target.num_hidden_layers` 则按主模型层数等间隔重采样。`H`/`V` 与 target 一致；`len(layer_types) == num_hidden_layers`（覆盖 N 后必须成立）。
 
 构图前设置：
 

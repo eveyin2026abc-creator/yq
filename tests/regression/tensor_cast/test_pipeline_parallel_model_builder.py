@@ -8,6 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -282,6 +283,40 @@ def test_pipeline_model_attention_quant_config_uses_global_model_config_without_
 
     assert get_attention_quant_config(model, 2) is attention_config
     assert get_attention_quant_config(model, 1) is None
+
+
+def test_get_attention_quant_config_returns_none_for_draft_layers():
+    """Draft attention layers must be completely isolated from quantization.
+
+    quantize_attention() skips draft layers (quant_config stays None).
+    get_attention_quant_config must NOT fall back to the model-level default
+    config for those layers; it must return None so the KV cache uses the
+    model working dtype.
+    """
+    from tensor_cast.transformers.utils import _is_draft_attention_layer
+
+    # Build a minimal mock: model._inner.draft._draft_attn_layer_indices = [26, 27, 28]
+    fp8_config = AttentionQuantConfig()
+    model = MagicMock()
+    model.model_config.quant_config.attention_configs = {-1: fp8_config}
+    model.attention_by_layers = MagicMock()
+    model.attention_by_layers.__contains__ = lambda self, key: True
+    model.attention_by_layers.__getitem__ = lambda self, key: MagicMock(quant_config=None)
+    draft = MagicMock()
+    draft._draft_attn_layer_indices = [26, 27, 28]
+    inner = MagicMock()
+    inner.draft = draft
+    model._inner = inner
+
+    # Draft layers → None (no quant, despite model-level default FP8 config)
+    assert _is_draft_attention_layer(model, 26) is True
+    assert get_attention_quant_config(model, 26) is None
+    assert get_attention_quant_config(model, 28) is None
+
+    # Non-draft layers → fall back to model-level default (FP8)
+    assert _is_draft_attention_layer(model, 0) is False
+    result = get_attention_quant_config(model, 0)
+    assert result is fp8_config
 
 
 def test_build_model_keeps_single_model_path_when_pp_size_is_one(monkeypatch):

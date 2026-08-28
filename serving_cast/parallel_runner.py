@@ -92,43 +92,37 @@ class ParallelRunner:
             length_distribution = load_length_distribution(input_length)
             input_length = None
 
-        # G1: only populate Dflash/DSpark OptimizerData fields when --speculative-method is set.
+        # G1: only populate speculative OptimizerData fields when --speculative-method is set.
         method = getattr(self.args, "speculative_method", None)
+        speculative_method = None
+        acceptance_length = None
         dflash_block_size = None
         dflash_acceptance_length = None
         dspark_block_size = None
         dspark_acceptance_length = None
         dspark_markov_rank = None
-        if method in ("dflash", "dspark"):
-            from cli.utils import (
-                clamp_acceptance_length,
-                resolve_num_speculative_tokens_to_block,
-            )
+        if method in ("dflash", "dspark", "mtp"):
+            from cli.utils import clamp_acceptance_length
 
-            n, block = resolve_num_speculative_tokens_to_block(
-                int(getattr(self.args, "num_speculative_tokens", 0) or 0),
-                draft_model_config_path=getattr(self.args, "draft_model_config_path", None),
-            )
-            # Prefer CLI-resolved draft_block_size when already filled.
-            resolved_block = int(getattr(self.args, "draft_block_size", 0) or 0)
-            if resolved_block >= 2:
-                block = resolved_block
-                n = block - 1
-            accept = clamp_acceptance_length(
-                float(getattr(self.args, "acceptance_length", 5.0)),
-                block,
-                method,
-            )
-            self.args.num_speculative_tokens = n
-            self.args.draft_block_size = block
-            self.args.acceptance_length = accept
-            if method == "dspark":
-                dspark_block_size = block
-                dspark_acceptance_length = accept
-                dspark_markov_rank = int(getattr(self.args, "dspark_markov_rank", 256))
-            else:
-                dflash_block_size = block
-                dflash_acceptance_length = accept
+            speculative_method = method
+            acceptance_length = float(getattr(self.args, "acceptance_length", 5.0))
+            if method in ("dflash", "dspark"):
+                # Single-N: block/accept already resolved on args by arg_parse.
+                # Multi-N: resolved per-iteration in _submit_task.
+                resolved_block = int(getattr(self.args, "draft_block_size", 0) or 0)
+                if resolved_block >= 2:
+                    acceptance_length = clamp_acceptance_length(acceptance_length, resolved_block, method)
+                    if method == "dspark":
+                        dspark_block_size = resolved_block
+                        dspark_acceptance_length = acceptance_length
+                        dspark_markov_rank = int(getattr(self.args, "dspark_markov_rank", 256))
+                    else:
+                        dflash_block_size = resolved_block
+                        dflash_acceptance_length = acceptance_length
+            elif method == "mtp":
+                n = int(getattr(self.args, "num_speculative_tokens", 0) or 0)
+                if n >= 1:
+                    acceptance_length = clamp_acceptance_length(acceptance_length, n + 1, method)
 
         self.optimizer_data = OptimizerData(
             input_length=input_length,
@@ -148,6 +142,8 @@ class ParallelRunner:
             dspark_block_size=dspark_block_size,
             dspark_acceptance_length=dspark_acceptance_length,
             dspark_markov_rank=dspark_markov_rank,
+            speculative_method=speculative_method,
+            acceptance_length=acceptance_length,
             prefill_devices_per_instance=self.args.prefill_devices_per_instance,
             decode_devices_per_instance=self.args.decode_devices_per_instance,
             prefix_cache_hit_rate=self.args.prefix_cache_hit_rate,
@@ -535,13 +531,27 @@ class ParallelRunner:
             tmp_user_input.ep_size = ep
             tmp_user_input.moe_dp_size = moe_dp
             tmp_user_input.moe_tp_size = target_devices // (ep * moe_dp)
-            # G2: never enable MTP when Dflash/DSpark is on (CLI already forces MTP candidates to 0).
+            # G2: never enable legacy MTP when a speculative method is on.
+            # The num_mtp_tokens parameter is the N candidate (reuses MTP search slot).
             method = getattr(self.args, "speculative_method", None)
-            if method in ("dflash", "dspark"):
-                tmp_user_input.num_mtp_tokens = 0
+            if method in ("dflash", "dspark", "mtp"):
+                from cli.utils import clamp_acceptance_length
+
                 tmp_user_input.speculative_method = method
-                tmp_user_input.num_speculative_tokens = int(getattr(self.args, "num_speculative_tokens", 0) or 0)
-                tmp_user_input.acceptance_length = float(getattr(self.args, "acceptance_length", 5.0))
+                tmp_user_input.num_speculative_tokens = num_mtp_tokens
+                raw_accept = float(getattr(self.args, "acceptance_length", 5.0))
+                # Per-candidate clamp: multi-n path keeps args.acceptance_length unclamped;
+                # each N must clamp to that candidate's n (= block-1) for fold + labels.
+                block = int(num_mtp_tokens) + 1 if int(num_mtp_tokens) >= 1 else 0
+                if block >= 2:
+                    tmp_user_input.acceptance_length = clamp_acceptance_length(raw_accept, block, method)
+                else:
+                    tmp_user_input.acceptance_length = raw_accept
+                if method == "mtp":
+                    # MTP new entry: set num_mtp_tokens for MtpWrapper construction.
+                    tmp_user_input.num_mtp_tokens = num_mtp_tokens
+                else:
+                    tmp_user_input.num_mtp_tokens = 0
             else:
                 tmp_user_input.num_mtp_tokens = num_mtp_tokens
                 tmp_user_input.speculative_method = None
@@ -550,11 +560,11 @@ class ParallelRunner:
             if base_chrome_trace:
                 name, ext = os.path.splitext(base_chrome_trace)
                 draft_suffix = ""
-                draft_block = int(getattr(self.args, "draft_block_size", 0) or 0)
-                if method == "dspark" and draft_block >= 2:
-                    draft_suffix = f"dspark{draft_block}"
-                elif method == "dflash" and draft_block >= 2:
-                    draft_suffix = f"dflash{draft_block}"
+                block = tmp_user_input.draft_block_size()
+                if method == "dspark" and block >= 2:
+                    draft_suffix = f"dspark{block}"
+                elif method == "dflash" and block >= 2:
+                    draft_suffix = f"dflash{block}"
                 tmp_user_input.chrome_trace = (
                     f"{name}_tp{tmp_user_input.tp_size}dp{tmp_user_input.dp_size}"
                     f"mtp{tmp_user_input.num_mtp_tokens}{draft_suffix}{ext}"
@@ -586,15 +596,18 @@ class ParallelRunner:
             and total_combinations > max_search_combinations
             and not getattr(self.args, "search_combination_warning_emitted", False)
         ):
+            spec_label = "Spec" if getattr(self.args, "speculative_method", None) else "MTP"
             logger.warning(
                 "Large number of parallel search combinations "
-                "(%d = TP:%d x EP:%d x MOE-DP:%d x MTP:%d x DCP:%d), "
+                "(%d = TP:%d x EP:%d x MOE-DP:%d x %s:%d x DCP:%d), "
                 "optimization may take a long time. Consider narrowing --tp-sizes, --ep-sizes, "
-                "--moe-dp-sizes, --num-mtp-tokens, or --dcp-sizes; or increase --max-search-combinations.",
+                "--moe-dp-sizes, --num-mtp-tokens/--num-speculative-tokens, or --dcp-sizes; "
+                "or increase --max-search-combinations.",
                 total_combinations,
                 len(tp_list),
                 len(ep_list),
                 len(moe_dp_list),
+                spec_label,
                 len(mtp_list),
                 len(dcp_list),
             )
@@ -750,15 +763,26 @@ class ParallelRunner:
             task_optimizer_data = copy.deepcopy(overwrite_optimizer_data)
             task_optimizer_data.num_mtp_tokens = user_input.num_mtp_tokens
             draft_block = user_input.draft_block_size()
+            # Always persist the (already per-candidate clamped) acceptance for labels/fold.
+            clamped_accept = float(user_input.acceptance_length)
             if user_input.speculative_method == "dspark":
                 task_optimizer_data.dspark_block_size = draft_block
-                task_optimizer_data.dspark_acceptance_length = user_input.acceptance_length
+                task_optimizer_data.dspark_acceptance_length = clamped_accept
                 task_optimizer_data.dspark_markov_rank = user_input.dspark_markov_rank
                 task_optimizer_data.dflash_block_size = None
                 task_optimizer_data.dflash_acceptance_length = None
             elif user_input.speculative_method == "dflash":
                 task_optimizer_data.dflash_block_size = draft_block
-                task_optimizer_data.dflash_acceptance_length = user_input.acceptance_length
+                task_optimizer_data.dflash_acceptance_length = clamped_accept
+                task_optimizer_data.dspark_block_size = None
+                task_optimizer_data.dspark_acceptance_length = None
+                task_optimizer_data.dspark_markov_rank = None
+            elif user_input.speculative_method == "mtp":
+                # New MTP entry: speculative_method & acceptance_length from user_input.
+                task_optimizer_data.speculative_method = "mtp"
+                task_optimizer_data.acceptance_length = clamped_accept
+                task_optimizer_data.dflash_block_size = None
+                task_optimizer_data.dflash_acceptance_length = None
                 task_optimizer_data.dspark_block_size = None
                 task_optimizer_data.dspark_acceptance_length = None
                 task_optimizer_data.dspark_markov_rank = None
@@ -769,6 +793,8 @@ class ParallelRunner:
                 task_optimizer_data.dspark_block_size = None
                 task_optimizer_data.dspark_acceptance_length = None
                 task_optimizer_data.dspark_markov_rank = None
+                task_optimizer_data.speculative_method = None
+                task_optimizer_data.acceptance_length = None
 
             # 2. Select a compile shape mode before constructing the runner used by
             # the actual optimizer search. Aggregation intentionally calibrates on

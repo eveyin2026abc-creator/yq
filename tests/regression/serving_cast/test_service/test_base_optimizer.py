@@ -576,11 +576,12 @@ class TestBaseBackend(unittest.TestCase):
         folded = self.backend._fold_decode_latency_ms(20.0, optimizer_data)
         self.assertAlmostEqual(folded, 20.0)
 
-    def test_fold_decode_latency_uses_dspark_accept_clamp_to_block(self):
-        # raw=90, accept clamped to 8 for B=8 → 90/(8+1)=10
+    def test_fold_decode_latency_uses_dspark_accept_clamp_to_n(self):
+        # RFC: DSpark accept clamped to n (= B-1 = 7), not B (= 8).
+        # raw=90, accept clamped to 7 for B=8 → 90/(7+1)=11.25
         optimizer_data = OptimizerData(dspark_block_size=8, dspark_acceptance_length=99.0)
         folded = self.backend._fold_decode_latency_ms(90.0, optimizer_data)
-        self.assertAlmostEqual(folded, 10.0)
+        self.assertAlmostEqual(folded, 11.25)
 
     def test_fold_prefers_dspark_over_dflash_when_both_set(self):
         optimizer_data = OptimizerData(
@@ -591,6 +592,45 @@ class TestBaseBackend(unittest.TestCase):
         )
         folded = self.backend._fold_decode_latency_ms(40.0, optimizer_data)
         self.assertAlmostEqual(folded, 10.0)  # 40/(3+1)
+
+    def test_fold_decode_latency_new_mtp_uses_accept_plus_one(self):
+        # New MTP entry: speculative_method='mtp', n=2, accept=1.5 → 30/(1.5+1)=12.0
+        optimizer_data = OptimizerData(
+            speculative_method="mtp",
+            num_mtp_tokens=2,
+            acceptance_length=1.5,
+        )
+        folded = self.backend._fold_decode_latency_ms(30.0, optimizer_data)
+        self.assertAlmostEqual(folded, 12.0)
+
+    def test_fold_decode_latency_new_mtp_clamps_accept_to_n(self):
+        # New MTP: n=2, accept=99 → clamp to 2 → 30/(2+1)=10.0
+        optimizer_data = OptimizerData(
+            speculative_method="mtp",
+            num_mtp_tokens=2,
+            acceptance_length=99.0,
+        )
+        folded = self.backend._fold_decode_latency_ms(30.0, optimizer_data)
+        self.assertAlmostEqual(folded, 10.0)
+
+    def test_fold_decode_latency_new_mtp_disabled_no_fold(self):
+        # New MTP with n=0: disabled, no fold
+        optimizer_data = OptimizerData(
+            speculative_method="mtp",
+            num_mtp_tokens=0,
+            acceptance_length=5.0,
+        )
+        folded = self.backend._fold_decode_latency_ms(30.0, optimizer_data)
+        self.assertAlmostEqual(folded, 30.0)
+
+    def test_fold_decode_latency_legacy_mtp_unchanged(self):
+        # Legacy MTP (speculative_method=None): sum(rates[:N])+1 (C1, must not change)
+        optimizer_data = OptimizerData(
+            num_mtp_tokens=2,
+            mtp_acceptance_rate=[0.5, 0.25],
+        )
+        folded = self.backend._fold_decode_latency_ms(30.0, optimizer_data)
+        self.assertAlmostEqual(folded, 30.0 / (0.5 + 0.25 + 1))
 
     def test_get_forward_info_uses_explicit_image_batch_size_when_provided(self):
         self.backend.model_runner = Mock()

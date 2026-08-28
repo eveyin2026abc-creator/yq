@@ -8,6 +8,7 @@ Does not reuse target MLA import. See docs/RFC/rfc_dflash_unified_modeling_zh.md
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -21,6 +22,8 @@ from .attention import AttentionMetadataTensorCast
 from .dflash_qwen3 import Qwen3DFlashDecoderLayer, _flatten_tokens
 from .sampler import Sampler, SamplingMetadata
 from .utils import ModelWrapperBase
+
+logger = logging.getLogger(__name__)
 
 _BUILTIN_DRAFT_CONFIG = (
     Path(__file__).resolve().parent.parent / "runtime_configs" / "draft_configs" / "dflash_draft_builtin.json"
@@ -77,6 +80,58 @@ def _sync_layer_types(layer_types: List[str], num_layers: int) -> List[str]:
     if len(layer_types) > num_layers:
         return list(layer_types[:num_layers])
     return list(layer_types) + [layer_types[-1]] * (num_layers - len(layer_types))
+
+
+def _evenly_spaced_layer_ids(num_hidden_layers: int, num_taps: int) -> List[int]:
+    """Return unique layer ids evenly spaced in ``[0, num_hidden_layers)``.
+
+    Uses inclusive endpoints ``0`` and ``num_hidden_layers - 1``. Tap count is
+    clamped to ``num_hidden_layers`` so ids stay unique.
+    """
+    n_layers = int(num_hidden_layers)
+    n_taps = int(num_taps)
+    if n_layers <= 0:
+        raise ValueError(f"num_hidden_layers must be positive, got {n_layers}")
+    if n_taps <= 0:
+        raise ValueError(f"num_taps must be positive, got {n_taps}")
+    n_taps = min(n_taps, n_layers)
+    if n_taps == 1:
+        return [0]
+    last = n_layers - 1
+    return [i * last // (n_taps - 1) for i in range(n_taps)]
+
+
+def sync_target_layer_ids(dcfg: DflashConfig, num_target_hidden_layers: int) -> List[int]:
+    """Bound-check draft depth and fit ``target_layer_ids`` to the target stack.
+
+    ``--num-draft-layers`` does **not** expand ``target_layer_ids`` (unlike
+    ``layer_types``, which is padded/truncated in ``_sync_layer_types``). Ids are
+    copied from the draft profile as-is. This helper:
+
+    - raises if ``num_draft_layers`` exceeds ``num_target_hidden_layers``;
+    - when any id is outside ``[0, num_target_hidden_layers)``, replaces the
+      list with the same number of taps evenly spaced across the target depth.
+    """
+    n_target = int(num_target_hidden_layers)
+    if n_target <= 0:
+        raise ValueError(f"target num_hidden_layers must be positive, got {n_target}")
+    if int(dcfg.num_draft_layers) > n_target:
+        raise ValueError(f"num_draft_layers={dcfg.num_draft_layers} exceeds target num_hidden_layers={n_target}")
+    ids = [int(i) for i in (dcfg.aux_hidden_state_layer_ids or [])]
+    if not ids:
+        raise ValueError("Dflash requires non-empty target_layer_ids / aux_hidden_state_layer_ids")
+    if min(ids) < 0 or max(ids) >= n_target:
+        fitted = _evenly_spaced_layer_ids(n_target, len(ids))
+        logger.warning(
+            "target_layer_ids %s out of range for target num_hidden_layers=%s; adapted to evenly spaced %s",
+            ids,
+            n_target,
+            fitted,
+        )
+        dcfg.aux_hidden_state_layer_ids = fitted
+        return fitted
+    dcfg.aux_hidden_state_layer_ids = ids
+    return ids
 
 
 def build_draft_hf_config(
@@ -1153,11 +1208,7 @@ def build_dflash_draft_and_wrapper(
         target_vocab_size=target_vocab_size,
         target_max_position_embeddings=target_max_position_embeddings,
     )
-    max_layer = max(dcfg.aux_hidden_state_layer_ids)
-    if max_layer >= num_target_hidden_layers:
-        raise ValueError(
-            f"target_layer_ids max={max_layer} out of range for target num_hidden_layers={num_target_hidden_layers}"
-        )
+    sync_target_layer_ids(dcfg, num_target_hidden_layers)
 
     layer_idx_offset = int(num_target_hidden_layers)
     draft = DflashDraftModel(draft_hf_config, dcfg, layer_idx_offset=layer_idx_offset)

@@ -105,7 +105,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=0,
         metavar=METAVAR_N,
         help="Number of Multi-Token Prediction (MTP) tokens. 0 = disabled. "
-        "Only supports models with MTP capability (e.g., DeepSeek).",
+        "Only supports models with MTP capability (e.g., DeepSeek). "
+        "Legacy MTP entry; cannot be mixed with --speculative-method / --num-speculative-tokens.",
     )
     add_draft_spec_arguments(llm_group, include_acceptance=False)
     add_option(
@@ -443,7 +444,20 @@ def arg_parse(argv=None):
     args = spec_parse_args(parser, argv)
     require_model_id(parser, args)
     validate_draft_spec_cli_args(parser, args, argv=argv)
-    resolve_draft_block_and_acceptance(args)
+    resolve_draft_block_and_acceptance(args, argv=argv)
+    method = draft_method(args)
+    if method is not None:
+        n = int(getattr(args, "num_speculative_tokens", 0) or 0)
+        if n == 0:
+            parser.error(
+                "--speculative-method is set but --num-speculative-tokens is explicitly 0 "
+                "(disabled). Omit --speculative-method for a baseline run, or pass n >= 1."
+            )
+        # Bridge --speculative-method mtp --num-speculative-tokens N onto the
+        # legacy num_mtp_tokens field so ConfigResolver/MtpWrapper match
+        # --num-mtp-tokens N.
+        if method == "mtp" and int(getattr(args, "num_mtp_tokens", 0) or 0) == 0:
+            args.num_mtp_tokens = n
     if args.performance_model is None:
         args.performance_model = ["analytic"]
     if args.export_empirical_metrics and "profiling" not in args.performance_model:
@@ -451,6 +465,34 @@ def arg_parse(argv=None):
     if args.fusion_plugin and not args.compile:
         parser.error("--fusion-plugin requires --compile (else the fusion never fires)")
     return args
+
+
+def align_decode_query_length(args, logger=None) -> None:
+    """Align decode ``--query-length`` to ``n + 1`` for MTP / DFlash / DSpark.
+
+    Both MTP entries (legacy ``--num-mtp-tokens`` and
+    ``--speculative-method mtp --num-speculative-tokens``) use the same window
+    so decode simulation shapes stay identical.
+    """
+    method = draft_method(args)
+    n = int(getattr(args, "num_speculative_tokens", 0) or 0)
+    if method is None and int(getattr(args, "num_mtp_tokens", 0) or 0) > 0:
+        n = int(args.num_mtp_tokens)
+        method = "mtp"
+    if not args.decode or n < 1:
+        return
+    decode_query_len = n + 1
+    if int(args.query_length) == decode_query_len:
+        return
+    label = {"dspark": "DSpark", "dflash": "Dflash", "mtp": "MTP"}.get(method, method)
+    if logger is not None:
+        logger.warning(
+            "%s decode sets --query-length to num_speculative_tokens+1 (%d); was %d",
+            label,
+            decode_query_len,
+            args.query_length,
+        )
+    args.query_length = decode_query_len
 
 
 def main():
@@ -465,22 +507,7 @@ def main():
     if args.graph_log_url:
         config.compilation.debug.graph_log_url = args.graph_log_url
     apply_compilation_config(args.compilation_config)
-
-    # Prefill keeps user --query-length. Decode + DFlash/DSpark aligns to
-    # num_speculative_tokens + 1 (anchor included; equals resolved draft block).
-    method = draft_method(args)
-    if args.decode and method is not None:
-        n = int(getattr(args, "num_speculative_tokens", 0) or 0)
-        decode_query_len = n + 1
-        if decode_query_len >= 2 and int(args.query_length) != decode_query_len:
-            label = "DSpark" if method == "dspark" else "Dflash"
-            logger.warning(
-                "%s decode sets --query-length to num_speculative_tokens+1 (%d); was %d",
-                label,
-                decode_query_len,
-                args.query_length,
-            )
-            args.query_length = decode_query_len
+    align_decode_query_length(args, logger=logger)
 
     # import here to make sure the logger level is set
     logger.info("Importing core modules...")

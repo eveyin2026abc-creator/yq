@@ -524,7 +524,8 @@ class DsparkConfig:
             raise ValueError(f"markov_rank must be non-negative, got {self.markov_rank}")
         if self.markov_head_type not in ("vanilla", "gated", "rnn"):
             raise ValueError(f"markov_head_type must be one of vanilla/gated/rnn, got {self.markov_head_type!r}")
-        max_accept = float(self.dspark_block_size)
+        # RFC: clamp acceptance to n (= block_size - 1), unified with Dflash.
+        max_accept = float(self.dspark_block_size - 1)
         if self.dspark_acceptance_length > max_accept:
             self.dspark_acceptance_length = max_accept
         if self.dspark_acceptance_length < 0:

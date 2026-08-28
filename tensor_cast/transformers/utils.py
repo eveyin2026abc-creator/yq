@@ -84,6 +84,31 @@ def _get_attention_quant_config_from_model_config(model, layer_idx) -> Optional[
     return attention_configs.get(layer_idx, attention_configs.get(-1))
 
 
+def _is_draft_attention_layer(model, layer_idx: int) -> bool:
+    """Return True if *layer_idx* is a DFlash/DSpark draft attention index.
+
+    ``quantize_attention()`` (transformations.py) explicitly skips draft
+    attention layers, leaving ``quant_config = None``.  Without this check,
+    ``get_attention_quant_config`` falls back to the model-level default
+    config (e.g. FP8) for those layers, allocating an FP8 KV cache that
+    mismatches the unquantized draft key/value tensors.
+
+    The draft indices are stored on ``model._inner.draft._draft_attn_layer_indices``
+    (populated in ``DflashDraftModel.__init__``), so no layer-index arithmetic
+    is needed here.
+    """
+    inner = getattr(model, "_inner", None)
+    if inner is None:
+        return False
+    draft = getattr(inner, "draft", None)
+    if draft is None:
+        return False
+    idxs = getattr(draft, "_draft_attn_layer_indices", None)
+    if not idxs:
+        return False
+    return int(layer_idx) in {int(i) for i in idxs}
+
+
 def get_attention_quant_config(model, layer_idx) -> Optional[AttentionQuantConfig]:
     model_config = getattr(model, "model_config", None)
     if (
@@ -101,6 +126,12 @@ def get_attention_quant_config(model, layer_idx) -> Optional[AttentionQuantConfi
     if hasattr(model, "attention_by_layers") and layer_idx in model.attention_by_layers:
         if (attention_config := model.attention_by_layers[layer_idx].quant_config) is not None:
             return attention_config
+    # Draft attention layers are explicitly excluded from quantization by
+    # quantize_attention() (draft indices are skipped). Return None here
+    # instead of falling back to the model-level default, so that KV cache
+    # allocation uses the model working dtype (e.g. float16) for draft layers.
+    if _is_draft_attention_layer(model, layer_idx):
+        return None
     # PipelineModel is a PP container: it keeps model_config but does not own the
     # ordinary TransformerModel _inner / attention_by_layers module structure.
     return _get_attention_quant_config_from_model_config(model, layer_idx)

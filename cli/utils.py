@@ -16,16 +16,29 @@ from cli.spec_cli import (
 from tensor_cast.device import DeviceProfile
 
 DRAFT_METHODS = ("dflash", "dspark")
+SPECULATIVE_METHODS = ("mtp", "dflash", "dspark")
 
-_METHOD_DEPENDENT_OPTIONS = (
+_SHARED_OPTIONS = (
     "--num-speculative-tokens",
     "--acceptance-length",
+)
+_DRAFT_ONLY_OPTIONS = (
     "--num-draft-layers",
     "--draft-model-config-path",
 )
 _DSPARK_ONLY_OPTIONS = (
     "--dspark-markov-rank",
     "--dspark-markov-head",
+)
+_LEGACY_MTP_OPTIONS = (
+    "--num-mtp-tokens",
+    "--mtp-acceptance-rate",
+    "--mtp-acceptance-rates",
+)
+_NEW_SPEC_OPTIONS = (
+    "--speculative-method",
+    "--num-speculative-tokens",
+    "--acceptance-length",
 )
 
 LOG_LEVELS = {
@@ -291,9 +304,9 @@ def argv_has_option(argv, *option_names: str) -> bool:
 
 
 def draft_method(args) -> Optional[str]:
-    """Return ``dflash`` / ``dspark`` / None from ``--speculative-method``."""
+    """Return ``mtp`` / ``dflash`` / ``dspark`` / None from ``--speculative-method``."""
     method = getattr(args, "speculative_method", None)
-    if method in DRAFT_METHODS:
+    if method in SPECULATIVE_METHODS:
         return str(method)
     return None
 
@@ -302,44 +315,66 @@ def add_draft_spec_arguments(
     group: argparse._ActionsContainer,
     *,
     include_acceptance: bool = False,
+    multi_n: bool = False,
 ) -> None:
-    """Register unified draft-spec CLI flags on an argument group/parser."""
+    """Register unified speculative CLI flags on an argument group/parser.
+
+    ``multi_n=True`` registers ``--num-speculative-tokens`` with ``nargs="+"``
+    for throughput_optimizer search; ``multi_n=False`` keeps single-value for
+    text_generate.
+    """
     group.add_argument(
         "--speculative-method",
         type=str,
         default=None,
-        choices=list(DRAFT_METHODS),
-        help="Enable draft speculative decoding: dflash or dspark. "
-        "Mutually exclusive with MTP. Required before draft-dependent options.",
+        choices=list(SPECULATIVE_METHODS),
+        help="Enable speculative decoding: mtp, dflash, or dspark. "
+        "Mutually exclusive with the legacy MTP entry "
+        "(--num-mtp-tokens / --mtp-acceptance-rate). "
+        "--speculative-method mtp requires --num-speculative-tokens. "
+        "Required before speculative-dependent options.",
     )
-    group.add_argument(
-        "--num-speculative-tokens",
-        type=int,
-        default=0,
-        help="Requires --speculative-method. Number of speculative tokens excluding anchor/bonus "
-        "(vLLM-aligned). When >= 1, internal block_size = n + 1. "
-        "0 = use builtin/config block_size.",
-    )
+    if multi_n:
+        group.add_argument(
+            "--num-speculative-tokens",
+            type=check_non_negative_integer,
+            nargs="+",
+            default=None,
+            help="Requires --speculative-method. Speculative depth (excluding anchor). "
+            "Pass multiple values to sweep during throughput optimization. "
+            "Omitting keeps builtin block_size for dflash/dspark. "
+            "Any 0 candidate is rejected; omit --speculative-method to disable.",
+        )
+    else:
+        group.add_argument(
+            "--num-speculative-tokens",
+            type=check_non_negative_integer,
+            default=0,
+            help="Requires --speculative-method. Number of speculative tokens excluding anchor/bonus "
+            "(vLLM-aligned). When >= 1, internal block_size = n + 1. "
+            "Omitting keeps builtin block_size for dflash/dspark. "
+            "Explicit 0 with --speculative-method is rejected; omit --speculative-method to disable.",
+        )
     if include_acceptance:
         group.add_argument(
             "--acceptance-length",
             type=float,
             default=5.0,
             help="Requires --speculative-method. Decode fold scalar. "
-            "Clamped to block_size-1 for dflash, block_size for dspark.",
+            "Clamped to num_speculative_tokens (n) for all methods.",
         )
     group.add_argument(
         "--num-draft-layers",
         type=int,
         default=0,
-        help="Requires --speculative-method. Override draft num_hidden_layers from builtin/config. "
+        help="Requires --speculative-method dflash or dspark. Override draft num_hidden_layers from builtin/config. "
         "0 = use config default.",
     )
     group.add_argument(
         "--draft-model-config-path",
         type=str,
         default=None,
-        help="Requires --speculative-method. Optional path to override builtin draft config.json.",
+        help="Requires --speculative-method dflash or dspark. Optional path to override builtin draft config.json.",
     )
     group.add_argument(
         "--dspark-markov-rank",
@@ -371,19 +406,29 @@ def validate_draft_spec_cli_args(
     *,
     check_mtp_candidates: bool = False,
 ) -> None:
-    """Validate draft-spec G2/G3: dependents require --speculative-method; vs MTP exclusive."""
     argv = sys.argv[1:] if argv is None else argv
     method = draft_method(args)
 
-    if method is None and argv_has_option(argv, *_METHOD_DEPENDENT_OPTIONS):
+    legacy_on = argv_has_option(argv, *_LEGACY_MTP_OPTIONS)
+    new_on = argv_has_option(argv, *_NEW_SPEC_OPTIONS)
+    if legacy_on and new_on:
         parser.error(
-            "--num-speculative-tokens / --acceptance-length / "
-            "--num-draft-layers / --draft-model-config-path require --speculative-method"
+            "legacy MTP options (--num-mtp-tokens / --mtp-acceptance-rate) cannot be mixed with "
+            "unified speculative options (--speculative-method / --num-speculative-tokens / "
+            "--acceptance-length); use one group only."
         )
+
+    if method == "mtp" and not argv_has_option(argv, "--num-speculative-tokens"):
+        parser.error("--speculative-method mtp requires --num-speculative-tokens")
+
+    if method is None and argv_has_option(argv, *_SHARED_OPTIONS):
+        parser.error("--num-speculative-tokens / --acceptance-length require --speculative-method")
+    if method not in ("dflash", "dspark") and argv_has_option(argv, *_DRAFT_ONLY_OPTIONS):
+        parser.error("--num-draft-layers / --draft-model-config-path require --speculative-method dflash or dspark")
     if method != "dspark" and argv_has_option(argv, *_DSPARK_ONLY_OPTIONS):
         parser.error("--dspark-markov-rank / --dspark-markov-head require --speculative-method dspark")
 
-    if method is not None:
+    if method in ("dflash", "dspark"):
         mtp_on = mtp_active(args) if check_mtp_candidates else int(getattr(args, "num_mtp_tokens", 0) or 0) > 0
         if mtp_on:
             label = "DSpark" if method == "dspark" else "Dflash"
@@ -394,53 +439,79 @@ def resolve_num_speculative_tokens_to_block(
     num_speculative_tokens: int,
     *,
     draft_model_config_path: Optional[str] = None,
+    explicit: bool = False,
 ) -> tuple[int, int]:
-    """Map CLI n to (n, block_size). ``n<=0`` loads builtin/config ``block_size``."""
-    from tensor_cast.layers.dflash import load_dflash_draft_config_dict
-
-    source = load_dflash_draft_config_dict(draft_model_config_path)
-    builtin_block = int(source.get("block_size") or 8)
-    if builtin_block < 2:
-        builtin_block = 8
-
     n = int(num_speculative_tokens or 0)
-    if n <= 0:
-        block = builtin_block
-        n = block - 1
-    else:
-        block = n + 1
-    return n, block
+    if n < 0:
+        raise ValueError("num_speculative_tokens must be non-negative")
+    if n == 0:
+        if explicit:
+            return 0, 0
+        from tensor_cast.layers.dflash import load_dflash_draft_config_dict
+
+        source = load_dflash_draft_config_dict(draft_model_config_path)
+        builtin_block = int(source.get("block_size") or 8)
+        if builtin_block < 2:
+            builtin_block = 8
+        return builtin_block - 1, builtin_block
+    return n, n + 1
 
 
 def clamp_acceptance_length(accept: float, block: int, method: str) -> float:
-    """Clamp acceptance by method: dflash → B-1, dspark → B."""
+    """
+    DSpark and Dflash now share the same upper bound ``n`` instead of the
+    previous DSpark-specific ``B`` (= ``block``).  When ``block < 2`` the
+    method is disabled and no clamping is applied.
+    """
     accept = float(accept)
     if accept < 0:
         accept = 0.0
-    if method == "dspark":
-        max_accept = float(block)
-    else:
-        max_accept = float(block - 1)
+    if block < 2:
+        return accept
+    max_accept = float(block - 1)
     if accept > max_accept:
         accept = max_accept
     return accept
 
 
-def resolve_draft_block_and_acceptance(args) -> None:
-    """Resolve ``num_speculative_tokens`` → block; clamp ``acceptance_length`` when present."""
+def resolve_draft_block_and_acceptance(args, *, argv=None) -> None:
+    """Resolve ``num_speculative_tokens`` → block; clamp ``acceptance_length`` when present.
+
+    For mtp: no builtin; n=0 when omitted or explicit 0, n+1 when n>=1.
+    For dflash/dspark: builtin when omitted (C2), (0,0) when explicit 0, (n,n+1) when n>=1.
+    """
     method = draft_method(args)
     if method is None:
+        return
+
+    argv = sys.argv[1:] if argv is None else argv
+    explicit = argv_has_option(argv, "--num-speculative-tokens")
+
+    if method == "mtp":
+        n = int(getattr(args, "num_speculative_tokens", 0) or 0)
+        if n < 0:
+            raise ValueError("num_speculative_tokens must be non-negative")
+        block = n + 1 if n >= 1 else 0
+        args.num_speculative_tokens = n
+        args.draft_block_size = block
+        if hasattr(args, "acceptance_length") and block >= 2:
+            args.acceptance_length = clamp_acceptance_length(
+                float(getattr(args, "acceptance_length", 5.0)),
+                block,
+                method,
+            )
         return
 
     n, block = resolve_num_speculative_tokens_to_block(
         int(getattr(args, "num_speculative_tokens", 0) or 0),
         draft_model_config_path=getattr(args, "draft_model_config_path", None),
+        explicit=explicit,
     )
     args.num_speculative_tokens = n
     # Bridge fields for OptimizerData / labels (block includes anchor).
     args.draft_block_size = block
 
-    if hasattr(args, "acceptance_length"):
+    if hasattr(args, "acceptance_length") and block >= 2:
         args.acceptance_length = clamp_acceptance_length(
             float(getattr(args, "acceptance_length", 5.0)),
             block,

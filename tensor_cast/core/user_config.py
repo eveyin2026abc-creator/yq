@@ -6,6 +6,7 @@ user_config
 import logging
 import math
 from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import List, Optional, Union
 
 from ..core.input_generator import RequestInfo
@@ -22,6 +23,37 @@ from ..model_config import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class SpeculativeMethod(str, Enum):
+    mtp = "mtp"
+    dflash = "dflash"
+    dspark = "dspark"
+
+
+@dataclass
+class SpeculativeSpec:
+    method: Optional[SpeculativeMethod] = None
+    num_speculative_tokens: int = 0
+    acceptance_length: float = 5.0
+    num_draft_layers: int = 0
+    draft_model_config_path: Optional[str] = None
+    extras: dict = field(default_factory=dict)
+
+    def enabled(self) -> bool:
+        return self.method is not None and self.num_speculative_tokens > 0
+
+    def verify_window(self) -> int:
+        if not self.enabled():
+            return 1
+        return self.num_speculative_tokens + 1
+
+    def fold_divisor(self) -> float:
+        if not self.enabled():
+            return 1.0
+        n = self.num_speculative_tokens
+        accept = min(max(self.acceptance_length, 0.0), float(n))
+        return accept + 1.0
 
 
 @dataclass
@@ -129,9 +161,18 @@ class UserInputConfig:
             self.speculative_method = None
             return
         method = str(self.speculative_method).lower()
-        if method not in ("dflash", "dspark"):
-            raise ValueError(f"speculative_method must be 'dflash', 'dspark', or None, got {self.speculative_method!r}")
+        if method not in ("mtp", "dflash", "dspark"):
+            raise ValueError(
+                f"speculative_method must be 'mtp', 'dflash', 'dspark', or None, got {self.speculative_method!r}"
+            )
         self.speculative_method = method
+        # New MTP entry uses num_speculative_tokens; model construction still
+        # reads num_mtp_tokens (MtpWrapper / ConfigResolver). Bridge so both
+        # CLI entries build the same MTP graph.
+        if method == "mtp":
+            n = int(self.num_speculative_tokens or 0)
+            if n > 0 and int(self.num_mtp_tokens or 0) == 0:
+                self.num_mtp_tokens = n
 
     @property
     def dflash(self) -> bool:
@@ -140,6 +181,31 @@ class UserInputConfig:
     @property
     def dspark(self) -> bool:
         return self.speculative_method == "dspark"
+
+    @property
+    def mtp_new(self) -> bool:
+        """True when using the new MTP entry (``--speculative-method mtp``)."""
+        return self.speculative_method == "mtp"
+
+    @property
+    def speculative(self) -> SpeculativeSpec:
+        method_enum: Optional[SpeculativeMethod] = None
+        if self.speculative_method is not None:
+            try:
+                method_enum = SpeculativeMethod(self.speculative_method)
+            except ValueError:
+                method_enum = None
+        return SpeculativeSpec(
+            method=method_enum,
+            num_speculative_tokens=int(self.num_speculative_tokens or 0),
+            acceptance_length=(5.0 if self.acceptance_length is None else float(self.acceptance_length)),
+            num_draft_layers=int(self.num_draft_layers or 0),
+            draft_model_config_path=self.draft_model_config_path,
+            extras={
+                "markov_rank": 256 if self.dspark_markov_rank is None else int(self.dspark_markov_rank),
+                "markov_head": str(self.dspark_markov_head or "vanilla"),
+            },
+        )
 
     def draft_block_size(self) -> int:
         """Draft block length including anchor; 0 when disabled or unresolved."""
@@ -202,6 +268,15 @@ class UserInputConfig:
         print(f"Enable repetition: {not self.disable_repetition}")
         if self.num_mtp_tokens > 0:
             print(f"Number of MTP layers: {self.num_mtp_tokens}")
+        if self.speculative_method == "mtp":
+            n = int(self.num_speculative_tokens or 0)
+            block = self.draft_block_size() or "builtin"
+            print(
+                f"MTP (new entry): enabled={n > 0}, "
+                f"num_speculative_tokens={n or 'disabled'}, "
+                f"block_size={block}, "
+                f"acceptance_length={self.acceptance_length}"
+            )
         if self.speculative_method == "dflash":
             block = self.draft_block_size() or "builtin"
             print(

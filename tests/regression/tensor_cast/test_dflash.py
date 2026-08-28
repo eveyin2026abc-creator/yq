@@ -14,6 +14,7 @@ from tensor_cast.layers.dflash import (
     build_draft_hf_config,
     resolve_l_ctx,
     resolve_target_embed_and_lm_head,
+    sync_target_layer_ids,
 )
 from tensor_cast.layers.dflash_qwen3 import Qwen3DFlashAttention, Qwen3DFlashDecoderLayer
 from tensor_cast.model_config import DflashConfig
@@ -88,6 +89,52 @@ class TestBuiltinDraftConfig(unittest.TestCase):
         self.assertEqual(draft_hf.num_hidden_layers, 2)
         self.assertEqual(len(draft_hf.layer_types), 2)
         self.assertEqual(draft_hf._attn_implementation, "tensor_cast")
+
+    def test_num_draft_layers_override_does_not_expand_target_layer_ids(self):
+        """CLI N only syncs layer_types; builtin target_layer_ids stay as-is."""
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=6)
+        apply_cli_overrides_to_source_and_dcfg(dcfg, cli_num_draft_layers=8)
+        draft_hf = build_draft_hf_config(dcfg, target_hidden_size=64, target_vocab_size=128)
+        self.assertEqual(dcfg.num_draft_layers, 8)
+        self.assertEqual(len(draft_hf.layer_types), 8)
+        self.assertEqual(dcfg.aux_hidden_state_layer_ids, [1, 12, 24, 35, 47, 58])
+
+
+class TestSyncTargetLayerIds(unittest.TestCase):
+    def test_num_draft_layers_exceeding_target_raises(self):
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=8)
+        dcfg.aux_hidden_state_layer_ids = [0, 1]
+        with self.assertRaises(ValueError) as ctx:
+            sync_target_layer_ids(dcfg, num_target_hidden_layers=6)
+        self.assertIn("num_draft_layers=8", str(ctx.exception))
+        self.assertIn("num_hidden_layers=6", str(ctx.exception))
+
+    def test_equal_draft_and_target_depth_is_allowed(self):
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=6)
+        dcfg.aux_hidden_state_layer_ids = [0, 1, 2, 3, 4, 5]
+        ids = sync_target_layer_ids(dcfg, num_target_hidden_layers=6)
+        self.assertEqual(ids, [0, 1, 2, 3, 4, 5])
+
+    def test_in_range_builtin_ids_are_kept(self):
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=6)
+        dcfg.aux_hidden_state_layer_ids = [1, 12, 24, 35, 47, 58]
+        ids = sync_target_layer_ids(dcfg, num_target_hidden_layers=64)
+        self.assertEqual(ids, [1, 12, 24, 35, 47, 58])
+
+    def test_out_of_range_ids_are_evenly_spaced(self):
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=6)
+        dcfg.aux_hidden_state_layer_ids = [1, 12, 24, 35, 47, 58]
+        ids = sync_target_layer_ids(dcfg, num_target_hidden_layers=28)
+        self.assertEqual(ids, [0, 5, 10, 16, 21, 27])
+        self.assertEqual(dcfg.aux_hidden_state_layer_ids, ids)
+        self.assertEqual(len(set(ids)), 6)
+        self.assertTrue(all(0 <= i < 28 for i in ids))
+
+    def test_shallow_target_resamples_to_full_span(self):
+        dcfg = DflashConfig(dflash_block_size=8, num_draft_layers=1)
+        dcfg.aux_hidden_state_layer_ids = [1, 12, 24, 35, 47, 58]
+        ids = sync_target_layer_ids(dcfg, num_target_hidden_layers=6)
+        self.assertEqual(ids, [0, 1, 2, 3, 4, 5])
 
 
 class TestDflashSlidingWindow(unittest.TestCase):

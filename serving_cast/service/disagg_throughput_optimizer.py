@@ -247,6 +247,11 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
             dspark_block_size=optimizer_data.dspark_block_size,
             dspark_acceptance_length=optimizer_data.dspark_acceptance_length,
             dspark_markov_rank=optimizer_data.dspark_markov_rank,
+            mtp_acceptance_length=(
+                optimizer_data.acceptance_length
+                if getattr(optimizer_data, "speculative_method", None) == "mtp"
+                else None
+            ),
         )
 
         logger.info(

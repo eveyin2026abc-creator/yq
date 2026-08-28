@@ -82,11 +82,47 @@ class TestTextGenerateDraftSpecCli(TestCase):
         with self.assertRaises(SystemExit):
             self._parse(["--speculative-method=dspark", "--num-mtp-tokens", "2"])
 
-    def test_dspark_with_explicit_mtp_zero_ok(self):
-        args = self._parse(["--speculative-method=dspark", "--num-speculative-tokens=7", "--num-mtp-tokens", "0"])
-        self.assertEqual(args.speculative_method, "dspark")
-        self.assertEqual(args.num_mtp_tokens, 0)
+    def test_dspark_cannot_mix_legacy_mtp_zero(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dspark", "--num-speculative-tokens=7", "--num-mtp-tokens", "0"])
+
+    def test_mtp_method_requires_num_speculative_tokens(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp"])
+
+    def test_mtp_cannot_mix_legacy_num_mtp_tokens(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--num-mtp-tokens", "2"])
 
     def test_text_generate_has_no_acceptance_length_flag(self):
         with self.assertRaises(SystemExit):
             self._parse(["--speculative-method=dflash", "--acceptance-length=3"])
+
+    def test_accepts_speculative_method_mtp(self):
+        args = self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2"])
+        self.assertEqual(args.speculative_method, "mtp")
+        self.assertEqual(args.num_speculative_tokens, 2)
+        self.assertEqual(args.draft_block_size, 3)
+        self.assertEqual(args.num_mtp_tokens, 2)
+
+    def test_mtp_legacy_and_new_entry_same_decode_config(self):
+        legacy = self._parse(["--decode", "--num-mtp-tokens", "2"])
+        new = self._parse(["--decode", "--speculative-method=mtp", "--num-speculative-tokens=2"])
+        mod.align_decode_query_length(legacy)
+        mod.align_decode_query_length(new)
+        self.assertEqual(legacy.num_mtp_tokens, new.num_mtp_tokens)
+        self.assertEqual(legacy.query_length, new.query_length)
+        self.assertEqual(legacy.query_length, 3)
+        self.assertEqual(legacy.num_mtp_tokens, 2)
+
+    def test_mtp_method_with_draft_layers_fails(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--num-draft-layers=4"])
+
+    def test_explicit_n_zero_with_method_fails(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dflash", "--num-speculative-tokens=0"])
+
+    def test_explicit_n_zero_with_mtp_method_fails(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens=0"])

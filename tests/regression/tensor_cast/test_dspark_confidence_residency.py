@@ -196,7 +196,7 @@ class TestDsparkAcceptanceClamp(unittest.TestCase):
 
         scfg.dspark_acceptance_length = 99.0
         apply_cli_overrides_to_dspark_config(scfg, cli_block_size=8, cli_num_draft_layers=1)
-        self.assertEqual(scfg.dspark_acceptance_length, 8.0)
+        self.assertEqual(scfg.dspark_acceptance_length, 7.0)  # clamp to n (= B-1)
 
 
 if __name__ == "__main__":

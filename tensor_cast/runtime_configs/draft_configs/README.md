@@ -50,8 +50,8 @@ python -m cli.inference.text_generate Qwen/Qwen3-32B \
 | --- | ---: | --- | --- |
 | `block_size` | `8` | draft block 长度（含 anchor），与 `--query-length` 对齐 | 是，`--num-speculative-tokens`（`n ≥ 1` → `block_size = n + 1`） |
 | `num_hidden_layers` | `6` | draft 层数 | 是，`--num-draft-layers`（`> 0`） |
-| `layer_types` | 6× `full_attention` | 逐层注意力类型：`full_attention` / `sliding_attention`；长度需等于层数 | 否（层数被 CLI 改写时自动同步长度） |
-| `dflash_config.target_layer_ids` | `[1,12,24,35,47,58]` | 从 target 抽取 aux hidden 的层号；须非空且 `max(id) < target.num_hidden_layers` | 否 |
+| `layer_types` | 6× `sliding_attention` | 逐层注意力类型：`full_attention` / `sliding_attention`；长度需等于层数 | 否（层数被 CLI 改写时自动同步长度） |
+| `dflash_config.target_layer_ids` | `[1,12,24,35,47,58]` | 从 target 抽取 aux hidden 的层号；须非空。`--num-draft-layers` 只改 draft 层数并同步 `layer_types`，**不会**拓充本列表。若 `max(id) >= target.num_hidden_layers`，运行时按主模型层数等间隔重采样；`--num-draft-layers` 超过主模型层数则报错 | 否 |
 | `mask_token_id` | `163838` | draft noise 中的 MASK 占位 token；也可写在 `dflash_config.mask_token_id` | 否 |
 | `model_type` | `"qwen3"` | draft 模型族；内置栈请保持 `"qwen3"` | 否 |
 | `num_attention_heads` | `64` | draft 注意力头数 | 否 |
@@ -92,5 +92,6 @@ python -m cli.inference.text_generate /data/models/Qwen3-32B \
 
 - `--speculative-method` 与 MTP（`--num-mtp-tokens`）互斥；`dflash` / `dspark` 通过 `--speculative-method` 单选。
 - DSpark 复用同一套 draft JSON 骨架；Markov 相关参数通过 `--dspark-markov-rank` / `--dspark-markov-head` 配置，不写在该 JSON 中。
+- `--num-draft-layers` 不得大于主模型 `num_hidden_layers`。内置 `target_layer_ids`（按 64 层 Qwen3 标定）在主模型更浅时会按层数等间隔重采样，而不是直接报错。
 - draft 自有 Linear 不参与 `--quantize-linear-action` 量化。
 - `--acceptance-length` 仅用于 `throughput_optimizer` 的 Decode 吞吐折算，不参与 `text_generate` 构图。

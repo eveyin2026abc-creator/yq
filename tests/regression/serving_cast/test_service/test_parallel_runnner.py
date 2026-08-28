@@ -84,13 +84,16 @@ class TestTaskRunner(unittest.TestCase):
         self.assertFalse(configs[0].dspark)
 
     def test_optimizer_data_fills_dflash_fields_when_enabled(self):
+        # Fixture matches post-arg_parse args: block is already resolved (n+1),
+        # and N candidates occupy the MTP search slot.
         self.args.speculative_method = "dflash"
         self.args.num_speculative_tokens = 15
+        self.args.draft_block_size = 16
         self.args.acceptance_length = 5.0
         self.args.num_draft_layers = 0
         self.args.draft_model_config_path = None
         self.args.num_mtp_tokens = 0
-        self.args.num_mtp_token_sizes = [0]
+        self.args.num_mtp_token_sizes = [15]
         self.args.chrome_trace = "trace.json"
 
         task_runner = ParallelRunner(self.args)
@@ -108,15 +111,18 @@ class TestTaskRunner(unittest.TestCase):
         self.assertIn("dflash16", configs[0].chrome_trace)
 
     def test_optimizer_data_fills_dspark_fields_when_enabled(self):
+        # Fixture matches post-arg_parse args: block is already resolved (n+1),
+        # and N candidates occupy the MTP search slot.
         self.args.speculative_method = "dspark"
         self.args.num_speculative_tokens = 7
+        self.args.draft_block_size = 8
         self.args.acceptance_length = 5.0
         self.args.dspark_markov_rank = 256
         self.args.dspark_markov_head = "vanilla"
         self.args.num_draft_layers = 0
         self.args.draft_model_config_path = None
         self.args.num_mtp_tokens = 0
-        self.args.num_mtp_token_sizes = [0]
+        self.args.num_mtp_token_sizes = [7]
         self.args.chrome_trace = "trace.json"
 
         task_runner = ParallelRunner(self.args)

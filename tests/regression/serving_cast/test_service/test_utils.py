@@ -487,3 +487,40 @@ class TestFormatParallelLabel(unittest.TestCase):
         label = format_parallel_label(pc, is_moe_model=True)
         self.assertTrue(label.endswith("DCP=2"))
         self.assertIn("EP=8", label)
+
+    def test_label_dspark_clamps_acceptance_to_n(self):
+        pc = ParallelConfig(world_size=1, tensor_parallel_size=1)
+        # B=8 → n=7; raw accept=99 must display as 7.
+        label = format_parallel_label(
+            pc,
+            is_moe_model=False,
+            dspark_block_size=8,
+            dspark_acceptance_length=99.0,
+            dspark_markov_rank=256,
+        )
+        self.assertEqual(label, "TP=1 | PP=1 | DP=1 | DSpark=8/acc=7/markov=256")
+
+    def test_label_dflash_clamps_acceptance_to_n(self):
+        pc = ParallelConfig(world_size=1, tensor_parallel_size=1)
+        label = format_parallel_label(
+            pc,
+            is_moe_model=False,
+            dflash_block_size=4,
+            dflash_acceptance_length=99.0,
+        )
+        self.assertEqual(label, "TP=1 | PP=1 | DP=1 | DFlash=4/acc=3")
+
+    def test_label_unified_mtp_renders_clamped_acceptance(self):
+        pc = ParallelConfig(world_size=1, tensor_parallel_size=1)
+        label = format_parallel_label(
+            pc,
+            is_moe_model=False,
+            num_mtp_tokens=2,
+            mtp_acceptance_length=99.0,
+        )
+        self.assertEqual(label, "TP=1 | PP=1 | DP=1 | MTP=2/acc=2")
+
+    def test_label_legacy_mtp_keeps_bare_count(self):
+        pc = ParallelConfig(world_size=1, tensor_parallel_size=1)
+        label = format_parallel_label(pc, is_moe_model=False, num_mtp_tokens=2)
+        self.assertEqual(label, "TP=1 | PP=1 | DP=1 | MTP=2")

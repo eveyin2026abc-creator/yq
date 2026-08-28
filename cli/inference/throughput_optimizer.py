@@ -69,6 +69,7 @@ from ..utils import (
     get_common_argparser,
     require_model_id,
     resolve_draft_block_and_acceptance,
+    resolve_num_speculative_tokens_to_block,
     validate_draft_spec_cli_args,
 )
 
@@ -145,7 +146,10 @@ def arg_parse():
         help="MTP token count candidate(s) in 0-9. Pass one value for a fixed configuration, "
         "or multiple values to sweep during throughput optimization. "
         "0 means disabled and only models with MTP support will benefit from non-zero values. "
-        "When combined with TP/EP/MOE-DP search, total combinations grow as TP x EP x MOE-DP x MTP.",
+        "When combined with TP/EP/MOE-DP search, total combinations grow as TP x EP x MOE-DP x MTP. "
+        "Legacy MTP entry; cannot be mixed with --speculative-method / "
+        "--num-speculative-tokens / --acceptance-length. "
+        "MTP can also use --speculative-method mtp --num-speculative-tokens.",
     )
     add_option(
         parser,
@@ -155,10 +159,11 @@ def arg_parse():
         default=[0.9, 0.6, 0.4, 0.2],
         nargs="+",
         metavar=METAVAR_FLOAT,
-        help="Acceptance rates for MTP.",
+        help="Acceptance rates for the legacy --num-mtp-tokens MTP entry. "
+        "Cannot be mixed with --speculative-method / --num-speculative-tokens / --acceptance-length.",
         aliases=("--mtp-acceptance-rate",),
     )
-    add_draft_spec_arguments(model_group, include_acceptance=True)
+    add_draft_spec_arguments(model_group, include_acceptance=True, multi_n=True)
     parser.add_argument(
         "--prefix-cache-hit-rate",
         type=check_prefix_cache_hit_rate,
@@ -448,12 +453,55 @@ def arg_parse():
 
     args.num_mtp_tokens, args.num_mtp_token_sizes = _normalize_mtp_token_values(args.num_mtp_tokens)
     # G3 / G2: dependents + three-way mutual exclusion before search / worker build.
-    validate_draft_spec_cli_args(parser, args, check_mtp_candidates=True)
-    if draft_method(args) is not None:
-        # RFC: draft path MUST keep MTP disabled for search combinations.
+    validate_draft_spec_cli_args(parser, args, argv=sys.argv[1:], check_mtp_candidates=True)
+    method = draft_method(args)
+    if method is not None:
+        # RFC: speculative path reuses the MTP search slot for N candidates.
         args.num_mtp_tokens = 0
         args.num_mtp_token_sizes = []
-        resolve_draft_block_and_acceptance(args)
+
+        n_raw = getattr(args, "num_speculative_tokens", None)
+
+        if isinstance(n_raw, list):
+            # Explicit multi-value: dedup + validate non-negative (check_non_negative_integer already rejects < 0).
+            n_candidates = []
+            for v in n_raw:
+                if v not in n_candidates:
+                    n_candidates.append(v)
+            if not n_candidates:
+                parser.error("--num-speculative-tokens expects at least one candidate.")
+        elif n_raw is None:
+            # Omitted: dflash/dspark → builtin (C2); mtp requires explicit n.
+            if method == "mtp":
+                parser.error("--speculative-method mtp requires --num-speculative-tokens")
+            builtin_n, _ = resolve_num_speculative_tokens_to_block(
+                0,
+                draft_model_config_path=getattr(args, "draft_model_config_path", None),
+                explicit=False,
+            )
+            n_candidates = [builtin_n]
+        else:
+            n_candidates = [int(n_raw)]
+
+        if any(int(v) == 0 for v in n_candidates):
+            parser.error(
+                "--speculative-method is set but --num-speculative-tokens contains 0. "
+                "Omit --speculative-method for a baseline run, or pass n >= 1."
+            )
+
+        args.num_speculative_token_sizes = n_candidates
+        args.num_mtp_token_sizes = list(n_candidates)
+        # num_mtp_tokens stays 0 for the new entry (forced off); the search
+        # uses num_mtp_token_sizes (N candidates) via the MTP search slot.
+        args.num_mtp_tokens = 0
+
+        # For single-N (builtin or single explicit), resolve block/acceptance on args.
+        # For multi-N, resolution happens per-iteration in ParallelRunner.
+        if len(n_candidates) == 1:
+            args.num_speculative_tokens = n_candidates[0]
+            resolve_draft_block_and_acceptance(args, argv=sys.argv[1:])
+        else:
+            args.num_speculative_tokens = n_candidates[0]
 
     args.tp_sizes = _normalize_and_validate(args.tp_sizes, "tp-sizes", args.num_devices)
     args.ep_sizes = _normalize_and_validate(args.ep_sizes, "ep-sizes", args.num_devices)
@@ -496,12 +544,13 @@ def arg_parse():
     args.search_combination_warning_emitted = False
     if args.max_search_combinations and total_combinations > args.max_search_combinations:
         args.search_combination_warning_emitted = True
+        spec_label = "Spec" if draft_method(args) is not None else "MTP"
         print(
             "[WARNING] Large number of parallel search combinations "
             f"({total_combinations} = TP:{len(tp_candidates)} x EP:{len(ep_candidates)} "
-            f"x MOE-DP:{len(moe_dp_candidates)} x MTP:{len(mtp_candidates)} x DCP:{len(dcp_candidates)}). "
+            f"x MOE-DP:{len(moe_dp_candidates)} x {spec_label}:{len(mtp_candidates)} x DCP:{len(dcp_candidates)}). "
             "Optimization may take a long time. Consider narrowing --tp-sizes, --ep-sizes, "
-            "--moe-dp-sizes, --num-mtp-tokens, or --dcp-sizes; "
+            "--moe-dp-sizes, --num-mtp-tokens/--num-speculative-tokens, or --dcp-sizes; "
             "or increase --max-search-combinations.",
             file=sys.stderr,
             flush=True,
@@ -541,14 +590,18 @@ def main():
             return 1
 
     mtp_candidates = args.num_mtp_token_sizes or [args.num_mtp_tokens]
-    invalid_num_mtp_tokens = [value for value in mtp_candidates if value > len(args.mtp_acceptance_rate) + 1]
-    if invalid_num_mtp_tokens:
-        logger.error(
-            "num_mtp_tokens candidates %r exceed the supported mtp_acceptance_rate length (%r). Please check.",
-            invalid_num_mtp_tokens,
-            len(args.mtp_acceptance_rate),
-        )
-        return 1
+    # The acceptance_rate length check only applies to the legacy MTP fold path
+    # (sum(rates[:N])+1). New speculative entry (dflash/dspark/--speculative-method mtp)
+    # uses accept+1 fold and does not need rates alignment.
+    if draft_method(args) is None:
+        invalid_num_mtp_tokens = [value for value in mtp_candidates if value > len(args.mtp_acceptance_rate) + 1]
+        if invalid_num_mtp_tokens:
+            logger.error(
+                "num_mtp_tokens candidates %r exceed the supported mtp_acceptance_rate length (%r). Please check.",
+                invalid_num_mtp_tokens,
+                len(args.mtp_acceptance_rate),
+            )
+            return 1
 
     # Validate PD ratio optimization parameters. Use getattr for compatibility
     # with programmatic callers that provide a minimal argparse namespace.

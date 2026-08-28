@@ -102,6 +102,10 @@ class OptimizerData:
     dspark_block_size: Optional[int] = None
     dspark_acceptance_length: Optional[float] = None
     dspark_markov_rank: Optional[int] = None
+    speculative_method: Optional[str] = None
+    """Set to 'mtp' for the new MTP entry (fold uses accept+1). None for legacy MTP / baseline."""
+    acceptance_length: Optional[float] = None
+    """Generic acceptance_length for the new MTP entry fold (clamp to n, then accept+1)."""
     prefill_devices_per_instance: Optional[int] = None
     decode_devices_per_instance: Optional[int] = None
     prefix_cache_hit_rate: float = 0.0
@@ -521,6 +525,18 @@ def count_search_combinations(
     return len(tp_candidates) * len(ep_candidates) * len(moe_dp_candidates) * len(mtp_candidates)
 
 
+def _clamp_accept_label(accept: Optional[float], block: int) -> float:
+    """Clamp acceptance to ``n = block - 1`` for display (matches fold / CLI clamp)."""
+    accept = 5.0 if accept is None else float(accept)
+    if accept < 0:
+        accept = 0.0
+    if block >= 2:
+        max_accept = float(block - 1)
+        if accept > max_accept:
+            accept = max_accept
+    return accept
+
+
 def format_parallel_label(
     parallel_config: ParallelConfig,
     is_moe_model: bool,
@@ -530,6 +546,7 @@ def format_parallel_label(
     dspark_block_size: Optional[int] = None,
     dspark_acceptance_length: Optional[float] = None,
     dspark_markov_rank: Optional[int] = None,
+    mtp_acceptance_length: Optional[float] = None,
 ) -> str:
     parts = [
         f"TP={parallel_config.tensor_parallel_size}",
@@ -545,20 +562,26 @@ def format_parallel_label(
             ]
         )
     if num_mtp_tokens is not None and num_mtp_tokens > 0:
-        parts.append(f"MTP={num_mtp_tokens}")
+        # Unified MTP entry may carry a scalar acceptance; legacy keeps bare MTP=N.
+        if mtp_acceptance_length is not None:
+            accept = _clamp_accept_label(mtp_acceptance_length, int(num_mtp_tokens) + 1)
+            accept_label = int(accept) if accept == int(accept) else accept
+            parts.append(f"MTP={num_mtp_tokens}/acc={accept_label}")
+        else:
+            parts.append(f"MTP={num_mtp_tokens}")
     # Only surface DCP when it is actually enabled, so non-DCP runs keep their label.
     if getattr(parallel_config, "decode_context_parallel_size", 1) > 1:
         parts.append(f"DCP={parallel_config.decode_context_parallel_size}")
     dspark_block = dspark_block_size or 0
     if dspark_block >= 2:
-        accept = 5.0 if dspark_acceptance_length is None else float(dspark_acceptance_length)
+        accept = _clamp_accept_label(dspark_acceptance_length, dspark_block)
         accept_label = int(accept) if accept == int(accept) else accept
         markov = 256 if dspark_markov_rank is None else int(dspark_markov_rank)
         parts.append(f"DSpark={dspark_block}/acc={accept_label}/markov={markov}")
     else:
         dflash_block = dflash_block_size or 0
         if dflash_block >= 2:
-            accept = 5.0 if dflash_acceptance_length is None else float(dflash_acceptance_length)
+            accept = _clamp_accept_label(dflash_acceptance_length, dflash_block)
             accept_label = int(accept) if accept == int(accept) else accept
             parts.append(f"DFlash={dflash_block}/acc={accept_label}")
     return " | ".join(parts)

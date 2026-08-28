@@ -19,6 +19,7 @@ from .dflash import (
     apply_cli_overrides_to_source_and_dcfg,
     build_draft_hf_config,
     resolve_target_embed_and_lm_head,
+    sync_target_layer_ids,
 )
 
 
@@ -280,10 +281,12 @@ def apply_cli_overrides_to_dspark_config(
     prefer_existing: bool = False,
 ) -> dict:
     """Resolve block/layers/aux onto ``scfg`` via the shared Dflash draft config file."""
+    # RFC: clamp acceptance to n (= block-1), unified with Dflash.
     # Clamp before to_dflash_config(): DflashConfig rejects negatives in __post_init__.
+    max_accept_pre = float(scfg.dspark_block_size - 1)
     scfg.dspark_acceptance_length = min(
         max(float(scfg.dspark_acceptance_length), 0.0),
-        float(scfg.dspark_block_size),
+        max_accept_pre,
     )
     dcfg = scfg.to_dflash_config()
     source = apply_cli_overrides_to_source_and_dcfg(
@@ -297,8 +300,8 @@ def apply_cli_overrides_to_dspark_config(
     scfg.aux_hidden_state_layer_ids = list(dcfg.aux_hidden_state_layer_ids) if dcfg.aux_hidden_state_layer_ids else None
     scfg.layer_types = list(dcfg.layer_types) if dcfg.layer_types else None
     scfg.sliding_window = dcfg.sliding_window
-    # Re-clamp DSpark acceptance to [0, block_size] after block may change.
-    max_accept = float(scfg.dspark_block_size)
+    # Re-clamp DSpark acceptance to [0, n] after block may change.
+    max_accept = float(scfg.dspark_block_size - 1)
     scfg.dspark_acceptance_length = min(
         max(float(scfg.dspark_acceptance_length), 0.0),
         max_accept,
@@ -327,11 +330,8 @@ def build_dspark_draft_and_wrapper(
         target_vocab_size=target_vocab_size,
         target_max_position_embeddings=target_max_position_embeddings,
     )
-    max_layer = max(dcfg.aux_hidden_state_layer_ids)
-    if max_layer >= num_target_hidden_layers:
-        raise ValueError(
-            f"target_layer_ids max={max_layer} out of range for target num_hidden_layers={num_target_hidden_layers}"
-        )
+    sync_target_layer_ids(dcfg, num_target_hidden_layers)
+    scfg.aux_hidden_state_layer_ids = list(dcfg.aux_hidden_state_layer_ids)
 
     layer_idx_offset = int(num_target_hidden_layers)
     draft = DsparkDraftModel(draft_hf_config, dcfg, scfg, layer_idx_offset=layer_idx_offset)

@@ -828,7 +828,7 @@ class TestThroughputOptimizerDraftSpecCli(TestCase):
     def test_defaults_keep_draft_disabled(self):
         args = self._parse([])
         self.assertIsNone(args.speculative_method)
-        self.assertEqual(args.num_speculative_tokens, 0)
+        self.assertIsNone(args.num_speculative_tokens)
         self.assertEqual(args.num_mtp_tokens, 0)
 
     def test_dflash_resolves_block_and_clamps_acceptance(self):
@@ -846,9 +846,9 @@ class TestThroughputOptimizerDraftSpecCli(TestCase):
         self.assertEqual(args.acceptance_length, 15.0)  # clamp to B-1
         self.assertEqual(args.num_draft_layers, 2)
         self.assertEqual(args.num_mtp_tokens, 0)
-        self.assertEqual(args.num_mtp_token_sizes, [])
+        self.assertEqual(args.num_mtp_token_sizes, [15])  # N candidates in search slot
 
-    def test_dspark_resolves_block_and_clamps_acceptance_to_block(self):
+    def test_dspark_resolves_block_and_clamps_acceptance_to_n(self):
         args = self._parse(
             [
                 "--speculative-method=dspark",
@@ -861,7 +861,7 @@ class TestThroughputOptimizerDraftSpecCli(TestCase):
         self.assertEqual(args.speculative_method, "dspark")
         self.assertEqual(args.num_speculative_tokens, 7)
         self.assertEqual(args.draft_block_size, 8)
-        self.assertEqual(args.acceptance_length, 8.0)  # clamp to B
+        self.assertEqual(args.acceptance_length, 7.0)  # clamp to n (= B-1)
         self.assertEqual(args.dspark_markov_rank, 128)
         self.assertEqual(args.dspark_markov_head, "gated")
         self.assertEqual(args.num_mtp_tokens, 0)
@@ -890,13 +890,76 @@ class TestThroughputOptimizerDraftSpecCli(TestCase):
         with self.assertRaises(SystemExit):
             self._parse(["--speculative-method=dspark", "--num-mtp-tokens", "0", "2"])
 
-    def test_dspark_with_explicit_mtp_zero_ok(self):
-        args = self._parse(["--speculative-method=dspark", "--num-speculative-tokens=7", "--num-mtp-tokens", "0"])
-        self.assertEqual(args.speculative_method, "dspark")
-        self.assertEqual(args.num_mtp_tokens, 0)
-        self.assertEqual(args.num_mtp_token_sizes, [])
+    def test_dspark_cannot_mix_legacy_mtp_zero(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dspark", "--num-speculative-tokens=7", "--num-mtp-tokens", "0"])
 
     def test_builtin_num_speculative_tokens_maps_to_block_eight(self):
         args = self._parse(["--speculative-method=dflash"])
         self.assertEqual(args.num_speculative_tokens, 7)
         self.assertEqual(args.draft_block_size, 8)
+
+    def test_mtp_new_entry_single_n(self):
+        args = self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--acceptance-length=1.5"])
+        self.assertEqual(args.speculative_method, "mtp")
+        self.assertEqual(args.num_speculative_tokens, 2)
+        self.assertEqual(args.num_speculative_token_sizes, [2])
+        self.assertEqual(args.num_mtp_token_sizes, [2])
+
+    def test_mtp_new_entry_multi_n_search(self):
+        args = self._parse(
+            ["--speculative-method=mtp", "--num-speculative-tokens", "1", "2", "--acceptance-length=1.5"]
+        )
+        self.assertEqual(args.speculative_method, "mtp")
+        self.assertEqual(args.num_speculative_token_sizes, [1, 2])
+        self.assertEqual(args.num_mtp_token_sizes, [1, 2])
+
+    def test_dflash_multi_n_search(self):
+        args = self._parse(
+            ["--speculative-method=dflash", "--num-speculative-tokens", "3", "7", "--acceptance-length=5"]
+        )
+        self.assertEqual(args.speculative_method, "dflash")
+        self.assertEqual(args.num_speculative_token_sizes, [3, 7])
+        self.assertEqual(args.num_mtp_token_sizes, [3, 7])
+
+    def test_zero_candidates_with_method_fails(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dflash", "--num-speculative-tokens", "0"])
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dflash", "--num-speculative-tokens", "0", "0"])
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dflash", "--num-speculative-tokens", "0", "3", "7"])
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens", "0", "1", "2"])
+
+    def test_mtp_with_draft_layers_fails(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--num-draft-layers=4"])
+
+    def test_mtp_and_dflash_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=dflash", "--num-mtp-tokens", "2"])
+
+    def test_mtp_method_requires_num_speculative_tokens(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp"])
+
+    def test_mtp_cannot_mix_legacy_num_mtp_tokens(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--num-mtp-tokens", "2"])
+
+    def test_mtp_cannot_mix_legacy_acceptance_rate(self):
+        with self.assertRaises(SystemExit):
+            self._parse(
+                [
+                    "--speculative-method=mtp",
+                    "--num-speculative-tokens=2",
+                    "--mtp-acceptance-rate",
+                    "0.9",
+                    "0.6",
+                ]
+            )
+
+    def test_legacy_mtp_cannot_mix_acceptance_length(self):
+        with self.assertRaises(SystemExit):
+            self._parse(["--num-mtp-tokens", "2", "--acceptance-length=1.5"])

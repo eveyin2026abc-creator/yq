@@ -802,6 +802,34 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
         self._validate_inference_result(result, "test_with_auto_mtp")
 
+    def test_mtp_legacy_and_new_entry_same_decode_metrics(self):
+        """Legacy --num-mtp-tokens and --speculative-method mtp must match."""
+        common = dict(
+            device=self.device,
+            model_id=self.model_id,
+            num_queries=1,
+            query_len=3,
+            context_length=128,
+            decode=True,
+            do_compile=False,
+            allow_graph_break=False,
+            quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
+        )
+        legacy = UserInputConfig(**common, num_mtp_tokens=2)
+        new = UserInputConfig(**common, speculative_method="mtp", num_speculative_tokens=2)
+        self.assertEqual(new.num_mtp_tokens, 2)
+
+        legacy_result = ModelRunner(legacy).run_inference(generate_inputs_func=generate_inputs)
+        new_result = ModelRunner(new).run_inference(generate_inputs_func=generate_inputs)
+
+        self.assertAlmostEqual(
+            legacy_result.execution_time_s["analytic"],
+            new_result.execution_time_s["analytic"],
+        )
+        self.assertAlmostEqual(legacy_result.model_weight_size_gb, new_result.model_weight_size_gb)
+        self.assertAlmostEqual(legacy_result.kv_cache_size_gb, new_result.kv_cache_size_gb)
+        self.assertEqual(legacy_result.table_result, new_result.table_result)
+
     def test_disable_repetition(self):
         """Test with repetition disabled."""
         user_input = UserInputConfig(
