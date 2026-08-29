@@ -4026,7 +4026,9 @@ def test_glm5_dsa_chunked_prefill_interpolation_uses_specialized_scatter_lookup(
     assert result.source == QuerySource.INTERPOLATED
     sub_kernels = {detail["kernel_type"]: detail for detail in result.details["sub_kernels"]}
     assert sub_kernels["ScatterNdUpdate"]["method"] == "exact_scatter_cache_write"
-    assert sub_kernels["LightningIndexer"]["details"]["target"] == {
+    # A denser database may keep q_tokens exact and interpolate only effective_kv_len.
+    # attention_axes records the complete runtime workload independent of interpolation dimensionality.
+    assert sub_kernels["LightningIndexer"]["details"]["attention_axes"] == {
         "q_tokens": 256.0,
         "effective_kv_len": 4352.0,
     }

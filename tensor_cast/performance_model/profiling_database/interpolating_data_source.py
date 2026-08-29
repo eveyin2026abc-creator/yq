@@ -3619,6 +3619,7 @@ class InterpolatingDataSource(DataSourcePerformanceModel):
                         "kernel_type": kernel_type,
                         "query_mode": target.query_mode,
                         "interpolation_path": interpolation_path,
+                        "attention_axes": dict(target.axes),
                         "phase": target.metadata["phase"],
                         "latency_column_group": latency_column_group,
                         "rejected_reasons": rejected_reasons,
