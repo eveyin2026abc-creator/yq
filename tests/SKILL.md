@@ -49,32 +49,40 @@ Exactly one of:
 
 | Directory | When |
 |-----------|------|
-| `tests/smoke/` | Quick path validation, PR guard, <10s |
-| `tests/regression/` | Functional/integration verification (default) |
-| `tests/benchmark/models/cases/` | Model-level precision/perf baseline |
-| `tests/benchmark/ops/perf_database/` | Operator-level perf database |
+| `tests/smoke/` | Quick path validation, PR guard, <10s (not L1/L2/L3) |
+| `tests/benchmark/models/cases/` | L1 model-level precision: JSON total-time / Top-N |
+| `tests/regression/model_diagnostics/e2e/` | L1 model-level Theory↔Runtime |
+| `tests/regression/<component>/model/` | L1 model-level capability: any real model build/forward/compile |
+| `tests/regression/<component>/module/` | L2 no-model component integration; exactly one canonical synthetic artifact |
+| `tests/regression/<component>/unit/` | L3 unit invariant |
+| `tests/benchmark/ops/perf_database/` | Operator DB integrity / real numeric anchors only — not L1/L2 |
 
 Only two markers: `@pytest.mark.nightly` (>300s compile), `@pytest.mark.npu` (NPU hardware). Never add layer markers.
 
 ### Decision Tree
 
-1. Quick path check? → `tests/smoke/`. Use local tiny configs from `tests/assets/model_config/`, `num_hidden_layers_override=1`, `do_compile=False`. Assert basic reachability. Under 10s. VL image resize: vendor `preprocessor_config.json` and register Hub id in `tests/helpers/model_assets.py`; run `scripts/prefetch_model_configs.py` to warm Hub cache.
-2. Functional/integration? → `tests/regression/` under correct subdirectory. Use `get_session_model`/`get_session_hf_config`. If >300s with `do_compile=True` → `@pytest.mark.nightly` + smoke guard.
-3. Precision/perf baseline? → `tests/benchmark/`. JSON config with `baseline_time_s` and `tolerance`.
+1. Real `model_id`, model config tree, `ModelRunner`, model build/forward/compile, or real diagnostics capture? → L1 under the matching model-level directory. Combine numeric, structural, and capability assertions in one family build when the scenario and branches match.
+2. Otherwise, does the case build one shared synthetic artifact? → L2 and route by artifact: quant component, parallel/comm component, minimal FX graph, synthetic Runtime event stream, synthetic diagnostics Artifact, replay request, or microbench case.
+3. Pure function/class, parser, validation, exception, default, or exit code? → L3.
+4. Quick path check? → `tests/smoke/`. Smoke is not a responsibility layer.
+
+“CLI” is not a module. Replay orchestration and microbench generation are separate L2 modules; CLI parameter surfaces are normally L3. L2 must not import/invoke model runner or model builder, construct a registered `TransformerModel`, or use a real model-id literal.
 
 ### Shared Helpers
 
 Always import from `tests/helpers/` (no copy-paste). Full API → [tests/README.md](./README.md).
 
-Core: `config_factory.py` (build config), `model_builder.py` (build model), `assert_utils.py` (assertions), `op_registry.py` (op registry), `fake_subprocess.py` (subprocess stubs).
+Core: `config_factory.py` (build config), `model_builder.py` (L1 model only), `assert_utils.py` (assertions), `op_registry.py` (op registry), `fake_subprocess.py` (subprocess stubs).
 
-### Session Fixtures (Regression)
+Migration target: each L2 module owns one canonical builder under `tests/helpers/`: `quant_component_builder.py`, `parallel_component_builder.py`, `fx_graph_builder.py`, `runtime_event_builder.py`, `diagnostics_artifact_builder.py`, `replay_case_builder.py`, or `microbench_case_builder.py`. Do not create a second builder for the same artifact.
+
+### Session Fixtures (L1 Model Regression Only)
 
 ```python
 from tests.regression.tensor_cast.conftest import get_session_model, get_session_hf_config
 ```
 
-Use these — never call `build_model()` directly per test function.
+Use these only in L1 model-level tests — never in L2. L2 uses one of the seven synthetic builders above.
 
 ### conftest Hygiene
 
@@ -103,7 +111,7 @@ def test_<feature>_smoke():
     assert model is not None
 ```
 
-### Regression
+### L1 Model Capability Regression
 
 ```python
 """Regression test for <feature>."""
@@ -122,6 +130,22 @@ class Test<Feature>(unittest.TestCase):
         result = model.run_inference(...)
         assert_model_metrics_valid(result, "test_<scenario>")
 ```
+
+### L2 No-Model Component Integration
+
+```python
+"""No-model integration test for <mechanism>."""
+
+from tests.helpers.<canonical_builder> import build_<artifact>
+
+
+def test_<mechanism>_<invariant>():
+    artifact = build_<artifact>()
+    result = artifact.run_synthetic_case()
+    assert result.<mechanism_invariant>
+```
+
+The builder must not accept a real `model_id` or call `ModelRunner`, `build_model`, `get_built_model`, `get_cached_build_model`, or a registered `TransformerModel`.
 
 ### Nightly Regression
 
@@ -166,7 +190,9 @@ class Test<Feature>Nightly(unittest.TestCase):
 - Do not modify production source code
 - Do not add layer markers (`smoke`, `regression`, `benchmark`)
 - Do not copy-paste builder or assertion logic — import from `tests/helpers/`
-- Do not call `build_model()` directly in regression — use session fixtures
+- Do not call `build_model()` directly in L1 regression — use session fixtures
+- Do not use model builders, model runners, registered model trees, or real model-id literals in L2
+- Do not classify “CLI” as a module; route by replay, microbench, Runtime, or L3 parameter surface
 - Do not add `@pytest.mark.nightly` for tests <300s
 - Do not add `@pytest.mark.npu` unless NPU is truly required
 - Do not create new helper modules without checking existing ones
@@ -204,7 +230,10 @@ exemptions:
 
 - [ ] Correct directory; no layer markers (only `nightly`/`npu` when applicable)
 - [ ] Shared helpers used (no copy-paste)
-- [ ] Session fixtures for model construction in regression
+- [ ] Real model identity/build/forward/compile appears only in L1
+- [ ] L2 uses exactly one canonical synthetic artifact builder
+- [ ] Pure parser/validation/exception/exit-code tests are L3
+- [ ] Session fixtures for model construction are used only in L1
 - [ ] If `@pytest.mark.nightly`, smoke guard co-generated
 - [ ] No `sys.modules` mocks in conftest
 - [ ] New product symbols covered or in `exemptions.sources`/`exemptions.tests`

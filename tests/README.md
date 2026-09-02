@@ -10,22 +10,78 @@ tests/
 ├── .ci/
 │   ├── gate_policy.yaml     # CI gate roots / tests / configs / exemptions
 │   └── approvers.yaml       # Required approvers for gate_policy changes
-├── smoke/                   # Smoke test cases
-├── regression/              # Regression test cases
-│   ├── tensor_cast/
-│   ├── serving_cast/
-│   ├── cli/
-│   ├── optix/
+├── smoke/                   # Cross-layer cheap guards (not L1/L2/L3)
+├── regression/              # Functional / integration
+│   ├── tensor_cast/         # model/ (L1 model-level) + module/ (L2 no-model integration) + unit/ (L3)
+│   ├── serving_cast/        # Out of current L1/L2/L3 wave
+│   ├── cli/                 # model/ (L1 real runner) + module/ (L2 no-model orchestration) + unit/ (L3)
+│   ├── optix/               # Out of current L1/L2/L3 wave
+│   ├── model_diagnostics/   # e2e = L1; synthetic application integration = L2; pure contracts = L3
 │   ├── scripts/             # ci_gate/nightly toolchain UT (mirrors scripts/helpers/)
-│   └── web_ui/
+│   └── web_ui/              # Out of current L1/L2/L3 wave
 ├── assets/                  # Model config fixtures
 ├── helpers/                 # Shared builders/assertions
 └── benchmark/
-    ├── models/              # Model precision/performance
-    └── ops/                 # Operator perf_database
+    ├── models/              # L1 accuracy net (JSON total-time / Top-N; independent schedule)
+    └── ops/                 # Operator DB guards (not L1/L2)
 ```
 
-Layering by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (long-running), `npu` (hardware), `network` (live Hub).
+CI layering is by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (long-running), `npu` (hardware), `network` (live Hub).
+
+Responsibility layers L1 / L2 / L3 sit **on top of** those directories. Design and deletion gate: [docs/design/ut_refactor.md](../docs/design/ut_refactor.md). File-level migration list: [docs/design/ut_refactor_migration_inventory.md](../docs/design/ut_refactor_migration_inventory.md).
+Seven-artifact case inventory: [docs/design/l2_seven_artifact_inventory.xlsx](../docs/design/l2_seven_artifact_inventory.xlsx).
+
+## L1 / L2 / L3 placement
+
+| Intent | Layer | Directory |
+|--------|-------|-----------|
+| Model-level total-time / Top-N precision baseline | L1 precision | `tests/benchmark/models/` |
+| Model-level Theory↔Runtime diagnostics | L1 structure | `tests/regression/model_diagnostics/e2e/` |
+| Any real `model_id`, `ModelRunner`, model build/forward/compile, or multimodal pipeline | L1 capability | `tests/regression/<component>/model/` |
+| No-model component integration with one canonical synthetic build artifact | L2 | `tests/regression/<component>/module/` |
+| Shipped `op_mapping.yaml` integrity, real-DB numeric anchors | operator DB guard | `tests/benchmark/ops/perf_database/` |
+| Pure function, Pass, parser, exception, synthetic CSV | L3 | `tests/regression/<component>/unit/` |
+| Cheap PR guard for a nightly L2 path | smoke | `tests/smoke/` |
+
+Do **not** put schema / parse / decompose / `tmp_path` unit tests under `tests/benchmark/ops/`. L2 must not import or invoke `model_runner` / `model_builder`, construct `TransformerModel` from a real `model_id`, capture a real model, or repeat an L1 assertion. A synthetic layer or minimal `torch.nn.Module` is allowed; a registered model tree is not.
+
+### L1 / L2 / L3 routing tree
+
+For every new case:
+
+1. Does it use a real `model_id`, model config tree, `ModelRunner`, `build_model`, model forward/compile, or real diagnostics capture? → **L1 model-level**.
+2. Otherwise, what single artifact does its canonical fixture build? Route to exactly one L2 module below.
+3. If it only calls a pure function/class, parses or validates arguments, checks an exception/exit code, or needs no shared build artifact → **L3**.
+
+Model identity belongs to L1; mechanism belongs to L2. One L1 family build should carry numeric, structural, and capability assertions together where their scenario and branches match. L2 asserts only mechanism invariants and never a result already asserted by L1.
+
+| L2 module | Unique fixture artifact | Canonical helper target |
+|---|---|---|
+| Quantization components | `QuantLinear` / single-layer Attention + synthetic weights | `tests/helpers/quant_component_builder.py` |
+| Parallel / communication components | single-layer `ParallelLinear` / Fake MoE / comm group | `tests/helpers/parallel_component_builder.py` |
+| Graph transform / compile components | minimal synthetic FX graph | `tests/helpers/fx_graph_builder.py` |
+| Runtime / performance components | synthetic event stream + breakdown inputs | `tests/helpers/runtime_event_builder.py` |
+| Diagnostics application components | synthetic Artifact | `tests/helpers/diagnostics_artifact_builder.py` |
+| Replay orchestration | replay request + fake adapter/subprocess | `tests/helpers/replay_case_builder.py` |
+| Microbench generation | normalized op case + expected command/script | `tests/helpers/microbench_case_builder.py` |
+
+“CLI” is not an L2 module. Route a CLI case by the artifact it tests: replay orchestration, microbench generation, or another mechanism above. Pure parser/default/validation/exit-code cases are L3.
+
+The current tree is in migration: legacy `module/` files still contain real-model and pure-unit cases. The L2 static import/literal guard becomes blocking only after those cases move to L1/L3; enabling it before migration would make the existing suite fail by construction. `build_test_map.detect_redundant_cases` already implements the Jaccard calculation and has unit tests, so no new detector is needed. Its test-map-sync/nightly/Feishu wiring is still pending; do not describe redundancy warnings as currently reported.
+
+**This wave does not relocate** `optix/`, `serving_cast/`, or `web_ui/`. `model_diagnostics/` keeps its domain tree. `scripts/` stays a mirror of `scripts/helpers/`. Do not add nested `conftest.py` under `model/`, `unit/`, or `module/` (a conftest change triggers a full CI suite). Import sibling helpers from `tests.regression.tensor_cast.test_common` / `conftest`, not package-relative `.` after a move.
+
+### Merge / delete gate
+
+`over_covered_symbol` and Jaccard alerts are review candidates only. Delete or merge a case only when:
+
+1. The kept case covers the same product symbol **and** the same branches.
+2. Every assertion class of the removed case (success, failure, exception, boundary, shape, dtype, timing) is preserved.
+3. Fixture / model / parallel / quant differences have no independent value.
+4. No product symbol loses its sole `test_map` watcher.
+5. Affected L1/L2/L3 tests and smoke pass.
+
+File size, similar names, or Jaccard = 1 over a single entry function is **not** enough to delete.
 
 ## Marker Semantics
 
@@ -154,8 +210,12 @@ Self-tests: `tests/helpers/tests/`.
 | Intent | Directory |
 |--------|-----------|
 | Quick validation, PR guard | `tests/smoke/` |
-| Functional / integration | `tests/regression/` |
-| Precision / performance baseline | `tests/benchmark/models/` or `tests/benchmark/ops/` |
+| Any real model build/forward/compile or model-backed CLI | `tests/regression/<component>/model/` (L1 capability) |
+| Model-level Theory↔Runtime comparison | `tests/regression/model_diagnostics/e2e/` (L1 structure) |
+| Model-level precision / performance baseline | `tests/benchmark/models/` (L1 precision) |
+| No-model integration that builds one canonical synthetic artifact | `tests/regression/<component>/module/` (L2) |
+| Operator DB integrity / real numeric anchors | `tests/benchmark/ops/perf_database/` |
+| Pure function / parser / validation / exit-code tests | `tests/regression/<component>/unit/` (L3) |
 
 No layer markers (`smoke`, `regression`, `benchmark`). Only `@pytest.mark.nightly` or `@pytest.mark.npu` when applicable.
 
@@ -171,7 +231,7 @@ No layer markers (`smoke`, `regression`, `benchmark`). Only `@pytest.mark.nightl
 | Run CLI in-process | `tests/helpers/cli_runner.py` | `run_module_main(module_name, argv)` |
 | Stub subprocess | `tests/helpers/fake_subprocess.py` | `FakeCompleted(returncode, stdout, stderr)` |
 
-### 3. Use session fixtures (regression)
+### 3. Use session fixtures for L1 model-level regression
 
 ```python
 from tests.helpers.model_builder import make_user_input_config
@@ -182,11 +242,11 @@ def test_my_feature():
     model = get_session_model(user_config)  # cached across session
 ```
 
-`get_session_model` / `get_session_hf_config` delegate to `tests.helpers.model_cache`, shared across fixtures and `unittest.TestCase`.
+`get_session_model` / `get_session_hf_config` delegate to `tests.helpers.model_cache`, shared across fixtures and `unittest.TestCase`. Do not use these model fixtures in L2.
 
 ### 4. Add benchmark case
 
-1. Create JSON under `tests/benchmark/models/cases/` (or `ops/perf_database/`).
+1. Create JSON under `tests/benchmark/models/cases/` for a model-level precision scenario. Operator **unit** tests do not belong in `ops/perf_database/`.
 2. Set `baseline_time_s` (0 → auto-baseline on first run) and `tolerance`.
 3. `TestModelRegression` loads all JSON cases automatically.
 
@@ -210,9 +270,12 @@ PYTHONPATH=. python -m pytest tests/smoke/ tests/regression/ \
 
 ### Checklist
 
-- [ ] Correct directory; no layer markers except `nightly`/`npu`
-- [ ] Shared helpers used (no copy-paste builder/assertion logic)
-- [ ] Session fixtures in regression (no per-function rebuilds)
+- [ ] Correct directory and L1/L2/L3 intent; no layer markers except `nightly`/`npu`
+- [ ] Real `model_id` / model build / `ModelRunner` appears only in L1 model-level tests
+- [ ] L2 builds exactly one of the seven canonical synthetic artifacts; CLI cases are routed by tested artifact
+- [ ] Pure parser / validation / exception / exit-code cases are L3
+- [ ] Shared canonical builder used (no copy-paste fixture construction)
+- [ ] Session model fixtures are used only in L1 model-level regression
 - [ ] If `@pytest.mark.nightly`, smoke guard exists under `tests/smoke/`
 - [ ] No `sys.modules` / global mocks in conftest; `pytest_plugins` only in root
 - [ ] New product symbols covered or in `exemptions.sources` / `exemptions.tests`

@@ -1,0 +1,70 @@
+L2 无模型组件集成（目标口径，2026-09-02）
+
+硬边界
+  模型身份归 L1，机制归 L2。
+  真实 model_id、ModelRunner、model_builder、注册模型 build/forward/compile、真实 diagnostics
+  capture 一律属于 L1。纯函数、parser、校验、默认值、异常和退出码属于 L3。
+  L2 只构建一个 canonical synthetic artifact；“CLI”不是模块名。
+
+建议七类（每类 = 一种构建物）
+
+1. 量化组件
+   构建物：QuantLinear / 单层 Attention + 合成权重
+   意见起点 41；逐节点核对后 47：原量化候选应用模型硬边界后 27，
+   再纳入 test_runtime.py 的 20 条合成 Attention/MLA/Linear-Attention 机制用例
+   builder 目标：tests/helpers/quant_component_builder.py
+
+2. 并行 / 通信组件
+   构建物：单层 ParallelLinear / Fake MoE / comm group
+   意见起点 45；应用真实模型硬边界后 30（其中 15 条三线重叠上收 L1）
+   builder 目标：tests/helpers/parallel_component_builder.py
+
+3. 图变换 / 编译组件
+   构建物：最小合成 FX 图
+   意见起点 37；逐节点核对后 25（6 条三线重叠及 4 条其他真实模型用例上收 L1；
+   2 条 optimizer-row/SP 机制改归 Runtime/性能）
+   builder 目标：tests/helpers/fx_graph_builder.py
+
+4. Runtime / 性能组件
+   构建物：合成事件流 + breakdown 输入
+   初判 66；逐节点核对后 47。20 条合成 Attention 机制改归量化组件，
+   patch 生命周期下沉 L3，optimizer-row/SP 机制补入本类
+   builder 目标：tests/helpers/runtime_event_builder.py
+
+5. 诊断应用组件
+   构建物：合成 Artifact
+   静态候选：26
+   builder 目标：tests/helpers/diagnostics_artifact_builder.py
+
+6. Replay 编排
+   构建物：replay request + fake adapter / mocked subprocess
+   静态候选：44；从 test_op_replay.py 等拆出，纯 helper/parser/校验转 L3
+   builder 目标：tests/helpers/replay_case_builder.py
+
+7. Microbench 生成
+   构建物：normalized op case + expected command/script
+   静态候选：61；从 test_generate_comm_microbench.py / test_start_microbench.py 拆出，
+   并纳入 8 条 query workload checkpoint/retry/concurrency 采集编排；
+   schema、表格格式、参数校验、退出码转 L3
+   builder 目标：tests/helpers/microbench_case_builder.py
+
+CLI 拆分规则
+  replay 编排 -> L2 第 6 类
+  microbench 生成 -> L2 第 7 类
+  throughput/runtime 数学 -> L2 第 4 类
+  parser / validation / defaults / help / exit code -> L3
+  实际调用 ModelRunner 或真实 image/video/model CLI -> L1
+  原 v2“CLI 与工具编排”216 条拆后：6 条 L1、86 条 L2、124 条 L3。
+  纳入原待确认项后，Replay 44 + Microbench 61 = 105 条 L2。
+
+L1 模型级
+  精度：tests/benchmark/models/ JSON
+  结构：tests/regression/model_diagnostics/e2e/
+  能力：tests/regression/<component>/model/（迁移目标）
+  同一 L1 家族 fixture 尽量一次构建承载数字 / 结构 / 能力三组断言。
+
+防重复
+  1. README 路由树：真实 model_id -> L1；否则按构建物七选一；纯调用 -> L3。
+  2. L2 静态守卫：迁移完成后禁 model_runner/model_builder/注册模型字面量。
+  3. 沿用 build_test_map.detect_redundant_cases，不新造检测器；补齐 test-map sync/nightly 到
+     Feishu 的接线后再宣称已上报。当前只有实现和单测，生产链路尚未接入。
