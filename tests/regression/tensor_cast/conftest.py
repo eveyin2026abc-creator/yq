@@ -70,6 +70,24 @@ def session_model_cache():
 
 
 @pytest.fixture(scope="session")
+def l1_executor():
+    """Shared model-level executor: one build and one forward per scenario.
+
+    Session scope is what makes the reuse worthwhile, since ``ModelRunner``
+    builds its own model and does not consult ``session_model_cache``. Tests that
+    need to observe build counts from a clean slate should construct their own
+    ``L1ScenarioExecutor`` instead of using this fixture.
+    """
+    from tests.helpers.l1_scenario import L1ScenarioExecutor
+
+    executor = L1ScenarioExecutor()
+    try:
+        yield executor
+    finally:
+        executor.reset()
+
+
+@pytest.fixture(scope="session")
 def op_registry(cfg_registry):
     """Build a lightweight op registry from shared hf config cache."""
     return build_op_registry(cfg_registry)
