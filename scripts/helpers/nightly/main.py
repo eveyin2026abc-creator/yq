@@ -38,6 +38,7 @@ from scripts.helpers.common.coverage_gate import (
 from scripts.helpers.nightly.failure_attribution import (
     ATTRIBUTION_BUDGET_SKIP_LABEL,
     attribute_failures,
+    confirm_failures_at_head,
     default_max_workers,
     results_to_failure_blames,
 )
@@ -53,7 +54,6 @@ from scripts.helpers.nightly.pytest_parser import (
 )
 from scripts.helpers.nightly.report_builder import fetch_env_info
 from scripts.helpers.nightly.report_models import (
-    AttributionConclusion,
     CoverageSummary,
     FailureBlame,
     FeishuReportInput,
@@ -66,12 +66,19 @@ _PROCESS_TERMINATE_TIMEOUT_SECONDS: Final[float] = 5.0
 _PYTEST_CAPTURE_MAX_CHARS: Final[int] = 10 * 1024 * 1024
 _HAS_PROCESS_GROUPS: Final[bool] = sys.platform != "win32"
 _DEFAULT_NIGHTLY_TIMEOUT_SECONDS: Final[float] = 50 * 60
+_DEFAULT_CONFIRMATION_TIMEOUT_SECONDS: Final[float] = 30 * 60
 PYTEST_TIMEOUT_EXIT_CODE: Final[int] = 124
 ATTRIBUTION_HARD_FAIL_EXIT_CODE: Final[int] = 3
 _TIMEOUT_ENV: Final = "MSMODELING_NIGHTLY_TIMEOUT_SECONDS"
+_CONFIRMATION_TIMEOUT_ENV: Final = "MSMODELING_NIGHTLY_CONFIRM_TIMEOUT_SECONDS"
 _COVERAGE_MERGED_FILE: Final = ".coverage"
 _COVERAGE_NON_BENCHMARK_FILE: Final = ".coverage.non_benchmark"
 _COVERAGE_BENCHMARK_FILE: Final = ".coverage.benchmark"
+_FAILURE_JOURNAL_ENV: Final = "MSMODELING_NIGHTLY_FAILURE_JOURNAL"
+_FAILURE_JOURNALS: Final[dict[str, str]] = {
+    "non-benchmark": ".pytest_cache/nightly/failures.non-benchmark.jsonl",
+    "benchmark": ".pytest_cache/nightly/failures.benchmark.jsonl",
+}
 
 # Vendored remote configs whose live Hub counterpart we watch for drift.
 _DRIFT_FIXTURE_MAP: Final[dict[str, str]] = {
@@ -107,6 +114,26 @@ def resolve_nightly_timeout_seconds() -> float:
     return value
 
 
+def resolve_confirmation_timeout_seconds() -> float:
+    """Independent budget for rechecking failures after the primary timeout."""
+    raw = (os.environ.get(_CONFIRMATION_TIMEOUT_ENV) or "").strip()
+    if not raw:
+        return _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        logging.getLogger("nightly").warning(
+            "Invalid %s=%r; using default %.0fs",
+            _CONFIRMATION_TIMEOUT_ENV,
+            raw,
+            _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS
+    if value <= 0:
+        return _DEFAULT_CONFIRMATION_TIMEOUT_SECONDS
+    return value
+
+
 def _build_pytest_cmd_wave_a(python_exe: str) -> list[str]:
     """Non-benchmark, non-network tests/ UT with xdist and coverage."""
     return [
@@ -118,6 +145,8 @@ def _build_pytest_cmd_wave_a(python_exe: str) -> list[str]:
         _PYTEST_MARKER_WAVE_A,
         *pytest_xdist_args(),
         *cov_pytest_args(),
+        "-p",
+        "scripts.helpers.nightly.failure_journal",
         "-vv",
         "--tb=line",
         "--disable-warnings",
@@ -134,6 +163,8 @@ def _build_pytest_cmd_wave_b(python_exe: str) -> list[str]:
         "-m",
         _PYTEST_MARKER_WAVE_B,
         *cov_pytest_args(),
+        "-p",
+        "scripts.helpers.nightly.failure_journal",
         "-vv",
         "--tb=line",
         "--disable-warnings",
@@ -379,16 +410,22 @@ def _run_pytest_waves(
 ) -> tuple[int, str, int, str]:
     """Run non-benchmark and benchmark waves in parallel under one shared deadline."""
     _cleanup_coverage_artifacts()
+    for journal_name in _FAILURE_JOURNALS.values():
+        (REPO_ROOT / journal_name).unlink(missing_ok=True)
     wave_a_cmd = _build_pytest_cmd_wave_a(python_exe)
     wave_b_cmd = _build_pytest_cmd_wave_b(python_exe)
 
     def _run_wave(label: str, cmd: list[str], coverage_file: str) -> tuple[int, str]:
         logger.info("Running pytest %s: %s", label, shlex.join(cmd))
+        journal_path = REPO_ROOT / _FAILURE_JOURNALS[label]
         exit_code, stdout = _stream_pytest(
             cmd,
             cwd=REPO_ROOT,
             deadline=deadline,
-            env_extra={"COVERAGE_FILE": str(REPO_ROOT / coverage_file)},
+            env_extra={
+                "COVERAGE_FILE": str(REPO_ROOT / coverage_file),
+                _FAILURE_JOURNAL_ENV: str(journal_path),
+            },
             log_prefix=label,
         )
         logger.info("Pytest %s finished with exit=%d", label, exit_code)
@@ -400,8 +437,32 @@ def _run_pytest_waves(
         wave_a_exit, wave_a_stdout = future_a.result()
         wave_b_exit, wave_b_stdout = future_b.result()
 
+    _emit_failure_journals(logger)
     _combine_wave_coverage(logger)
     return wave_a_exit, wave_a_stdout, wave_b_exit, wave_b_stdout
+
+
+def _emit_failure_journals(logger: logging.Logger) -> None:
+    """Copy durable per-failure evidence into the main nightly log."""
+    for label, journal_name in _FAILURE_JOURNALS.items():
+        path = REPO_ROOT / journal_name
+        if not path.is_file():
+            continue
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError:
+                logger.error("Malformed %s failure journal entry: %s", label, raw_line)
+                continue
+            logger.error(
+                "PYTEST FAILURE JOURNAL [%s/%s] %s phase=%s duration=%ss\n%s",
+                label,
+                event.get("worker", "unknown"),
+                event.get("node_id", "unknown"),
+                event.get("phase", "unknown"),
+                event.get("duration_sec", "n/a"),
+                event.get("traceback", ""),
+            )
 
 
 def _coverage_summary(cfg: Config) -> CoverageSummary | None:
@@ -482,6 +543,8 @@ def emit_report(
         infra_message=infra_message,
         timed_out=timed_out,
         status_note=status_note,
+        observed_completed=resolved_stats.observed_completed,
+        summary_complete=resolved_stats.summary_complete,
     )
     push_feishu_report(webhook_url, report)
     return resolved_stats
@@ -533,18 +596,21 @@ def _build_terminal_summary(
     status_note: str = "",
 ) -> list[str]:
     """Expert/agent console lines — node id, status, last error, attribution."""
+    counts_label = "Observed partial" if not stats.summary_complete else "Nightly"
     lines = [
         (
-            f"Nightly exit={pytest_exit}: passed={stats.passed} "
+            f"{counts_label} exit={pytest_exit}: passed={stats.passed} "
             f"failed={stats.failed} errors={stats.errors} "
             f"duration={stats.duration_sec:.0f}s"
             if stats.duration_sec >= 0
             else (
-                f"Nightly exit={pytest_exit}: passed={stats.passed} "
+                f"{counts_label} exit={pytest_exit}: passed={stats.passed} "
                 f"failed={stats.failed} errors={stats.errors} duration=n/a"
             )
         ),
     ]
+    if not stats.summary_complete:
+        lines.append(f"Partial statistics: observed_completed={stats.observed_completed}; final pytest summary missing")
     if timed_out:
         lines.append("Timed out: partial results below")
     if status_note:
@@ -640,17 +706,20 @@ def _run_nightly_pipeline(
             timed_out = True
             status_note = "Timed out; partial results below"
     elif stats.failed_cases and timed_out:
-        failure_blames = tuple(
-            FailureBlame(
-                node_id=node,
-                commit_id="unknown",
-                author="unknown",
-                subject=ATTRIBUTION_BUDGET_SKIP_LABEL,
-                conclusion=AttributionConclusion.NEED_HUMAN,
-                last_reason=stats.failure_reasons.get(node, ""),
-            )
-            for node in stats.failed_cases
+        confirmation_timeout = resolve_confirmation_timeout_seconds()
+        logger.info(
+            "Primary nightly timed out; rechecking %d reported failure(s) at HEAD with %.0fs fresh budget",
+            len(stats.failed_cases),
+            confirmation_timeout,
         )
+        results = confirm_failures_at_head(
+            REPO_ROOT,
+            stats.failed_cases,
+            python_exe=sys.executable,
+            deadline=time.monotonic() + confirmation_timeout,
+        )
+        failure_blames = results_to_failure_blames(results, failure_reasons=stats.failure_reasons)
+        status_note = "Primary timed out; reported failures were rechecked at HEAD"
 
     exit_code = _resolve_exit_code(pytest_exit, failure_blames, timed_out=timed_out)
 

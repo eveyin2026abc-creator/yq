@@ -144,7 +144,9 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
   - Non-benchmark / non-network: `pytest tests/ -m "not npu and not benchmark and not network"` with xdist (`-n auto --dist worksteal`) + coverage + `-vv --tb=line`.
   - Benchmark or network: `pytest tests/ -m "not npu and (benchmark or network)"` serially (no xdist; Hub cache-safe); separate coverage data files are combined after both waves finish.
 - **Attribution**: Asia/Shanghai calendar day-walk (up to 7 days) to find good; linear oldest→newest when `good..bad` ≤16 commits, else bisect; shares the same process deadline; per-node conclusion; lookback miss / incomplete attribution → exit 3.
-- **Self-timeout**: default 3000s via `MSMODELING_NIGHTLY_TIMEOUT_SECONDS`; skip Hub drift when already timed out; partial Feishu report on timeout.
+- **Failure evidence**: a pytest plugin appends each failure and traceback to per-wave JSONL immediately, then copies the journal into the main log even when pytest is terminated.
+- **Self-timeout**: default 3000s via `MSMODELING_NIGHTLY_TIMEOUT_SECONDS`; skip Hub drift when already timed out; report observed outcomes as partial when the final pytest summary is missing.
+- **Post-timeout confirmation**: reported failures are rerun serially at HEAD with a fresh 1800s budget (`MSMODELING_NIGHTLY_CONFIRM_TIMEOUT_SECONDS`) and classified as reproduced, not reproduced, uncollectible, or timed out. The overall run remains exit 124 because the primary suite was incomplete.
 - Optional Feishu (`FEISHU_WEBHOOK_URL`); pipeline log URL via `MSMODELING_PIPELINE_LOG_URL` (not PR links).
 
 ## Environment variables

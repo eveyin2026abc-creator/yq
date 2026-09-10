@@ -8,6 +8,8 @@ from scripts.helpers.nightly.report_models import (
     EnvInfo,
     FailureBlame,
     FeishuReportInput,
+    NotReproducedCause,
+    classify_not_reproduced_cause,
 )
 
 
@@ -87,3 +89,29 @@ def test_feishu_report_input_accepts_failure_blames() -> None:
     )
     assert report.failure_blames[0].commit_id == "deadbeef"
     assert report.pipeline_log_url.startswith("https://")
+
+
+def test_classify_not_reproduced_cause_network_timeout_unknown() -> None:
+    assert (
+        classify_not_reproduced_cause(
+            "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files"
+        )
+        == NotReproducedCause.NETWORK
+    )
+    assert (
+        classify_not_reproduced_cause("httpx.HTTPStatusError: Client error '429 Too Many Requests'")
+        == NotReproducedCause.NETWORK
+    )
+    assert classify_not_reproduced_cause("TimeoutError: pytest timeout") == NotReproducedCause.TIMEOUT
+    assert classify_not_reproduced_cause("timed out after 7200s; exit=124") == NotReproducedCause.TIMEOUT
+    assert (
+        classify_not_reproduced_cause("assert (708331.47 - 708324.28) < 5") == NotReproducedCause.UNKNOWN
+    )
+    assert (
+        classify_not_reproduced_cause("TypeError: not all arguments converted during string formatting")
+        == NotReproducedCause.UNKNOWN
+    )
+    assert classify_not_reproduced_cause("") == NotReproducedCause.UNKNOWN
+    assert (
+        classify_not_reproduced_cause("429 Too Many Requests; retry timed out") == NotReproducedCause.NETWORK
+    )

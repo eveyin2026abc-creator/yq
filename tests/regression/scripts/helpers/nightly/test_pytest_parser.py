@@ -124,3 +124,32 @@ FAILED tests/smoke/test_fail.py::test_broken - AssertionError: expected 1
     stats = parse_pytest_stdout(stdout, exit_code=1)
     assert stats.failed_cases == ("tests/smoke/test_fail.py::test_broken",)
     assert stats.failure_reasons["tests/smoke/test_fail.py::test_broken"] == "AssertionError: expected 1"
+
+
+def test_parse_pytest_stdout_uses_observed_outcomes_when_summary_is_missing() -> None:
+    stdout = """\
+[gw0] [ 33%] PASSED tests/smoke/test_ok.py::test_pass
+[gw1] [ 66%] FAILED tests/smoke/test_fail.py::test_broken
+[gw2] [100%] ERROR tests/smoke/test_err.py::test_crash
+... [pytest killed after 30s timeout]
+"""
+    stats = parse_pytest_stdout(stdout, exit_code=124)
+
+    assert stats.passed == 1
+    assert stats.failed == 1
+    assert stats.errors == 1
+    assert stats.observed_completed == 3
+    assert stats.summary_complete is False
+    assert stats.failed_cases == (
+        "tests/smoke/test_fail.py::test_broken",
+        "tests/smoke/test_err.py::test_crash",
+    )
+
+
+def test_parse_pytest_stdout_marks_final_summary_complete() -> None:
+    stats = parse_pytest_stdout(
+        "tests/a.py::test_ok PASSED\n===== 1 passed in 1.00s =====\n",
+        exit_code=0,
+    )
+    assert stats.summary_complete is True
+    assert stats.observed_completed == 1

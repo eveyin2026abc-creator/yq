@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Final
 
 
 class AttributionConclusion(str, Enum):
@@ -13,6 +15,47 @@ class AttributionConclusion(str, Enum):
     NEED_HUMAN = "need_human"
     CANNOT_REPRODUCE = "cannot_reproduce"
     UNCOLLECTIBLE = "uncollectible"
+
+
+class NotReproducedCause(str, Enum):
+    """Why a primary failure did not reproduce at HEAD. Keep labels traceback-literal."""
+
+    NETWORK = "network"
+    TIMEOUT = "timeout"
+    UNKNOWN = "unknown"
+
+
+_NETWORK_CAUSE_RE: Final = re.compile(
+    r"429|too many requests|couldn't connect|could not connect|"
+    r"hfhubhttperror|localentrynotfounderror|"
+    r"connection(?:error|refused|reset|aborted)|"
+    r"nameresolutionerror|sslerror|remotedisconnected|"
+    r"max retries exceeded|proxyerror|"
+    r"failed to establish|temporary failure in name resolution|"
+    r"huggingface\.co|hf-mirror",
+    re.IGNORECASE,
+)
+_TIMEOUT_CAUSE_RE: Final = re.compile(
+    r"\btimeout(?:error|expired)?\b|timed out|pytest[- ]timeout|"
+    r"cancelled by timeout|deadline exceeded|\bexit(?:\s*code)?\s*[=:]?\s*124\b",
+    re.IGNORECASE,
+)
+
+
+def classify_not_reproduced_cause(error_text: str) -> NotReproducedCause:
+    """Classify a Not-reproduced failure from the primary-wave error text.
+
+    Network wins when both network and timeout tokens appear (Hub retries often
+    mention both). Timing assertions such as ``elapsed < 5`` stay unknown.
+    """
+    text = error_text.strip()
+    if not text:
+        return NotReproducedCause.UNKNOWN
+    if _NETWORK_CAUSE_RE.search(text):
+        return NotReproducedCause.NETWORK
+    if _TIMEOUT_CAUSE_RE.search(text):
+        return NotReproducedCause.TIMEOUT
+    return NotReproducedCause.UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +89,7 @@ class FailureBlame:
     subject: str
     conclusion: AttributionConclusion
     last_reason: str = ""
+    cause: str = ""
 
     @property
     def attributed(self) -> bool:
@@ -80,3 +124,5 @@ class FeishuReportInput:
     infra_message: str = ""
     timed_out: bool = False
     status_note: str = ""
+    observed_completed: int = 0
+    summary_complete: bool = True

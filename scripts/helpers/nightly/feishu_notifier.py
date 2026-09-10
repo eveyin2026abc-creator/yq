@@ -9,7 +9,7 @@ import urllib.request
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Final
 
-from scripts.helpers.nightly.report_models import AttributionConclusion
+from scripts.helpers.nightly.report_models import AttributionConclusion, NotReproducedCause
 
 if TYPE_CHECKING:
     from scripts.helpers.nightly.report_models import FailureBlame, FeishuReportInput
@@ -23,23 +23,31 @@ _FEISHU_MESSAGE_BYTE_BUDGET: Final = 18_000
 STATUS_NEEDS_FOLLOW_UP: Final = "Needs follow-up"
 STATUS_ROOT_CAUSE_FOUND: Final = "Root cause found"
 STATUS_NOT_REPRODUCED: Final = "Not reproduced"
+STATUS_NOT_REPRODUCED_NETWORK: Final = f"{STATUS_NOT_REPRODUCED} ({NotReproducedCause.NETWORK.value})"
+STATUS_NOT_REPRODUCED_TIMEOUT: Final = f"{STATUS_NOT_REPRODUCED} ({NotReproducedCause.TIMEOUT.value})"
+STATUS_NOT_REPRODUCED_UNKNOWN: Final = f"{STATUS_NOT_REPRODUCED} ({NotReproducedCause.UNKNOWN.value})"
 
 _STATUS_ORDER: Final = (
     STATUS_NEEDS_FOLLOW_UP,
     STATUS_ROOT_CAUSE_FOUND,
-    STATUS_NOT_REPRODUCED,
+    STATUS_NOT_REPRODUCED_NETWORK,
+    STATUS_NOT_REPRODUCED_TIMEOUT,
+    STATUS_NOT_REPRODUCED_UNKNOWN,
 )
 
 _STATUS_BORDER: Final = {
     STATUS_NEEDS_FOLLOW_UP: "orange",
     STATUS_ROOT_CAUSE_FOUND: "red",
-    STATUS_NOT_REPRODUCED: "grey",
+    STATUS_NOT_REPRODUCED_NETWORK: "grey",
+    STATUS_NOT_REPRODUCED_TIMEOUT: "grey",
+    STATUS_NOT_REPRODUCED_UNKNOWN: "grey",
 }
 
 _STATUS_LEGEND: Final = (
     f"- **{STATUS_NEEDS_FOLLOW_UP}** — could not find introducing commit / needs human follow-up",
     f"- **{STATUS_ROOT_CAUSE_FOUND}** — attribution succeeded; shows introducing commit and author",
-    f"- **{STATUS_NOT_REPRODUCED}** — failed in suite but could not reproduce at HEAD",
+    f"- **{STATUS_NOT_REPRODUCED}** — failed in suite but could not reproduce at HEAD "
+    f"(`network` / `timeout` / `unknown`)",
 )
 
 logger = logging.getLogger(__name__)
@@ -60,9 +68,17 @@ def display_status(blame: FailureBlame) -> str:
     if conclusion == AttributionConclusion.FIRST_BAD:
         return STATUS_ROOT_CAUSE_FOUND
     if conclusion == AttributionConclusion.CANNOT_REPRODUCE:
-        return STATUS_NOT_REPRODUCED
+        if blame.cause == NotReproducedCause.NETWORK.value:
+            return STATUS_NOT_REPRODUCED_NETWORK
+        if blame.cause == NotReproducedCause.TIMEOUT.value:
+            return STATUS_NOT_REPRODUCED_TIMEOUT
+        return STATUS_NOT_REPRODUCED_UNKNOWN
     # NEED_HUMAN, UNCOLLECTIBLE, and unknown → follow-up.
     return STATUS_NEEDS_FOLLOW_UP
+
+
+def _is_not_reproduced_status(status: str) -> bool:
+    return status.startswith(STATUS_NOT_REPRODUCED)
 
 
 def _summary_counts(report: FeishuReportInput) -> tuple[int, int, int, int]:
@@ -70,7 +86,7 @@ def _summary_counts(report: FeishuReportInput) -> tuple[int, int, int, int]:
     blames = report.failure_blames
     root_cause = sum(1 for b in blames if display_status(b) == STATUS_ROOT_CAUSE_FOUND)
     follow_up = sum(1 for b in blames if display_status(b) == STATUS_NEEDS_FOLLOW_UP)
-    not_repro = sum(1 for b in blames if display_status(b) == STATUS_NOT_REPRODUCED)
+    not_repro = sum(1 for b in blames if _is_not_reproduced_status(display_status(b)))
     return len(blames), root_cause, follow_up, not_repro
 
 
@@ -197,15 +213,20 @@ def _render_summary_markdown(
 ) -> str:
     """Build summary markdown. Pipeline URL is omitted by default (use button once)."""
     listed, root_cause, follow_up, not_repro = _summary_counts(report)
+    counts_label = "Observed counts (partial)" if not report.summary_complete else "Counts"
     lines = [
         f"**Branch:** `{report.branch}`",
         f"**Commit:** `{report.commit}`",
         f"**Result:** {_build_nightly_status(report)}",
         (
-            f"**Counts:** Passed **{report.passed}** · Failed **{report.failed}** · "
+            f"**{counts_label}:** Passed **{report.passed}** · Failed **{report.failed}** · "
             f"Errors **{report.errors}** · Duration **{_format_duration(report.duration_sec)}**"
         ),
     ]
+    if not report.summary_complete:
+        lines.append(
+            f"Final pytest summary missing; outcomes observed before termination: **{report.observed_completed}**."
+        )
     if listed > 0:
         lines.append(
             f"**Triage:** {STATUS_ROOT_CAUSE_FOUND} **{root_cause}** · "

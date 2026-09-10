@@ -20,6 +20,7 @@ from scripts.helpers.nightly.failure_attribution import (
     _bisect_exit_code,
     _commit_metadata,
     attribute_failures,
+    confirm_failures_at_head,
     default_max_workers,
     find_day_candidate,
     find_first_bad,
@@ -301,6 +302,45 @@ def test_results_to_failure_blames_prefers_pytest_reason() -> None:
         failure_reasons={"tests/a.py::test_x": "AssertionError: boom"},
     )
     assert blames[0].last_reason == "AssertionError: boom"
+    assert blames[0].cause == ""
+
+
+def test_results_to_failure_blames_classifies_not_reproduced_cause() -> None:
+    results = (
+        FirstBadResult(
+            node_id="tests/a.py::test_net",
+            commit_id="abc",
+            author="alice",
+            subject="Flaky / not reproduced at HEAD",
+            conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+            detail="Flaky / not reproduced at HEAD",
+        ),
+        FirstBadResult(
+            node_id="tests/a.py::test_time",
+            commit_id="abc",
+            author="alice",
+            subject="Flaky / not reproduced at HEAD",
+            conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+            detail="Flaky / not reproduced at HEAD",
+        ),
+        FirstBadResult(
+            node_id="tests/a.py::test_other",
+            commit_id="abc",
+            author="alice",
+            subject="Flaky / not reproduced at HEAD",
+            conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+            detail="Flaky / not reproduced at HEAD",
+        ),
+    )
+    blames = results_to_failure_blames(
+        results,
+        failure_reasons={
+            "tests/a.py::test_net": "429 Too Many Requests for url: https://hf-mirror.com/config.json",
+            "tests/a.py::test_time": "TimeoutError: pytest timeout",
+            "tests/a.py::test_other": "assert elapsed < 5",
+        },
+    )
+    assert [blame.cause for blame in blames] == ["network", "timeout", "unknown"]
 
 
 def test_find_first_bad_uses_linear_when_count_small(
@@ -555,6 +595,56 @@ def test_run_node_pytest_timeout_returns_timeout_exit(
 
     monkeypatch.setattr(fa.subprocess, "run", _hang)
     assert fa.run_node_pytest(tmp_path, "tests/a.py::test_x", python_exe="python") == 124
+
+
+def test_run_node_pytest_overrides_default_markers_for_nightly_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[list[str]] = []
+
+    def _run(cmd: list[str], **_kwargs: object) -> FakeCompleted:
+        commands.append(cmd)
+        return FakeCompleted(0, "", "")
+
+    monkeypatch.setattr(fa.subprocess, "run", _run)
+    assert fa.run_node_pytest(tmp_path, "tests/a.py::test_nightly", python_exe="python") == 0
+    assert commands == [
+        [
+            "python",
+            "-m",
+            "pytest",
+            "tests/a.py::test_nightly",
+            "-x",
+            "-o",
+            "addopts=",
+            "-m",
+            "not npu",
+            "--tb=line",
+            "-q",
+        ]
+    ]
+
+
+def test_confirm_failures_at_head_separates_not_reproduced_from_reproduced(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    exits = iter((0, 1))
+    monkeypatch.setattr(fa, "_git_stdout", lambda *_a, **_k: "badsha")
+    monkeypatch.setattr(fa, "_commit_metadata", lambda *_a, **_k: ("abc1234", "alice", "subject"))
+    monkeypatch.setattr(fa, "run_node_pytest", lambda *_a, **_k: next(exits))
+
+    results = confirm_failures_at_head(
+        tmp_path,
+        ("tests/a.py::test_flaky", "tests/b.py::test_stable"),
+        python_exe="python",
+    )
+
+    assert results[0].conclusion == AttributionConclusion.CANNOT_REPRODUCE
+    assert results[1].conclusion == AttributionConclusion.NEED_HUMAN
+    assert "Reproduced at HEAD" in results[1].subject
+    assert results[1].commit_id == "abc1234"
 
 
 def test_attribute_failures_exhausted_deadline_skips_all_nodes(

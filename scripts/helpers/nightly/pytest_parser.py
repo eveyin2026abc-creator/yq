@@ -15,6 +15,13 @@ _LOG_SNIPPET_MAX_LINES: Final = 8
 _EXCEPTION_MARKERS: Final = ("ValueError:", "ImportError:", "ModuleNotFoundError:")
 _NODE_OUTCOME_RE: Final = re.compile(r"^(?P<node>.+?) (FAILED|ERROR)(?:\s|$)")
 _XDIST_OUTCOME_RE: Final = re.compile(r"^\[(?:gw\d+|master)\]\s+\[[^\]]+\]\s+(?:FAILED|ERROR)\s+(?P<node>.+?)\s*$")
+_XDIST_ANY_OUTCOME_RE: Final = re.compile(
+    r"^\[(?:gw\d+|master)\]\s+\[[^\]]+\]\s+(?P<outcome>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)"
+    r"(?:\([^)]*\))?\s+(?P<node>.+?)\s*$"
+)
+_NODE_ANY_OUTCOME_RE: Final = re.compile(
+    r"^(?P<node>tests/\S+)\s+(?P<outcome>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)(?:\s+\[[^\]]+\])?\s*$"
+)
 _TB_LINE_RE: Final = re.compile(r"^(?:FAILED|ERROR)\s+(?P<node>\S+)\s+-\s+(?P<reason>.+)$")
 _STDOUT_UNITTEST_NODE_RE: Final = re.compile(
     r"^(?P<module>tests/.+/test_\w+)/(?P<class_name>[A-Z]\w*)\.py::(?P<method>.+)$"
@@ -51,6 +58,8 @@ class NightlyRunStats:
     failed_cases: tuple[str, ...]
     first_error: str
     failure_reasons: dict[str, str]
+    observed_completed: int = 0
+    summary_complete: bool = True
 
 
 def _extract_pytest_stdout_snippet(text: str, *, max_lines: int = _LOG_SNIPPET_MAX_LINES) -> str:
@@ -106,6 +115,8 @@ def parse_pytest_stdout(text: str, *, exit_code: int = 0) -> NightlyRunStats:
     errors = 0
     duration_sec = -1.0
     first_error = ""
+    observed_outcomes: dict[str, str] = {}
+    summary_complete = False
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -118,6 +129,15 @@ def parse_pytest_stdout(text: str, *, exit_code: int = 0) -> NightlyRunStats:
                 failed_cases.append(node)
             if reason:
                 failure_reasons[node] = reason
+            continue
+
+        any_outcome = _XDIST_ANY_OUTCOME_RE.match(stripped) or _NODE_ANY_OUTCOME_RE.match(stripped)
+        if any_outcome:
+            node = normalize_stdout_node_id(any_outcome.group("node"))
+            outcome_name = any_outcome.group("outcome")
+            observed_outcomes[node] = outcome_name
+            if outcome_name in {"FAILED", "ERROR"} and node not in failed_cases:
+                failed_cases.append(node)
             continue
 
         xdist_outcome = _XDIST_OUTCOME_RE.match(stripped)
@@ -135,8 +155,14 @@ def parse_pytest_stdout(text: str, *, exit_code: int = 0) -> NightlyRunStats:
             continue
 
         summary_match = _SUMMARY_LINE_RE.match(line.strip())
-        if summary_match:
+        if summary_match and _SUMMARY_COUNT_RE.search(summary_match.group(1)):
             passed, failed, errors, duration_sec = _parse_summary_counts(summary_match.group(1))
+            summary_complete = True
+
+    if not summary_complete:
+        passed = sum(outcome == "PASSED" for outcome in observed_outcomes.values())
+        failed = sum(outcome == "FAILED" for outcome in observed_outcomes.values())
+        errors = sum(outcome == "ERROR" for outcome in observed_outcomes.values())
 
     if exit_code != 0 and not failed_cases and failed == 0 and errors == 0:
         first_error = _extract_pytest_stdout_snippet(text)
@@ -149,6 +175,8 @@ def parse_pytest_stdout(text: str, *, exit_code: int = 0) -> NightlyRunStats:
         failed_cases=tuple(failed_cases),
         first_error=first_error,
         failure_reasons=failure_reasons,
+        observed_completed=len(observed_outcomes),
+        summary_complete=summary_complete,
     )
 
 
@@ -162,6 +190,8 @@ def merge_nightly_run_stats(*stats_list: NightlyRunStats) -> NightlyRunStats:
     failed_cases: list[str] = []
     failure_reasons: dict[str, str] = {}
     first_error = ""
+    observed_completed = 0
+    summary_complete = True
 
     for stats in stats_list:
         passed += stats.passed
@@ -176,6 +206,8 @@ def merge_nightly_run_stats(*stats_list: NightlyRunStats) -> NightlyRunStats:
         failure_reasons.update(stats.failure_reasons)
         if not first_error and stats.first_error:
             first_error = stats.first_error
+        observed_completed += stats.observed_completed
+        summary_complete = summary_complete and stats.summary_complete
 
     return NightlyRunStats(
         passed=passed,
@@ -185,4 +217,6 @@ def merge_nightly_run_stats(*stats_list: NightlyRunStats) -> NightlyRunStats:
         failed_cases=tuple(failed_cases),
         first_error=first_error,
         failure_reasons=failure_reasons,
+        observed_completed=observed_completed,
+        summary_complete=summary_complete,
     )

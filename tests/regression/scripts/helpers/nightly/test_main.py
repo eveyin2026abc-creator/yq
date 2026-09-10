@@ -36,6 +36,7 @@ from scripts.helpers.nightly.main import (
     _terminate_process_tree,
     emit_init_failure_report,
     emit_report,
+    resolve_confirmation_timeout_seconds,
     resolve_nightly_timeout_seconds,
 )
 from scripts.helpers.nightly.pytest_parser import NightlyRunStats, merge_nightly_run_stats, parse_pytest_stdout
@@ -75,6 +76,7 @@ def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage
     assert "-vv" in cmd
     assert "--tb=line" in cmd
     assert "--junit-xml" not in marker
+    assert "scripts.helpers.nightly.failure_journal" in cmd
 
 
 def test_pytest_cmd_wave_b_runs_benchmark_or_network_serial_without_xdist() -> None:
@@ -89,6 +91,7 @@ def test_pytest_cmd_wave_b_runs_benchmark_or_network_serial_without_xdist() -> N
     assert "--cov-append" not in cmd
     assert "-vv" in cmd
     assert "--tb=line" in cmd
+    assert "scripts.helpers.nightly.failure_journal" in cmd
 
 
 def test_merge_nightly_run_stats_sums_counts_and_dedupes_failures() -> None:
@@ -146,6 +149,35 @@ def test_run_pytest_waves_runs_both_markers_in_parallel(
     assert {label for label, _marker in calls} == {"non-benchmark", "benchmark"}
 
 
+def test_emit_failure_journals_copies_traceback_into_main_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from scripts.helpers.nightly import main as nightly_main
+
+    monkeypatch.setattr(nightly_main, "REPO_ROOT", tmp_path)
+    event = {
+        "worker": "gw2",
+        "node_id": "tests/a.py::test_broken",
+        "phase": "call",
+        "duration_sec": 1.5,
+        "traceback": "AssertionError: boom",
+    }
+    journal = tmp_path / ".pytest_cache/nightly/failures.non-benchmark.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(
+        json.dumps(event) + "\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        nightly_main._emit_failure_journals(logging.getLogger("nightly-test"))
+
+    assert "tests/a.py::test_broken" in caplog.text
+    assert "AssertionError: boom" in caplog.text
+
+
 def test_combine_pytest_exits_prefers_timeout_then_first_failure() -> None:
     from scripts.helpers.nightly.main import PYTEST_TIMEOUT_EXIT_CODE
 
@@ -161,6 +193,13 @@ def test_resolve_nightly_timeout_seconds_default_and_env(monkeypatch: pytest.Mon
     assert resolve_nightly_timeout_seconds() == 3000.0
     monkeypatch.setenv("MSMODELING_NIGHTLY_TIMEOUT_SECONDS", "120")
     assert resolve_nightly_timeout_seconds() == 120.0
+
+
+def test_resolve_confirmation_timeout_seconds_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MSMODELING_NIGHTLY_CONFIRM_TIMEOUT_SECONDS", raising=False)
+    assert resolve_confirmation_timeout_seconds() == 1800.0
+    monkeypatch.setenv("MSMODELING_NIGHTLY_CONFIRM_TIMEOUT_SECONDS", "90")
+    assert resolve_confirmation_timeout_seconds() == 90.0
 
 
 def test_resolve_exit_code_need_human_is_3_cannot_reproduce_keeps_pytest() -> None:
@@ -678,6 +717,19 @@ def test_pipeline_skips_drift_check_after_pytest_timeout(
         return ("should-not-run",)
 
     monkeypatch.setattr(nightly_main, "_run_config_drift_check", _drift)
+    monkeypatch.setattr(
+        nightly_main,
+        "confirm_failures_at_head",
+        lambda *_a, **_k: (
+            FirstBadResult(
+                node_id="tests/smoke/test_b.py::test_fail",
+                commit_id="abc",
+                author="a",
+                subject="Flaky / not reproduced at HEAD",
+                conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+            ),
+        ),
+    )
     reports: list[Any] = []
     monkeypatch.setattr(nightly_main, "push_feishu_report", lambda url, report: reports.append(report))
 
@@ -700,6 +752,8 @@ def test_pipeline_skips_drift_check_after_pytest_timeout(
     assert "Skipping Hub drift check" in caplog.text
     assert len(reports) == 1
     assert reports[0].timed_out is True
+    assert reports[0].failure_blames[0].conclusion == AttributionConclusion.CANNOT_REPRODUCE
+    assert "rechecked at HEAD" in reports[0].status_note
 
 
 def test_parse_pytest_stdout_extracts_failed_nodes_and_tb_line_reason() -> None:

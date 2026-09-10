@@ -13,7 +13,11 @@ from scripts.helpers.nightly.feishu_notifier import (
     _FEISHU_MESSAGE_BYTE_BUDGET,
     STATUS_NEEDS_FOLLOW_UP,
     STATUS_NOT_REPRODUCED,
+    STATUS_NOT_REPRODUCED_NETWORK,
+    STATUS_NOT_REPRODUCED_TIMEOUT,
+    STATUS_NOT_REPRODUCED_UNKNOWN,
     STATUS_ROOT_CAUSE_FOUND,
+    display_status,
     _payload_byte_size,
     build_feishu_card_payload,
     build_feishu_payload,
@@ -72,6 +76,23 @@ def _pipeline_button_count(payload: dict[str, Any]) -> int:
         if label in {"Pipeline log", "Open pipeline log"}:
             count += 1
     return count
+
+
+def test_partial_report_labels_observed_counts_without_claiming_final_summary() -> None:
+    payload = build_feishu_card_payload(
+        _report(
+            passed=10,
+            failed=2,
+            errors=0,
+            overall_exit=124,
+            timed_out=True,
+            summary_complete=False,
+            observed_completed=12,
+        )
+    )
+    text = _card_markdown(payload)
+    assert "Observed counts (partial)" in text
+    assert "outcomes observed before termination: **12**" in text
 
 
 def _markdown_element_contents(payload: dict[str, Any]) -> list[str]:
@@ -152,6 +173,39 @@ def test_card_payload_exit_code_not_glued_to_legend() -> None:
     assert "HEADExit code" not in text_body.replace("\n", "")
 
 
+def test_display_status_not_reproduced_uses_cause_label() -> None:
+    network = FailureBlame(
+        node_id="tests/a.py::test_net",
+        commit_id="abc",
+        author="a",
+        subject="flaky",
+        conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+        last_reason="429 Too Many Requests",
+        cause="network",
+    )
+    timeout = FailureBlame(
+        node_id="tests/a.py::test_to",
+        commit_id="abc",
+        author="a",
+        subject="flaky",
+        conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+        last_reason="TimeoutError",
+        cause="timeout",
+    )
+    unknown = FailureBlame(
+        node_id="tests/a.py::test_x",
+        commit_id="abc",
+        author="a",
+        subject="flaky",
+        conclusion=AttributionConclusion.CANNOT_REPRODUCE,
+        last_reason="assert elapsed < 5",
+        cause="unknown",
+    )
+    assert display_status(network) == STATUS_NOT_REPRODUCED_NETWORK
+    assert display_status(timeout) == STATUS_NOT_REPRODUCED_TIMEOUT
+    assert display_status(unknown) == STATUS_NOT_REPRODUCED_UNKNOWN
+
+
 def test_card_payload_groups_by_status_with_node_ids() -> None:
     blames = (
         FailureBlame(
@@ -192,7 +246,7 @@ def test_card_payload_groups_by_status_with_node_ids() -> None:
     # Group by status, not directory.
     assert f"**{STATUS_ROOT_CAUSE_FOUND}**" in text
     assert f"**{STATUS_NEEDS_FOLLOW_UP}**" in text
-    assert f"**{STATUS_NOT_REPRODUCED}**" in text
+    assert f"**{STATUS_NOT_REPRODUCED_UNKNOWN}**" in text
     assert "**tests/smoke**" not in text
     assert "**tests/regression**" not in text
     # Full node ids; no Error / jargon primary labels.

@@ -18,7 +18,11 @@ from typing import Final
 from zoneinfo import ZoneInfo
 
 from scripts.helpers.nightly.pytest_parser import normalize_stdout_node_id
-from scripts.helpers.nightly.report_models import AttributionConclusion, FailureBlame
+from scripts.helpers.nightly.report_models import (
+    AttributionConclusion,
+    FailureBlame,
+    classify_not_reproduced_cause,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,7 @@ _CANNOT_REPRODUCE_LABEL: Final = "Flaky / not reproduced at HEAD"
 _UNCOLLECTIBLE_LABEL: Final = "Test not collectable at current commit; needs human follow-up"
 _ATTRIBUTION_TIMEOUT_LABEL: Final = "Attribution pytest timed out; needs human follow-up"
 ATTRIBUTION_BUDGET_SKIP_LABEL: Final = "Attribution skipped due to timeout"
+CONFIRMATION_REPRODUCED_LABEL: Final = "Reproduced at HEAD after primary nightly timeout"
 
 _GIT: str | None = None
 
@@ -146,7 +151,19 @@ def run_node_pytest(
     effective_timeout = _NODE_PYTEST_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
     try:
         proc = subprocess.run(
-            [python_exe, "-m", "pytest", node_id, "-x", "--tb=line", "-q"],
+            [
+                python_exe,
+                "-m",
+                "pytest",
+                node_id,
+                "-x",
+                "-o",
+                "addopts=",
+                "-m",
+                "not npu",
+                "--tb=line",
+                "-q",
+            ],
             cwd=repo_root,
             env=env,
             check=False,
@@ -293,6 +310,68 @@ def _build_cannot_reproduce(repo_root: Path, node_id: str, bad: str) -> FirstBad
         conclusion=AttributionConclusion.CANNOT_REPRODUCE,
         detail=_CANNOT_REPRODUCE_LABEL,
     )
+
+
+def confirm_failures_at_head(
+    repo_root: Path,
+    failed_nodes: tuple[str, ...],
+    *,
+    python_exe: str,
+    deadline: float | None = None,
+) -> tuple[FirstBadResult, ...]:
+    """Re-run primary-timeout failures at HEAD without attempting history attribution.
+
+    A fresh confirmation budget lets the report distinguish failures that pass
+    in isolation from failures that reproduce, even when the primary nightly
+    deadline has already expired.
+    """
+    if not failed_nodes:
+        return ()
+
+    bad = _git_stdout(repo_root, "rev-parse", "HEAD")
+    normalized = tuple(normalize_stdout_node_id(node) for node in failed_nodes)
+    results: list[FirstBadResult] = []
+
+    for index, node_id in enumerate(normalized):
+        if _budget_exhausted(deadline):
+            results.extend(_budget_skip_results(normalized[index:]))
+            break
+
+        exit_code = _run_node_pytest_with_deadline(
+            repo_root,
+            node_id,
+            python_exe=python_exe,
+            deadline=deadline,
+        )
+        if exit_code == 0:
+            results.append(_build_cannot_reproduce(repo_root, node_id, bad))
+        elif exit_code in _PYTEST_UNCOLLECTIBLE_EXIT_CODES:
+            results.append(
+                FirstBadResult(
+                    node_id=node_id,
+                    commit_id=_UNKNOWN_COMMIT,
+                    author=_UNKNOWN_AUTHOR,
+                    subject=_UNCOLLECTIBLE_LABEL,
+                    conclusion=AttributionConclusion.UNCOLLECTIBLE,
+                    detail=_UNCOLLECTIBLE_LABEL,
+                )
+            )
+        elif exit_code == _NODE_PYTEST_TIMEOUT_EXIT_CODE:
+            results.append(_need_human_result(node_id, detail=_ATTRIBUTION_TIMEOUT_LABEL))
+        else:
+            commit_id, author, _subject = _commit_metadata(repo_root, bad)
+            results.append(
+                FirstBadResult(
+                    node_id=node_id,
+                    commit_id=commit_id,
+                    author=author,
+                    subject=CONFIRMATION_REPRODUCED_LABEL,
+                    conclusion=AttributionConclusion.NEED_HUMAN,
+                    detail=CONFIRMATION_REPRODUCED_LABEL,
+                )
+            )
+
+    return tuple(results)
 
 
 def find_day_candidate(
@@ -819,17 +898,26 @@ def results_to_failure_blames(
 ) -> tuple[FailureBlame, ...]:
     """Map attribution results to Feishu/console blame rows."""
     reasons = failure_reasons or {}
-    return tuple(
-        FailureBlame(
-            node_id=result.node_id,
-            commit_id=result.commit_id,
-            author=result.author,
-            subject=result.subject,
-            conclusion=result.conclusion,
-            last_reason=reasons.get(result.node_id) or result.detail,
+    blames: list[FailureBlame] = []
+    for result in results:
+        last_reason = reasons.get(result.node_id) or result.detail
+        cause = (
+            classify_not_reproduced_cause(last_reason).value
+            if result.conclusion == AttributionConclusion.CANNOT_REPRODUCE
+            else ""
         )
-        for result in results
-    )
+        blames.append(
+            FailureBlame(
+                node_id=result.node_id,
+                commit_id=result.commit_id,
+                author=result.author,
+                subject=result.subject,
+                conclusion=result.conclusion,
+                last_reason=last_reason,
+                cause=cause,
+            )
+        )
+    return tuple(blames)
 
 
 if __name__ == "__main__":
