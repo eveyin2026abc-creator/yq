@@ -153,8 +153,8 @@ def assess_test_map_freshness(
     if is_git_ancestor(repo_root, built_from_commit, merge_base):
         return TestMapFreshness(
             warn_message=(
-                "test_map: built_from_commit "
-                f"{built_from_commit[:12]} is behind merge-base {merge_base[:12]}"
+                f"test_map: built_from_commit {built_from_commit[:12]} "
+                + f"is behind merge-base {merge_base[:12]}; continuing with stale map"
             )
         )
 

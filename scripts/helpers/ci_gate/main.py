@@ -367,6 +367,11 @@ def _sample_nodes(nodes: tuple[str, ...], limit: int = _SAMPLE_NODE_LIMIT) -> st
 
 
 def _changeset_has_gate_paths(changes: ChangeSet) -> bool:
+    return bool(changes.unscoped_python or _changes_need_fresh_test_map(changes))
+
+
+def _changes_need_fresh_test_map(changes: ChangeSet) -> bool:
+    """True when the diff needs a fresh test_map (config / product / test paths)."""
     return bool(
         changes.config
         or changes.new_test
@@ -375,22 +380,13 @@ def _changeset_has_gate_paths(changes: ChangeSet) -> bool:
         or changes.del_source
         or changes.modified_source
         or changes.modified_test
-        or changes.unscoped_python
     )
 
 
 def _no_work_reason(changes: ChangeSet) -> str:
     if not _changeset_has_gate_paths(changes):
         return "empty or out-of-scope diff vs base branch (no gate-relevant file changes)"
-    if changes.unscoped_python and not (
-        changes.config
-        or changes.new_test
-        or changes.del_test
-        or changes.new_source
-        or changes.del_source
-        or changes.modified_source
-        or changes.modified_test
-    ):
+    if changes.unscoped_python and not _changes_need_fresh_test_map(changes):
         return "only unscoped Python changes outside gate_policy roots"
     return "diff classified but no mapped/changed tests selected"
 
@@ -588,15 +584,15 @@ def _prepare_gate_inputs(
     _log_change_summary(logger, changes, cfg)
 
     if freshness_issue is not None:
-        if _changeset_has_gate_paths(changes):
+        if _changes_need_fresh_test_map(changes):
             message = (
                 f"{freshness_issue}; refusing to run CI gate without a fresh test_map "
-                "(diff has gate-relevant changes)"
+                + "(diff has gate-relevant changes)"
             )
             logger.error("%s", message)
             return _PrepareFailure(1, message)
         logger.warning(
-            "%s; diff has no gate-relevant changes; skipping pytest",
+            "%s; diff has no config/product/test changes; skipping pytest",
             freshness_issue,
         )
 
