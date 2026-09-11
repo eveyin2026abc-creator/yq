@@ -595,6 +595,11 @@ def _prepare_gate_inputs(
             "%s; diff has no config/product/test changes; skipping pytest",
             freshness_issue,
         )
+        return _PreparedInputs(
+            baseline=baseline,
+            changes=changes,
+            deleted_source_step=GateStepResult(),
+        )
 
     shadow_warnings = collect_product_shadow_warnings(REPO_ROOT, changes, baseline.roots)
     for warning in shadow_warnings:

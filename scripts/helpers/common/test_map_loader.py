@@ -160,8 +160,8 @@ def assess_test_map_freshness(
 
     return TestMapFreshness(
         block_message=(
-            "test_map: stale built_from_commit "
-            f"{built_from_commit[:12]} is not an ancestor of merge-base {merge_base[:12]}"
+            f"test_map: stale built_from_commit {built_from_commit[:12]} "
+            + f"is not an ancestor of merge-base {merge_base[:12]}"
         )
     )
 
