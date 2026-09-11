@@ -93,7 +93,6 @@ class _PreparedInputs:
     baseline: Baseline
     changes: ChangeSet
     deleted_source_step: GateStepResult
-    force_full_suite: bool = False
 
 
 def build_hard_blocking_plan(
@@ -212,11 +211,10 @@ def build_ci_gate_plan(
     *,
     deleted_source_step: GateStepResult | None = None,
     modified_source_step: GateStepResult | None = None,
-    force_full_suite: bool = False,
 ) -> CiGatePlan:
     test_map = baseline.test_map
     roots = baseline.roots
-    full_suite = force_full_suite or bool(changes.config)
+    full_suite = bool(changes.config)
 
     deleted_source_tests: frozenset[str] = frozenset()
     changed_test_nodes: frozenset[str] = frozenset()
@@ -507,10 +505,6 @@ def _log_change_summary(logger: logging.Logger, changes: ChangeSet, cfg: Config)
     )
 
 
-def _baseline_without_test_map(baseline: Baseline) -> Baseline:
-    return baseline.__class__(test_map={}, policy=baseline.policy)
-
-
 def _run_execution_waves(
     logger: logging.Logger,
     execution: ExecutionPlan,
@@ -571,19 +565,12 @@ def _prepare_gate_inputs(
         return _PrepareFailure(1, str(exc))
     logger.info("Merge-base: %s", merge_base[:12])
 
-    force_full_suite = False
+    freshness_issue: str | None = None
     try:
         validate_gate_policy_if_changed(REPO_ROOT, merge_base)
         baseline, test_map_commit = load_baseline(REPO_ROOT, cfg)
         freshness = assess_test_map_freshness(REPO_ROOT, test_map_commit, merge_base)
-        if freshness.block_message:
-            raise ConfigError(freshness.block_message)
-        if freshness.warn_message:
-            logger.warning(
-                "%s; falling back to the full test suite without stale coverage mapping", freshness.warn_message
-            )
-            baseline = _baseline_without_test_map(baseline)
-            force_full_suite = True
+        freshness_issue = freshness.block_message or freshness.warn_message
     except ConfigError as exc:
         logger.error("%s", exc)
         return _PrepareFailure(1, str(exc))
@@ -599,6 +586,19 @@ def _prepare_gate_inputs(
         logger.error("%s", exc)
         return _PrepareFailure(1, str(exc))
     _log_change_summary(logger, changes, cfg)
+
+    if freshness_issue is not None:
+        if _changeset_has_gate_paths(changes):
+            message = (
+                f"{freshness_issue}; refusing to run CI gate without a fresh test_map "
+                "(diff has gate-relevant changes)"
+            )
+            logger.error("%s", message)
+            return _PrepareFailure(1, message)
+        logger.warning(
+            "%s; diff has no gate-relevant changes; skipping pytest",
+            freshness_issue,
+        )
 
     shadow_warnings = collect_product_shadow_warnings(REPO_ROOT, changes, baseline.roots)
     for warning in shadow_warnings:
@@ -630,13 +630,10 @@ def _prepare_gate_inputs(
             maybe_post_exemption_drift_comment(drift_errors, cfg=cfg)
         return _PrepareFailure(1, format_blocking_errors(hard_errors))
 
-    if force_full_suite:
-        logger.info("test_map is stale; scheduling full test suite")
     return _PreparedInputs(
         baseline=baseline,
         changes=changes,
         deleted_source_step=deleted_source_step,
-        force_full_suite=force_full_suite,
     )
 
 
@@ -726,7 +723,6 @@ def main() -> int:
         prepared.baseline,
         deleted_source_step=prepared.deleted_source_step,
         modified_source_step=modified_source_step,
-        force_full_suite=prepared.force_full_suite,
     )
     _log_all_exempt_test_files(plan, cfg, logger)
 
