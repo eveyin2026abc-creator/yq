@@ -37,6 +37,7 @@ from scripts.helpers.nightly.main import (
     emit_init_failure_report,
     emit_report,
     resolve_nightly_timeout_seconds,
+    resolve_nightly_xdist_workers,
 )
 from scripts.helpers.nightly.pytest_parser import NightlyRunStats, merge_nightly_run_stats, parse_pytest_stdout
 from scripts.helpers.nightly.report_models import AttributionConclusion, CoverageSummary, FailureBlame
@@ -61,7 +62,11 @@ FAILED tests/smoke/test_b.py::test_fail - AssertionError: boom
 """
 
 
-def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage_and_tb_line() -> None:
+def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage_and_tb_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MSMODELING_NIGHTLY_XDIST_WORKERS", raising=False)
+    monkeypatch.setattr("scripts.helpers.nightly.main.os.cpu_count", lambda: 640)
     cmd = _build_pytest_cmd_wave_a("python3")
     assert cmd[0] == "python3"
     assert "tests/" in cmd
@@ -70,11 +75,22 @@ def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage
     assert "not benchmark" in marker
     assert "not network" in marker
     assert "-n" in cmd
+    assert cmd[cmd.index("-n") + 1] == "128"
     assert "--cov-branch" in cmd
     assert "--cov-append" not in cmd
     assert "-vv" in cmd
     assert "--tb=line" in cmd
     assert "--junit-xml" not in marker
+
+
+def test_nightly_xdist_workers_honors_env_and_cpu_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("scripts.helpers.nightly.main.os.cpu_count", lambda: 64)
+    monkeypatch.setenv("MSMODELING_NIGHTLY_XDIST_WORKERS", "32")
+    assert resolve_nightly_xdist_workers() == 32
+    monkeypatch.setenv("MSMODELING_NIGHTLY_XDIST_WORKERS", "128")
+    assert resolve_nightly_xdist_workers() == 64
+    monkeypatch.setenv("MSMODELING_NIGHTLY_XDIST_WORKERS", "invalid")
+    assert resolve_nightly_xdist_workers() == 64
 
 
 def test_pytest_cmd_wave_b_runs_benchmark_or_network_serial_without_xdist() -> None:

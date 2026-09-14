@@ -66,9 +66,11 @@ _PROCESS_TERMINATE_TIMEOUT_SECONDS: Final[float] = 5.0
 _PYTEST_CAPTURE_MAX_CHARS: Final[int] = 10 * 1024 * 1024
 _HAS_PROCESS_GROUPS: Final[bool] = sys.platform != "win32"
 _DEFAULT_NIGHTLY_TIMEOUT_SECONDS: Final[float] = 50 * 60
+_DEFAULT_NIGHTLY_XDIST_WORKERS: Final[int] = 128
 PYTEST_TIMEOUT_EXIT_CODE: Final[int] = 124
 ATTRIBUTION_HARD_FAIL_EXIT_CODE: Final[int] = 3
 _TIMEOUT_ENV: Final = "MSMODELING_NIGHTLY_TIMEOUT_SECONDS"
+_XDIST_WORKERS_ENV: Final = "MSMODELING_NIGHTLY_XDIST_WORKERS"
 _COVERAGE_MERGED_FILE: Final = ".coverage"
 _COVERAGE_NON_BENCHMARK_FILE: Final = ".coverage.non_benchmark"
 _COVERAGE_BENCHMARK_FILE: Final = ".coverage.benchmark"
@@ -107,6 +109,16 @@ def resolve_nightly_timeout_seconds() -> float:
     return value
 
 
+def resolve_nightly_xdist_workers() -> int:
+    """Wave A worker cap; never exceed available logical CPUs."""
+    raw = (os.environ.get(_XDIST_WORKERS_ENV) or "").strip()
+    try:
+        configured = int(raw) if raw else _DEFAULT_NIGHTLY_XDIST_WORKERS
+    except ValueError:
+        configured = _DEFAULT_NIGHTLY_XDIST_WORKERS
+    return max(1, min(configured, os.cpu_count() or 1))
+
+
 def _build_pytest_cmd_wave_a(python_exe: str) -> list[str]:
     """Non-benchmark, non-network tests/ UT with xdist and coverage."""
     return [
@@ -116,7 +128,7 @@ def _build_pytest_cmd_wave_a(python_exe: str) -> list[str]:
         "tests/",
         "-m",
         _PYTEST_MARKER_WAVE_A,
-        *pytest_xdist_args(),
+        *pytest_xdist_args(collected_count=resolve_nightly_xdist_workers()),
         *cov_pytest_args(),
         "-vv",
         "--tb=line",

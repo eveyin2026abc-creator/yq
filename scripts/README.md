@@ -141,7 +141,7 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
 **Not recommended locally.** Nightly targets CI: parallel `tests/` waves, shared self-timeout, failure attribution, and optional Feishu. For local runs use `build.py test` / smoke / regression.
 
 - **Parallel waves** (shared `MSMODELING_NIGHTLY_TIMEOUT_SECONDS` budget):
-  - Non-benchmark / non-network: `pytest tests/ -m "not npu and not benchmark and not network"` with xdist (`-n auto --dist worksteal`) + coverage + `-vv --tb=line`.
+  - Non-benchmark / non-network: `pytest tests/ -m "not npu and not benchmark and not network"` with xdist (`-n` capped by `MSMODELING_NIGHTLY_XDIST_WORKERS`, default 128; `--dist worksteal`) + coverage + `-vv --tb=line`.
   - Benchmark or network: `pytest tests/ -m "not npu and (benchmark or network)"` serially (no xdist; Hub cache-safe); separate coverage data files are combined after both waves finish.
 - **Attribution**: Asia/Shanghai calendar day-walk (up to 7 days) to find good; linear oldest→newest when `good..bad` ≤16 commits, else bisect; shares the same process deadline; per-node conclusion; lookback miss / incomplete attribution → exit 3.
 - **Self-timeout**: default 3000s via `MSMODELING_NIGHTLY_TIMEOUT_SECONDS`; skip Hub drift when already timed out; partial Feishu report on timeout.
@@ -168,6 +168,7 @@ Defaults below come from [`scripts/defaults.env`](defaults.env) (not shipped in 
 | `FEISHU_WEBHOOK_URL` | Optional | — | nightly | Feishu notification webhook |
 | `MSMODELING_PIPELINE_LOG_URL` | Optional | — | nightly | CI pipeline log URL shown in Feishu (not PR links) |
 | `MSMODELING_NIGHTLY_TIMEOUT_SECONDS` | Optional | `3000` | nightly | Self-timeout seconds; on timeout kill pytest then Feishu partial results |
+| `MSMODELING_NIGHTLY_XDIST_WORKERS` | Optional | `128` | nightly | Wave A xdist worker cap |
 | `GITCODE_OWNER` | Optional | — | ci_gate | GitCode repo owner (PR comments) |
 | `GITCODE_REPO` | Optional | — | ci_gate | GitCode repo name |
 | `GITCODE_PR_NUMBER` | Optional | — | ci_gate | PR number for comment API |
