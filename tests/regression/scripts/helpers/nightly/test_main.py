@@ -75,6 +75,7 @@ def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage
     assert "-vv" in cmd
     assert "--tb=line" in cmd
     assert "--junit-xml" not in marker
+    assert "scripts.helpers.nightly.slow_first" in cmd
 
 
 def test_pytest_cmd_wave_b_runs_benchmark_or_network_serial_without_xdist() -> None:

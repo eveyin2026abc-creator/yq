@@ -58,6 +58,11 @@ from scripts.helpers.nightly.report_models import (
     FailureBlame,
     FeishuReportInput,
 )
+from scripts.helpers.nightly.slow_first import (
+    HISTORY_REL as SLOW_HISTORY_REL,
+    SLOW_HISTORY_ENV,
+    merge_previous_samples,
+)
 from tensor_cast.core.model_source_security import warn_remote_code_risk
 
 _PYTEST_MARKER_WAVE_A = "not npu and not benchmark and not network"
@@ -118,6 +123,8 @@ def _build_pytest_cmd_wave_a(python_exe: str) -> list[str]:
         _PYTEST_MARKER_WAVE_A,
         *pytest_xdist_args(),
         *cov_pytest_args(),
+        "-p",
+        "scripts.helpers.nightly.slow_first",
         "-vv",
         "--tb=line",
         "--disable-warnings",
@@ -379,16 +386,20 @@ def _run_pytest_waves(
 ) -> tuple[int, str, int, str]:
     """Run non-benchmark and benchmark waves in parallel under one shared deadline."""
     _cleanup_coverage_artifacts()
+    merge_previous_samples(REPO_ROOT)
     wave_a_cmd = _build_pytest_cmd_wave_a(python_exe)
     wave_b_cmd = _build_pytest_cmd_wave_b(python_exe)
 
     def _run_wave(label: str, cmd: list[str], coverage_file: str) -> tuple[int, str]:
         logger.info("Running pytest %s: %s", label, shlex.join(cmd))
+        env_extra = {"COVERAGE_FILE": str(REPO_ROOT / coverage_file)}
+        if label == "non-benchmark":
+            env_extra[SLOW_HISTORY_ENV] = str(REPO_ROOT / SLOW_HISTORY_REL)
         exit_code, stdout = _stream_pytest(
             cmd,
             cwd=REPO_ROOT,
             deadline=deadline,
-            env_extra={"COVERAGE_FILE": str(REPO_ROOT / coverage_file)},
+            env_extra=env_extra,
             log_prefix=label,
         )
         logger.info("Pytest %s finished with exit=%d", label, exit_code)

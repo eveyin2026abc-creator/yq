@@ -14,6 +14,7 @@
 #   FEISHU_WEBHOOK_URL                      Feishu webhook (optional)
 #   MSMODELING_PIPELINE_LOG_URL             CI pipeline log URL for failure reports (optional; never PR links)
 #   MSMODELING_NIGHTLY_TIMEOUT_SECONDS      self-timeout seconds (default: 3000)
+#   MSMODELING_NIGHTLY_SLOW_FIRST           duration-ranked tests spread across workers (default: 16; 0 disables)
 #   PYTHON                                  absolute path to interpreter; if unset, uses uv or python3
 #
 # Optional (not set by default):
@@ -28,6 +29,7 @@ export MSMODELING_TEST_BRANCH_THRESHOLD="${MSMODELING_TEST_BRANCH_THRESHOLD:-60}
 export FEISHU_WEBHOOK_URL="${FEISHU_WEBHOOK_URL:-}"
 export MSMODELING_PIPELINE_LOG_URL="${MSMODELING_PIPELINE_LOG_URL:-}"
 export MSMODELING_NIGHTLY_TIMEOUT_SECONDS="${MSMODELING_NIGHTLY_TIMEOUT_SECONDS:-3000}"
+export MSMODELING_NIGHTLY_SLOW_FIRST="${MSMODELING_NIGHTLY_SLOW_FIRST:-16}"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
