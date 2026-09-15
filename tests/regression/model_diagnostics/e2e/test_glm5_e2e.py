@@ -116,7 +116,7 @@ def test_glm5_capture_organize_and_compare(
 @pytest.mark.parametrize(
     "model_name",
     (
-        pytest.param("tests/assets/model_config/glm5", id="glm-5"),
+        pytest.param("tests/assets/model_config/glm5", id="glm-5", marks=pytest.mark.nightly),
         pytest.param("tests/assets/model_config/glm5_1", id="glm-5.1", marks=pytest.mark.nightly),
     ),
 )
