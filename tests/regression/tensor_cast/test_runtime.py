@@ -25,6 +25,8 @@ from tensor_cast.performance_model.profiling_database.data_source import (
     QuerySource,
 )
 from tensor_cast.runtime import Runtime, RuntimeEvent
+from tests.helpers.model_assets import vendored_model_config_path
+
 from .test_common import (
     assert_close,
     create_attn_metadata_and_kv_cache,
@@ -514,7 +516,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
 
     def test_qwen3_5_linear_attention_with_padding_mask(self):
         user_config = UserInputConfig(
-            model_id="Qwen/Qwen3.5-397B-A17B",
+            model_id=vendored_model_config_path("Qwen/Qwen3.5-397B-A17B"),
             tp_size=16,
             world_size=16,
             ep_size=16,
@@ -542,7 +544,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
 
     def test_qwen3_5_linear_attention_uses_local_tp_heads(self):
         user_config = UserInputConfig(
-            model_id="Qwen/Qwen3.5-397B-A17B",
+            model_id=vendored_model_config_path("Qwen/Qwen3.5-397B-A17B"),
             tp_size=16,
             world_size=16,
             ep_size=16,
@@ -624,7 +626,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
 
     def test_qwen3_5_linear_attention_w8a8_reuses_quant_linear(self):
         user_config = UserInputConfig(
-            model_id="Qwen/Qwen3.5-397B-A17B",
+            model_id=vendored_model_config_path("Qwen/Qwen3.5-397B-A17B"),
             tp_size=16,
             world_size=16,
             ep_size=16,
@@ -653,7 +655,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
 
     def test_qwen3_5_linear_attention_rejects_invalid_tp_size(self):
         user_config = UserInputConfig(
-            model_id="Qwen/Qwen3.5-397B-A17B",
+            model_id=vendored_model_config_path("Qwen/Qwen3.5-397B-A17B"),
             tp_size=32,
             world_size=32,
             ep_size=16,
