@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -506,9 +507,12 @@ def _dependency_fingerprint(repo_root: Path) -> str:
 
 
 def _git_output(repo_root: Path, *args: str) -> str:
+    git_bin = shutil.which("git")
+    if git_bin is None:
+        return ""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), *args],
+            [git_bin, "-C", str(repo_root), *args],
             check=False,
             capture_output=True,
             text=True,
