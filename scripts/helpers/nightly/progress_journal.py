@@ -176,11 +176,10 @@ def estimate_wave_a_remaining(repo_root: Path) -> int | None:
     raw_count = (session.get(_WAVE_A_COLLECTED_KEY) or "").strip()
     if raw_count.isdigit():
         return max(0, int(raw_count) - len(completed))
-    history = load_duration_history(repo_root / DURATION_HISTORY_REL)
-    if not history:
-        return None
-    wave_b_done = load_completed_node_ids(repo_root / PROGRESS_JOURNALS["benchmark"])
-    return max(0, len(history) - len(completed) - len(wave_b_done))
+    # Duration history merges both waves and does not retain marker membership,
+    # so it cannot provide a safe Wave A total. Keep the configured worker cap
+    # until a Wave A collection records an exact count.
+    return None
 
 
 def resolve_wave_a_worker_count(repo_root: Path, *, resume_active: bool) -> int:
@@ -336,6 +335,9 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
         and _journal_path.name == Path(PROGRESS_JOURNALS["non-benchmark"]).name
         and _worker_id in {"master", "gw0"}
     ):
+        # In xdist, every worker performs the full collection and the controller
+        # performs none. Limit the write to gw0 (or master in serial pytest) so
+        # all xdist workers do not rewrite the same session field.
         _update_session_field(
             _journal_path.parent / Path(SESSION_REL).name,
             _WAVE_A_COLLECTED_KEY,

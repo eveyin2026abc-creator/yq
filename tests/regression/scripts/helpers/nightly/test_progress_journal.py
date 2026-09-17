@@ -304,6 +304,57 @@ def test_xdist_worker_configure_enables_slow_first_reorder(
     ]
     progress_journal.pytest_collection_modifyitems(SimpleNamespace(), items)
     assert [item.nodeid for item in items] == ["tests/a.py::slow", "tests/a.py::fast"]
+    session = json.loads((tmp_path / "progress.session.json").read_text(encoding="utf-8"))
+    assert session["wave_a_collected_count"] == "2"
+
+
+def test_xdist_non_primary_worker_does_not_overwrite_wave_a_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "progress.non-benchmark.jsonl"
+    session = tmp_path / "progress.session.json"
+    session.write_text(json.dumps({"wave_a_collected_count": "8290"}), encoding="utf-8")
+    monkeypatch.setenv("MSMODELING_NIGHTLY_PROGRESS_JOURNAL", str(journal))
+    progress_journal.pytest_configure(
+        SimpleNamespace(
+            workerinput={"workerid": "gw1"},
+            option=SimpleNamespace(numprocesses=8),
+        )
+    )
+
+    progress_journal.pytest_collection_modifyitems(
+        SimpleNamespace(),
+        [SimpleNamespace(nodeid="tests/a.py::one"), SimpleNamespace(nodeid="tests/a.py::two")],
+    )
+
+    saved = json.loads(session.read_text(encoding="utf-8"))
+    assert saved["wave_a_collected_count"] == "8290"
+
+
+def test_wave_a_remaining_is_unknown_without_exact_collection_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSMODELING_NIGHTLY_XDIST_WORKERS", "128")
+    monkeypatch.setattr(progress_journal.os, "cpu_count", lambda: 256)
+    nightly = tmp_path / ".pytest_cache/nightly"
+    nightly.mkdir(parents=True)
+    write_duration_history(
+        nightly / "duration-history.json",
+        {
+            "tests/wave_a.py::done": 1.0,
+            "tests/wave_a.py::pending": 2.0,
+            "tests/wave_b.py::pending": 3.0,
+        },
+    )
+    (nightly / "progress.non-benchmark.jsonl").write_text(
+        json.dumps({"node_id": "tests/wave_a.py::done", "outcome": "passed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert estimate_wave_a_remaining(tmp_path) is None
+    assert resolve_wave_a_worker_count(tmp_path, resume_active=True) == 128
 
 
 def test_wave_a_worker_count_caps_and_shrinks_on_resume(
