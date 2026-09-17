@@ -9,9 +9,12 @@ _MODEL_CONFIG_ROOT = _REPO_ROOT / "assets" / "model_config"
 
 # Hub repo id -> directory name containing a vendored ``config.json``.
 _VENDORED_MODEL_CONFIG_DIRS: dict[str, str] = {
+    "MiniMaxAI/MiniMax-M2": "minimax_m2",
+    "MiniMaxAI/MiniMax-M2.7": "minimax_m2_7",
     "Qwen/Qwen2.5-7B": "qwen2_5_7b",
     "Qwen/Qwen3-30B-A3B": "qwen3_moe_30b_a3b",
     "Qwen/Qwen3-Next-80B-A3B-Instruct": "qwen3_next_80b_a3b",
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": "qwen3_vl_moe_235b_a22b",
     "Qwen/Qwen3.5-397B-A17B": "qwen3_5_moe_397b_a17b",
     "XiaomiMiMo/MiMo-V2-Flash": "mimo_v2_flash",
 }

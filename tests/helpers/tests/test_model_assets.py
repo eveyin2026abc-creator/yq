@@ -8,9 +8,12 @@ from tests.helpers.model_assets import vendored_model_config_path, vendored_prep
 @pytest.mark.parametrize(
     "model_id",
     (
+        "MiniMaxAI/MiniMax-M2",
+        "MiniMaxAI/MiniMax-M2.7",
         "Qwen/Qwen2.5-7B",
         "Qwen/Qwen3-30B-A3B",
         "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        "Qwen/Qwen3-VL-235B-A22B-Instruct",
         "Qwen/Qwen3.5-397B-A17B",
         "XiaomiMiMo/MiMo-V2-Flash",
     ),
