@@ -16,7 +16,7 @@ from tensor_cast.core.quantization.datatypes import (
     QuantizeLinearAction,
 )
 from tensor_cast.core.user_config import UserInputConfig
-from tests.helpers.model_assets import vendored_model_config_path
+from tests.helpers.model_assets import resolve_offline_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +181,8 @@ def _load_perf_regression_cases() -> list[BasePerfRegressionCase]:
             cases.append(VideoPerfRegressionCase(**data))
         else:
             ui_data = data.pop("user_input", {})
-            if ui_data.get("model_id") == "MiniMaxAI/MiniMax-M2.7":
-                ui_data["model_id"] = vendored_model_config_path("MiniMaxAI/MiniMax-M2.7")
+            if ui_data.get("model_id"):
+                ui_data["model_id"] = resolve_offline_model_id(ui_data["model_id"])
             for key in ("quantize_linear_action", "quantize_attention_action"):
                 if key in ui_data and isinstance(ui_data[key], str):
                     if key == "quantize_linear_action":
