@@ -86,7 +86,7 @@ $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 
 默认 `--comment`：`gitcode pr comment <PR> -R Ascend/msmodeling --body ...`
 
-正文含：本地流水结果、HEAD、base、改动文件数、选测条数、两波 exit。  
+正文含：本地流水结果、HEAD、base、改动文件数、选测条数、两波 exit。
 PR 号：`--pr`、`GITCODE_PR_NUMBER`，或当前分支。`--no-comment` 仅在用户明确说不要留言时用。
 
 ## 跑完怎么回

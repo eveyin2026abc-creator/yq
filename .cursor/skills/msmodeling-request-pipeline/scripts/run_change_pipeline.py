@@ -362,9 +362,7 @@ def main() -> int:
     mapped_files = sorted({node.split("::", 1)[0] for node in mapped if (repo / node.split("::", 1)[0]).is_file()})
     file_recollect = set(_collect(repo, python, mapped_files)) if mapped_files else set()
     related_dirs = _related_dirs(test_files + mapped_files)
-    dir_nightly = set(
-        _collect(repo, python, related_dirs, marker="not npu and (nightly or benchmark or network)")
-    )
+    dir_nightly = set(_collect(repo, python, related_dirs, marker="not npu and (nightly or benchmark or network)"))
     selected = sorted(collected | mapped | file_recollect | dir_nightly)
 
     print(f"repo={repo}")
@@ -400,9 +398,7 @@ def main() -> int:
         return 0
 
     ci_exit = _run_wave(repo, python, selected, name="ci", marker=CI_MARKER)
-    nightly_exit = _run_wave(
-        repo, python, selected, name="nightly_related", marker=NIGHTLY_RELATED_MARKER
-    )
+    nightly_exit = _run_wave(repo, python, selected, name="nightly_related", marker=NIGHTLY_RELATED_MARKER)
     if ci_exit == 0 and nightly_exit == 0:
         print("result=PASS both waves; this change should not interrupt nightly on the selected subset")
         _maybe_comment_result(
