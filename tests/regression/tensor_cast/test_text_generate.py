@@ -2019,7 +2019,10 @@ class TestUserInputConfigPrintInfo(unittest.TestCase):
 
         output = mock_stdout.getvalue()
         self.assertIn("Device: TEST_DEVICE", output)
-        self.assertIn("Model ID: Qwen/Qwen3-VL-8B-Instruct", output)
+        self.assertIn(
+            f"Model ID: {vendored_model_config_path('Qwen/Qwen3-VL-8B-Instruct')}",
+            output,
+        )
         self.assertIn("Number of Queries: 2", output)
         self.assertIn("Input Length (per query): 128", output)
         self.assertIn("Context Length (per query): 256", output)
