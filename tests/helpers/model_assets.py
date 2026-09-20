@@ -12,6 +12,8 @@ _MODEL_CONFIG_ROOT = _REPO_ROOT / "assets" / "model_config"
 _VENDORED_MODEL_CONFIG_DIRS: dict[str, str] = {
     "MiniMaxAI/MiniMax-M2": "minimax_m2",
     "MiniMaxAI/MiniMax-M2.7": "minimax_m2_7",
+    "inclusionAI/Ling-flash-2.0": "ling_flash_2_0",
+    "moonshotai/Kimi-K2-Thinking": "kimi_k2_thinking",
     "Qwen/Qwen2.5-7B": "qwen2_5_7b",
     "Qwen/Qwen3-0.6B": "qwen3_dense_0_6b",
     "Qwen/Qwen3-8B": "qwen3_dense_8b",
@@ -30,12 +32,14 @@ _VENDORED_MODEL_CONFIG_DIRS: dict[str, str] = {
     "deepseek-ai/DeepSeek-V4-Flash": "deepseek_v4_flash",
     "zai-org/GLM-4.1V-9B-Thinking": "glm4v_9b_thinking",
     "zai-org/GLM-4.5V": "glm4v_moe_4_5v",
+    "zai-org/GLM-4.7": "glm4_7",
     "zai-org/GLM-5.1": "glm5_1",
 }
 
 # Hub repo id -> directory name under tests/assets/model_config/.
 _VENDORED_PREPROCESSOR_DIRS: dict[str, str] = {
     "Qwen/Qwen3-VL-8B-Instruct": "qwen3_vl_8b_instruct",
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": "qwen3_vl_moe_235b_a22b",
 }
 
 

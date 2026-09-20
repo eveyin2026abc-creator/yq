@@ -14,6 +14,8 @@ from tests.helpers.model_assets import (
     (
         "MiniMaxAI/MiniMax-M2",
         "MiniMaxAI/MiniMax-M2.7",
+        "inclusionAI/Ling-flash-2.0",
+        "moonshotai/Kimi-K2-Thinking",
         "Qwen/Qwen2.5-7B",
         "Qwen/Qwen3-0.6B",
         "Qwen/Qwen3-8B",
@@ -32,6 +34,7 @@ from tests.helpers.model_assets import (
         "deepseek-ai/DeepSeek-V4-Flash",
         "zai-org/GLM-4.1V-9B-Thinking",
         "zai-org/GLM-4.5V",
+        "zai-org/GLM-4.7",
         "zai-org/GLM-5.1",
     ),
 )
@@ -48,6 +51,13 @@ def test_vendored_model_config_path_rejects_unknown_model() -> None:
 
 def test_vendored_preprocessor_config_path_for_qwen3_vl_8b() -> None:
     path = vendored_preprocessor_config_path("Qwen/Qwen3-VL-8B-Instruct")
+    assert path is not None
+    assert path.name == "preprocessor_config.json"
+    assert path.is_file()
+
+
+def test_vendored_preprocessor_config_path_for_qwen3_vl_235b() -> None:
+    path = vendored_preprocessor_config_path("Qwen/Qwen3-VL-235B-A22B-Instruct")
     assert path is not None
     assert path.name == "preprocessor_config.json"
     assert path.is_file()
