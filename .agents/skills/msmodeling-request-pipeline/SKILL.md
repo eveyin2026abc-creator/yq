@@ -1,9 +1,8 @@
 ---
 name: msmodeling-request-pipeline
 description: >-
-  按当前 diff 跑这次改动会碰到的全部本地流水：CI 门禁波 + nightly/benchmark/network 相关波。
-  两波都过，这次改动不应再把 nightly 里对应用例打断。
-  在用户说请求流水、跑流水、跑一下流水、本地流水、涉及到修改的所有流水、change pipeline 时使用。
+  按指定 PR 或当前 diff 跑本地两波流水：先同步最新主仓，再跑 CI + nightly/benchmark/network 相关用例。
+  在用户说请求流水、请求流水 PR887、跑流水 887、跑一下流水、本地流水、change pipeline 时使用。
   不是 GitCode compile，也不是整场 nightly。
 metadata:
   version: 1.0.0
@@ -12,7 +11,19 @@ metadata:
 
 # msmodeling 请求流水
 
-用户说「请求流水」或「跑这次修改涉及的所有流水」时：**先同步最新主仓，再选测并跑两波**。
+用户说「请求流水」时：**先同步最新主仓，再按改动选测并跑两波**。
+
+写了 **PR 号**（例如「请求流水 PR887」「请求流水 887」）时，对的是 **那条 PR 的 head**，不是随便一个 nightly 工作树：
+
+1. `gitcode pr view <N> -R Ascend/msmodeling --json`，记下 head 分支和 base（`master` / `26.2.0`）
+2. 检出该 head（已有 worktree 就用；没有就 `git fetch` fork/head 并 `worktree add`，不要搅乱正在跑 nightly 的树）
+3. 在该树上 `fetch` + merge 最新 `origin/<base>`
+4. 跑脚本 `--run --repo <该树> --pr <N>`：选测范围是 **这条 PR 相对最新主仓的 diff**，不是整场 nightly
+5. 两波都绿才在 **这个 PR** 上留「本地流水已经通过」
+
+只说「请求流水」、没写 PR 号：用当前仓库当前分支，同样先 sync 再跑。
+
+skill-only 的 PR（例如 887 只加 `.agents/skills`）选测可以为 0，这算通过，不要去跑 8000+ nightly。
 
 ## 先同步主仓
 
@@ -55,10 +66,10 @@ fi
 if [ ! -f "$SCRIPT" ]; then
   SCRIPT="$HOME/.cursor/skills/msmodeling-request-pipeline/scripts/run_change_pipeline.py"
 fi
-$PY "$SCRIPT" --run --repo "$REPO"
+$PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 ```
 
-已说「请求流水」则直接 `--run`（会先 fetch/merge 主仓）。选出 >200 个 node 时先报数量再跑。
+没写 PR 号就去掉 `--pr`。已说「请求流水」则直接 `--run`（会先 fetch/merge 主仓）。选出 >200 个 node 时先报数量再跑。
 
 ## 两波流水
 
@@ -71,21 +82,15 @@ $PY "$SCRIPT" --run --repo "$REPO"
 
 ## GitCode 留言
 
-两波都绿后，脚本默认在对应 PR 上发：
+**跑完必须在该 PR 评论区回结果**（通过、无映射用例、失败都要发），不要只在聊天里说。
 
-`本地流水已经通过。` 外加 HEAD、两波均绿、选测条数。
+默认 `--comment`：`gitcode pr comment <PR> -R Ascend/msmodeling --body ...`
 
-- `gitcode pr comment <PR> -R Ascend/msmodeling --body ...`
-- PR 号来自 `--pr`、`GITCODE_PR_NUMBER`，或当前分支 `gitcode pr list --head`
-- 当前不是 PR 分支（例如 nightly 工作树）时必须带 `--pr`
-- 没过 / 找不到 PR / 没有 gitcode：**不发**
-- `--no-comment-on-pass` 可关
-- 没跑绿时不要手写一句假装通过
+正文含：本地流水结果、HEAD、base、改动文件数、选测条数、两波 exit。  
+PR 号：`--pr`、`GITCODE_PR_NUMBER`，或当前分支。`--no-comment` 仅在用户明确说不要留言时用。
 
 ## 跑完怎么回
 
 - 主仓 sync：fetch 的 base、ahead/behind、是否 merge
 - base、两波 node 数、各自 exit
-- 都绿：写明不应打断 nightly 对应子集；已留言则给 PR 链接
-- 有红：failed node + 异常类型；**不要**留言说通过
-- 未要求不 commit / push
+- 评论区链接；未要求不 commit / push

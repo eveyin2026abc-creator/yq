@@ -116,7 +116,9 @@ def _is_product(path: str) -> bool:
 
 
 def _is_test_py(path: str) -> bool:
-    return path.startswith("tests/") and path.endswith(".py")
+    if not path.startswith("tests/") or not path.endswith(".py"):
+        return False
+    return not path.startswith("tests/assets/")
 
 
 def _find_test_map(repo: Path, base: str) -> Path | None:
@@ -242,23 +244,11 @@ def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head
     return None
 
 
-def _post_local_pass_comment(
-    repo: Path,
-    *,
-    pr: str,
-    canonical: str,
-    head_sha: str,
-    selected: int,
-) -> None:
+def _post_result_comment(repo: Path, *, pr: str, canonical: str, body: str) -> None:
     gitcode = _gitcode_bin()
     if not gitcode:
         print("comment=skip gitcode CLI not found")
         return
-    body = (
-        f"本地流水已经通过。\n"
-        f"HEAD `{head_sha[:12]}` · ci + nightly_related 两波均绿 · 选测 {selected} 条"
-        "（含 nightly/benchmark/network 子集，不含整场 nightly）。"
-    )
     proc = _run(
         [gitcode, "pr", "comment", pr, "-R", canonical, "--body", body, "--no-interactive"],
         cwd=repo,
@@ -267,6 +257,33 @@ def _post_local_pass_comment(
         print(f"comment=fail {(proc.stderr or proc.stdout).strip()}")
         return
     print(f"comment=ok https://gitcode.com/{canonical}/merge_requests/{pr}")
+
+
+def _maybe_comment_result(
+    repo: Path,
+    *,
+    enabled: bool,
+    pr_arg: str | None,
+    status: str,
+    selected: int,
+    changed: int,
+    base_ref: str,
+    extra: str,
+) -> None:
+    if not enabled:
+        return
+    canonical = _canonical_repo(repo)
+    pr = _resolve_pr_number(repo, explicit=pr_arg, canonical=canonical, head=_branch_name(repo))
+    if not pr:
+        return
+    sha = _git(repo, "rev-parse", "HEAD").strip()
+    body = (
+        f"本地流水结果：{status}\n"
+        f"HEAD `{sha[:12]}` · base `{base_ref}` · 改动文件 {changed} · 选测 {selected} 条"
+        f"（CI + nightly/benchmark/network 子集，不是整场 nightly）。\n"
+        f"{extra}"
+    )
+    _post_result_comment(repo, pr=pr, canonical=canonical, body=body)
 
 
 def _run_wave(repo: Path, python: str, nodes: list[str], *, name: str, marker: str) -> int:
@@ -301,10 +318,10 @@ def main() -> int:
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--pr", default=None, help="GitCode PR number; default: detect from branch")
     parser.add_argument(
-        "--comment-on-pass",
+        "--comment",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="After both waves pass, comment 本地流水已经通过 on the GitCode PR",
+        help="After the run, post the result on the GitCode PR (pass or fail)",
     )
     parser.add_argument(
         "--sync",
@@ -362,6 +379,16 @@ def main() -> int:
 
     if not selected:
         print("no tests selected")
+        _maybe_comment_result(
+            repo,
+            enabled=args.comment,
+            pr_arg=args.pr,
+            status="通过（无映射用例）",
+            selected=0,
+            changed=len(changed),
+            base_ref=base_ref,
+            extra="相对主仓没有 tests/ 或产品文件，未执行 pytest。",
+        )
         return 0
 
     ci_exit = _run_wave(repo, python, selected, name="ci", marker=CI_MARKER)
@@ -370,14 +397,28 @@ def main() -> int:
     )
     if ci_exit == 0 and nightly_exit == 0:
         print("result=PASS both waves; this change should not interrupt nightly on the selected subset")
-        if args.comment_on_pass:
-            canonical = _canonical_repo(repo)
-            pr = _resolve_pr_number(repo, explicit=args.pr, canonical=canonical, head=_branch_name(repo))
-            if pr:
-                sha = _git(repo, "rev-parse", "HEAD").strip()
-                _post_local_pass_comment(repo, pr=pr, canonical=canonical, head_sha=sha, selected=len(selected))
+        _maybe_comment_result(
+            repo,
+            enabled=args.comment,
+            pr_arg=args.pr,
+            status="通过",
+            selected=len(selected),
+            changed=len(changed),
+            base_ref=base_ref,
+            extra="ci + nightly_related 两波均绿。",
+        )
         return 0
     print("result=FAIL; nightly can still be interrupted by this diff")
+    _maybe_comment_result(
+        repo,
+        enabled=args.comment,
+        pr_arg=args.pr,
+        status="失败",
+        selected=len(selected),
+        changed=len(changed),
+        base_ref=base_ref,
+        extra=f"ci exit={ci_exit} · nightly_related exit={nightly_exit}。这次 diff 仍可能打断 nightly 对应子集。",
+    )
     return ci_exit or nightly_exit
 
 
