@@ -30,7 +30,15 @@ NIGHTLY_RELATED_MARKER = "not npu and (nightly or benchmark or network)"
 
 
 def _run(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 def _git(repo: Path, *args: str) -> str:
