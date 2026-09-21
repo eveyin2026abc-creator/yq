@@ -306,7 +306,7 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
         )
         with patch("builtins.print"):
             ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="ut")
-        fake.plotsize.assert_called()
+        getattr(fake, "plotsize").assert_called()
 
     def test_emit_terminal_plotext_build_failure_is_handled(self):
         import sys
