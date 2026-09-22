@@ -17,7 +17,7 @@ metadata:
 
 1. `gitcode pr view <N> -R Ascend/msmodeling --json`，记下 head 分支和 base（`master` / `26.2.0`）
 2. 检出该 head（已有 worktree 就用；没有就 `git fetch` fork/head 并 `worktree add`，不要搅乱正在跑 nightly 的树）
-3. 在该树上 `fetch` + merge 最新 `origin/<base>`
+3. 在该树上 `fetch` + merge 最新主仓 `<base>`（远端必须指向 `Ascend/msmodeling`，优先 `upstream`，否则 `origin`）
 4. 跑脚本 `--run --repo <该树> --pr <N>`：选测范围是 **这条 PR 相对最新主仓的 diff**，不是整场 nightly
 5. 两波都绿才在 **这个 PR** 上留「本地流水已经通过」
 
@@ -27,16 +27,18 @@ skill-only 的 PR（例如 887 只加 `.agents/skills`）选测可以为 0，这
 
 ## 先同步主仓
 
-跑任何 pytest 之前必须跟上 canonical `origin/<base>`（默认 `master`，分支名含 `26.2.0` 则用 `26.2.0`），避免在过旧基线上绿了、合入后 nightly 被别人的 master 打断。
+跑任何 pytest 之前必须跟上 canonical 主仓 `<base>`（默认 `master`，分支名含 `26.2.0` 则用 `26.2.0`），避免在过旧基线上绿了、合入后 nightly 被别人的 master 打断。同步远端必须指向 `Ascend/msmodeling`：优先 `upstream`，否则 `origin`。`origin` 若是自己的 fork，先加上指向主仓的 `upstream`，不要跟着 fork 的 master。
 
 脚本 `--sync` 默认开：
 
-1. `git fetch origin <base>`
+1. `git fetch <canonical-remote> <base>`
 2. 打印 `ahead` / `behind`
-3. `behind=0`：继续
-4. 工作区脏且 behind：停，先 commit/stash，不要在落后的树上跑
-5. 工作区干净且 behind：`git merge --no-edit origin/<base>`；冲突则 `--abort` 并停下
-6. 不要 `reset --hard`，不要 rebase，不要 push
+3. HEAD 已经被该 base 包含（detached 旧提交、已合入的历史）：停下，不要 fast-forward 到主仓尖端后再报通过
+4. `behind=0`：继续
+5. 工作区脏且 behind：停，先 commit/stash，不要在落后的树上跑
+6. 工作区干净且 behind：`git merge --no-edit <base>`；冲突则 `--abort` 并停下
+7. 相对主仓没有 diff：报错，不发「通过」
+8. 不要 `reset --hard`，不要 rebase，不要 push
 
 `--no-sync` 仅在用户明确说不要拉主仓时用。
 
@@ -58,7 +60,10 @@ skill-only 的 PR（例如 887 只加 `.agents/skills`）选测可以为 0，这
 ```bash
 REPO="$(git rev-parse --show-toplevel)"
 PY="${REPO}/.venv/bin/python"
-if [ ! -x "$PY" ]; then PY="uv run --directory ${REPO} python"; fi
+if [ ! -x "$PY" ]; then
+  echo "no ${PY}; run uv sync in the repo, or pass --python" >&2
+  exit 1
+fi
 SCRIPT="${REPO}/.agents/skills/msmodeling-request-pipeline/scripts/run_change_pipeline.py"
 $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 ```
@@ -83,7 +88,7 @@ $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 正文含：本地流水结果、HEAD、base、改动文件数、选测条数、两波 exit。
 PR 号：`--pr`、`GITCODE_PR_NUMBER`，或当前分支。没有 `--no-comment-on-pass`；通过和失败都由 `--comment` / `--no-comment` 一起开关。`--no-comment` 仅在用户明确说不要留言时用。
 
-未传 `--pr` 时，用当前分支名，再加 `fork` 远端（没有则用非 Ascend 的 `origin`）的 owner 前缀去对 open PR，并核对命中 PR 的 head 分支。对不上就在 stderr 写 `comment=skip`，不写死某个账号。
+未传 `--pr` 时，用当前分支名在主仓查 open PR。命中项的 head 分支必须相同，且 head 仓库的 owner 必须等于本机 `fork` 远端（没有则用非 Ascend 的 `origin`）的 owner。对不上、无法确定 fork owner、或多条无法区分时，在 stderr 写 `comment=skip`，不取第一条，也不写死某个账号。评论目标固定是 `Ascend/msmodeling`。
 
 ## 跑完怎么回
 

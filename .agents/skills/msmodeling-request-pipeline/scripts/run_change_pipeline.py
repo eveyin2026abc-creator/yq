@@ -27,6 +27,8 @@ PRODUCT_ROOTS = (
 
 CI_MARKER = "not npu and not nightly and not network"
 NIGHTLY_RELATED_MARKER = "not npu and (nightly or benchmark or network)"
+CANONICAL_OWNER = "Ascend"
+CANONICAL_REPO = "Ascend/msmodeling"
 
 
 def _run(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -64,12 +66,28 @@ def _default_base(repo: Path) -> str:
     return "master"
 
 
-def _resolve_base_ref(repo: Path, base: str) -> str:
-    for candidate in (f"origin/{base}", base):
+def _resolve_base_ref(repo: Path, base: str, remote: str | None = None) -> str:
+    candidates: list[str] = []
+    if remote:
+        candidates.append(f"{remote}/{base}")
+    candidates.extend((f"upstream/{base}", f"origin/{base}", base))
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         proc = _run(["git", "rev-parse", "--verify", candidate], cwd=repo)
         if proc.returncode == 0:
             return candidate
     raise SystemExit(f"cannot resolve base ref {base!r}")
+
+
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    proc = _run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=repo)
+    if proc.returncode in (0, 1):
+        return proc.returncode == 0
+    detail = (proc.stderr or proc.stdout).strip()
+    raise SystemExit(f"git merge-base --is-ancestor {ancestor} {descendant} failed: {detail}")
 
 
 def _is_dirty(repo: Path) -> bool:
@@ -87,27 +105,48 @@ def _ahead_behind(repo: Path, base_ref: str) -> tuple[int, int]:
         raise SystemExit(f"non-integer rev-list output for HEAD...{base_ref}: {counts!r}") from None
 
 
+def _canonical_remote(repo: Path) -> str:
+    """Remote that points at Ascend/msmodeling. A contributor fork is not a base."""
+    for remote in ("upstream", "origin"):
+        proc = _run(["git", "remote", "get-url", remote], cwd=repo)
+        if proc.returncode != 0:
+            continue
+        if _path_owner(proc.stdout) == CANONICAL_OWNER:
+            return remote
+    raise SystemExit(
+        "no remote points at Ascend/msmodeling; "
+        "add an upstream (or origin) remote for the canonical repository before syncing"
+    )
+
+
 def _sync_canonical(repo: Path, base: str) -> str:
-    """Fetch Ascend origin/<base> and merge it so the local pipeline is not stale."""
-    fetch = _run(["git", "fetch", "origin", base], cwd=repo)
+    """Fetch the canonical base and merge it so the local pipeline is not stale."""
+    remote = _canonical_remote(repo)
+    fetch = _run(["git", "fetch", remote, base], cwd=repo)
     if fetch.returncode != 0:
-        raise SystemExit(f"git fetch origin {base} failed: {(fetch.stderr or fetch.stdout).strip()}")
-    base_ref = _resolve_base_ref(repo, base)
+        raise SystemExit(f"git fetch {remote} {base} failed: {(fetch.stderr or fetch.stdout).strip()}")
+    base_ref = _resolve_base_ref(repo, base, remote)
     ahead, behind = _ahead_behind(repo, base_ref)
-    print(f"sync=fetched origin/{base} ahead={ahead} behind={behind}")
+    print(f"sync=fetched {remote}/{base} ahead={ahead} behind={behind}")
+    if behind and _is_ancestor(repo, "HEAD", base_ref):
+        short = _git(repo, "rev-parse", "--short", "HEAD").strip()
+        raise SystemExit(
+            f"HEAD ({short}) is already contained in {base_ref}; "
+            "check out the change you intend to test (for example the PR head) before syncing"
+        )
     if behind == 0:
         print("sync=already up to date with canonical base")
         return base_ref
     if _is_dirty(repo):
         raise SystemExit(
-            f"canonical origin/{base} is {behind} commit(s) ahead, but the worktree is dirty; "
+            f"canonical {remote}/{base} is {behind} commit(s) ahead, but the worktree is dirty; "
             "commit or stash first, then rerun so the pipeline is not based on a stale master"
         )
     merge = _run(["git", "merge", "--no-edit", base_ref], cwd=repo)
     if merge.returncode != 0:
         _run(["git", "merge", "--abort"], cwd=repo)
         raise SystemExit(
-            f"git merge {base_ref} failed; resolve against latest origin/{base} before running the pipeline. "
+            f"git merge {base_ref} failed; resolve against latest {remote}/{base} before running the pipeline. "
             f"{(merge.stderr or merge.stdout).strip()}"
         )
     ahead, behind = _ahead_behind(repo, base_ref)
@@ -185,7 +224,9 @@ def _pytest_python(repo: Path, explicit: str | None) -> str:
     venv = repo / ".venv" / "bin" / "python"
     if venv.is_file() or venv.is_symlink():
         return str(venv)
-    return sys.executable
+    raise SystemExit(
+        "no repo virtualenv at .venv/bin/python; run uv sync or pass --python <venv python>"
+    )
 
 
 def _related_dirs(paths: list[str]) -> list[str]:
@@ -210,13 +251,9 @@ def _gitcode_bin() -> str | None:
     return None
 
 
-def _canonical_repo(repo: Path) -> str:
-    url = _git(repo, "remote", "get-url", "origin").strip()
-    if url.endswith(".git"):
-        url = url[:-4]
-    if "gitcode.com/" in url:
-        return url.split("gitcode.com/", 1)[1]
-    return "Ascend/msmodeling"
+def _canonical_repo(_repo: Path) -> str:
+    """Upstream PR target. Comments never go to a contributor fork."""
+    return CANONICAL_REPO
 
 
 def _branch_name(repo: Path) -> str:
@@ -263,6 +300,16 @@ def _item_head_ref(item: dict) -> str:
     return ref
 
 
+def _item_fork_owner(item: dict) -> str:
+    head = item.get("head")
+    if not isinstance(head, dict):
+        return ""
+    full_name = str((head.get("repo") or {}).get("full_name") or "")
+    if "/" not in full_name:
+        return ""
+    return full_name.split("/", 1)[0]
+
+
 def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head: str) -> str | None:
     if explicit:
         return explicit
@@ -273,35 +320,43 @@ def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head
     if not gitcode:
         print("comment=skip gitcode CLI not found", file=sys.stderr)
         return None
-    candidates = [head]
     owner = _fork_owner(repo)
-    if owner:
-        candidates.append(f"{owner}:{head}")
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate in seen:
+    if not owner:
+        print("comment=skip cannot determine fork owner", file=sys.stderr)
+        return None
+    proc = _run(
+        [gitcode, "pr", "list", "-R", canonical, "--head", head, "--state", "open", "--json", "--limit", "20"],
+        cwd=repo,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        print("comment=skip no open PR for this branch", file=sys.stderr)
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print("comment=skip no open PR for this branch", file=sys.stderr)
+        return None
+    items = data if isinstance(data, list) else data.get("pulls") or data.get("items") or []
+    matched: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
             continue
-        seen.add(candidate)
-        proc = _run(
-            [gitcode, "pr", "list", "-R", canonical, "--head", candidate, "--state", "open", "--json", "--limit", "5"],
-            cwd=repo,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
+        ref = _item_head_ref(item)
+        if ref and ref != head:
             continue
-        try:
-            data = json.loads(proc.stdout)
-        except json.JSONDecodeError:
+        if _item_fork_owner(item) != owner:
             continue
-        items = data if isinstance(data, list) else data.get("pulls") or data.get("items") or []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            ref = _item_head_ref(item)
-            if ref and ref != head:
-                continue
-            number = item.get("number") or item.get("iid")
-            if number is not None:
-                return str(number)
+        number = item.get("number") or item.get("iid")
+        if number is None:
+            continue
+        text = str(number)
+        if text not in matched:
+            matched.append(text)
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) > 1:
+        print(f"comment=skip ambiguous head {head}: {', '.join(matched)}", file=sys.stderr)
+        return None
     print("comment=skip no open PR for this branch", file=sys.stderr)
     return None
 
@@ -439,6 +494,11 @@ def main() -> int:
     print("contract=both waves green => this diff should not fail/interrupt the matching nightly subset")
     if product_files and test_map is None:
         print("warning=product files changed but test_map is missing")
+    if not changed:
+        raise SystemExit(
+            f"no diff against {base_ref}; refusing to report a pass with an empty change set. "
+            "Check out the PR head (or the change under test) before syncing."
+        )
 
     if args.dry_run and not args.run:
         for node in selected:
