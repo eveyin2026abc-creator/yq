@@ -255,6 +255,25 @@ def _install_fake_plotext(*, canvas_size_attr: str = "plot_size"):
     return m
 
 
+def _install_fake_plotext6(build_result="[fake plotext6 ascii]\n"):
+    """Fake plotext 6 figure API: no module-level ``scatter``."""
+    import types
+
+    fig = MagicMock()
+    signal = MagicMock()
+    signal.label.return_value = signal
+    fig.signal.return_value = signal
+    fig.build = MagicMock(return_value=build_result)
+    m = types.ModuleType("plotext")
+    m.figure = fig
+    m.marker = MagicMock(return_value="marker")
+    m.pixel = MagicMock(return_value="pixel")
+    terminal = MagicMock()
+    terminal._limit = [True, True]
+    m.terminal = terminal
+    return m
+
+
 class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
     """Drive high-coverage paths through ``_emit_terminal_optimizer_curve_ascii`` and plot orchestration."""
 
@@ -307,6 +326,82 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
         with patch("builtins.print"):
             ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="ut")
         getattr(fake, "plotsize").assert_called()
+
+    def test_emit_terminal_plotext6_figure_api(self):
+        import sys
+
+        fake = _install_fake_plotext6()
+        sys.modules["plotext"] = fake
+        df = pd.DataFrame(
+            {
+                "parallel": ["tp1", "tp1"],
+                "concurrency": [1.0, 4.0],
+                "batch_size": [1, 1],
+                "token/s": [10.0, 12.0],
+                "tpot": [30.0, 25.0],
+            }
+        )
+        with patch("builtins.print") as printed:
+            ocp._emit_terminal_optimizer_curve_ascii(
+                df, title_prefix="ut6", chart2_x_col="tpot", chart2_x_label="TPOT (ms)"
+            )
+        self.assertTrue(printed.called)
+        self.assertFalse(hasattr(fake, "scatter"))
+        fake.figure.signal.assert_called()
+        fake.figure.draw.assert_called()
+        fake.marker.assert_called()
+        self.assertEqual(fake.marker.call_args.args[0], ocp._TERMINAL_MARKER)
+        fake.terminal.limit.assert_any_call(False, False)
+        fake.terminal.limit.assert_any_call(True, True)
+
+    def test_emit_terminal_plotext6_build_failure_is_handled(self):
+        import sys
+
+        fake = _install_fake_plotext6()
+        fake.figure.build = MagicMock(side_effect=RuntimeError("build fail"))
+        sys.modules["plotext"] = fake
+        df = pd.DataFrame(
+            {
+                "parallel": ["p"],
+                "concurrency": [2.0],
+                "batch_size": [1],
+                "token/s": [9.0],
+                "tpot": [11.0],
+            }
+        )
+        # logger.exception also calls print while formatting the traceback.
+        with patch("builtins.print") as printed:
+            ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="ut6")
+        chart_prints = [
+            call
+            for call in printed.call_args_list
+            if call.kwargs.get("file") is None and call.args and str(call.args[0]).startswith("\n")
+        ]
+        self.assertEqual(chart_prints, [])
+
+    def test_emit_terminal_real_plotext6_when_installed(self):
+        try:
+            import plotext as plx
+        except ImportError:
+            self.skipTest("plotext is not installed")
+        if hasattr(plx, "scatter") or not hasattr(plx, "figure"):
+            self.skipTest("plotext 6 figure API is not installed")
+
+        df = pd.DataFrame(
+            {
+                "parallel": ["tp1", "tp2"],
+                "concurrency": [1.0, 4.0],
+                "batch_size": [1, 1],
+                "token/s": [10.0, 18.0],
+                "tpot": [30.0, 22.0],
+            }
+        )
+        with patch("builtins.print") as printed:
+            ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="real6")
+        self.assertGreaterEqual(printed.call_count, 2)
+        rendered = "\n".join(call.args[0] for call in printed.call_args_list)
+        self.assertIn("real6", rendered)
+        self.assertIn(ocp._TERMINAL_MARKER, rendered)
 
     def test_emit_terminal_plotext_build_failure_is_handled(self):
         import sys
