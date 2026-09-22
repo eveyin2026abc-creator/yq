@@ -119,13 +119,18 @@ def _canonical_remote(repo: Path) -> str:
     )
 
 
-def _sync_canonical(repo: Path, base: str) -> str:
-    """Fetch the canonical base and merge it so the local pipeline is not stale."""
+def _fetch_canonical(repo: Path, base: str) -> tuple[str, str]:
+    """Fetch the canonical base. Does not merge or move HEAD."""
     remote = _canonical_remote(repo)
     fetch = _run(["git", "fetch", remote, base], cwd=repo)
     if fetch.returncode != 0:
         raise SystemExit(f"git fetch {remote} {base} failed: {(fetch.stderr or fetch.stdout).strip()}")
-    base_ref = _resolve_base_ref(repo, base, remote)
+    return remote, _resolve_base_ref(repo, base, remote)
+
+
+def _sync_canonical(repo: Path, base: str) -> str:
+    """Fetch the canonical base and merge it so the local pipeline is not stale."""
+    remote, base_ref = _fetch_canonical(repo, base)
     ahead, behind = _ahead_behind(repo, base_ref)
     print(f"sync=fetched {remote}/{base} ahead={ahead} behind={behind}")
     if behind and _is_ancestor(repo, "HEAD", base_ref):
@@ -452,7 +457,10 @@ def main() -> int:
         "--sync",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Fetch and merge origin/<base> before selecting tests (default: on)",
+        help=(
+            "Fetch the canonical base before selecting tests. "
+            "--run also merges it into the worktree (default: on). --dry-run fetches only."
+        ),
     )
     args = parser.parse_args()
     if not args.dry_run and not args.run:
@@ -460,11 +468,15 @@ def main() -> int:
 
     repo = _repo_root(args.repo)
     base = args.base or _default_base(repo)
-    if args.sync:
-        base_ref = _sync_canonical(repo, base)
-    else:
+    if not args.sync:
         print("sync=skipped")
         base_ref = _resolve_base_ref(repo, base)
+    elif args.dry_run and not args.run:
+        remote, base_ref = _fetch_canonical(repo, base)
+        ahead, behind = _ahead_behind(repo, base_ref)
+        print(f"sync=fetched {remote}/{base} ahead={ahead} behind={behind} merge=skipped")
+    else:
+        base_ref = _sync_canonical(repo, base)
     python = _pytest_python(repo, args.python)
     changed = _changed_files(repo, base_ref)
     test_files = [path for path in changed if _is_test_py(path) and (repo / path).is_file()]

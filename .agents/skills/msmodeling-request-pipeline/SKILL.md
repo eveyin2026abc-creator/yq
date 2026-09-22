@@ -40,7 +40,7 @@ skill-only 的 PR（例如 887 只加 `.agents/skills`）选测可以为 0，这
 7. 相对主仓没有 diff：报错，不发「通过」
 8. 不要 `reset --hard`，不要 rebase，不要 push
 
-`--no-sync` 仅在用户明确说不要拉主仓时用。
+`--dry-run`（没写 `--run` 时的默认）只 fetch，不 merge，不改工作区，避免搅乱正在跑 nightly 的树。真正 `--run` 才 merge。`--no-sync` 仅在用户明确说不要拉主仓时用。
 
 ## 保证（以及保证不了什么）
 
