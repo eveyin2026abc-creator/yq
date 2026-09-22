@@ -229,9 +229,7 @@ def _pytest_python(repo: Path, explicit: str | None) -> str:
     venv = repo / ".venv" / "bin" / "python"
     if venv.is_file() or venv.is_symlink():
         return str(venv)
-    raise SystemExit(
-        "no repo virtualenv at .venv/bin/python; run uv sync or pass --python <venv python>"
-    )
+    raise SystemExit("no repo virtualenv at .venv/bin/python; run uv sync or pass --python <venv python>")
 
 
 def _related_dirs(paths: list[str]) -> list[str]:
