@@ -60,12 +60,6 @@ REPO="$(git rev-parse --show-toplevel)"
 PY="${REPO}/.venv/bin/python"
 if [ ! -x "$PY" ]; then PY="uv run --directory ${REPO} python"; fi
 SCRIPT="${REPO}/.agents/skills/msmodeling-request-pipeline/scripts/run_change_pipeline.py"
-if [ ! -f "$SCRIPT" ]; then
-  SCRIPT="${REPO}/.cursor/skills/msmodeling-request-pipeline/scripts/run_change_pipeline.py"
-fi
-if [ ! -f "$SCRIPT" ]; then
-  SCRIPT="$HOME/.cursor/skills/msmodeling-request-pipeline/scripts/run_change_pipeline.py"
-fi
 $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 ```
 
