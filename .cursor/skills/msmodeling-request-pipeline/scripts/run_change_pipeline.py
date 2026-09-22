@@ -78,8 +78,13 @@ def _is_dirty(repo: Path) -> bool:
 
 def _ahead_behind(repo: Path, base_ref: str) -> tuple[int, int]:
     counts = _git(repo, "rev-list", "--left-right", "--count", f"HEAD...{base_ref}").strip()
-    left, right = counts.split()
-    return int(left), int(right)
+    parts = counts.split()
+    if len(parts) != 2:
+        raise SystemExit(f"unexpected rev-list output for HEAD...{base_ref}: {counts!r}")
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        raise SystemExit(f"non-integer rev-list output for HEAD...{base_ref}: {counts!r}") from None
 
 
 def _sync_canonical(repo: Path, base: str) -> str:
@@ -218,6 +223,46 @@ def _branch_name(repo: Path) -> str:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
 
 
+def _path_owner(url: str) -> str | None:
+    """Owner from a gitcode remote URL. ``git@host:owner/repo`` and https both work."""
+    cleaned = url.strip()
+    if cleaned.endswith(".git"):
+        cleaned = cleaned[:-4]
+    if "gitcode.com/" in cleaned:
+        path = cleaned.split("gitcode.com/", 1)[1]
+    elif "://" not in cleaned and ":" in cleaned:
+        path = cleaned.split(":", 1)[1]
+    else:
+        return None
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return None
+    return parts[0]
+
+
+def _fork_owner(repo: Path) -> str | None:
+    """Fork owner from ``fork``, else a non-canonical ``origin``. Never a hardcoded user."""
+    for remote in ("fork", "origin"):
+        proc = _run(["git", "remote", "get-url", remote], cwd=repo)
+        if proc.returncode != 0:
+            continue
+        owner = _path_owner(proc.stdout)
+        if owner and owner != "Ascend":
+            return owner
+    return None
+
+
+def _item_head_ref(item: dict) -> str:
+    head = item.get("head")
+    if isinstance(head, dict):
+        ref = str(head.get("ref") or head.get("label") or "")
+    else:
+        ref = str(head or item.get("head_branch") or "")
+    if ":" in ref:
+        ref = ref.split(":", 1)[1]
+    return ref
+
+
 def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head: str) -> str | None:
     if explicit:
         return explicit
@@ -226,12 +271,17 @@ def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head
         return env
     gitcode = _gitcode_bin()
     if not gitcode:
-        print("comment=skip gitcode CLI not found")
+        print("comment=skip gitcode CLI not found", file=sys.stderr)
         return None
-    heads = [head]
-    if "/" not in head:
-        heads.append(f"eveyin1:{head}")
-    for candidate in heads:
+    candidates = [head]
+    owner = _fork_owner(repo)
+    if owner:
+        candidates.append(f"{owner}:{head}")
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         proc = _run(
             [gitcode, "pr", "list", "-R", canonical, "--head", candidate, "--state", "open", "--json", "--limit", "5"],
             cwd=repo,
@@ -243,12 +293,16 @@ def _resolve_pr_number(repo: Path, *, explicit: str | None, canonical: str, head
         except json.JSONDecodeError:
             continue
         items = data if isinstance(data, list) else data.get("pulls") or data.get("items") or []
-        if items:
-            first = items[0]
-            number = first.get("number") or first.get("iid") or first.get("id")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ref = _item_head_ref(item)
+            if ref and ref != head:
+                continue
+            number = item.get("number") or item.get("iid")
             if number is not None:
                 return str(number)
-    print("comment=skip no open PR for this branch")
+    print("comment=skip no open PR for this branch", file=sys.stderr)
     return None
 
 
@@ -294,6 +348,13 @@ def _maybe_comment_result(
     _post_result_comment(repo, pr=pr, canonical=canonical, body=body)
 
 
+def _filter_wave(repo: Path, python: str, nodes: list[str], marker: str) -> list[str]:
+    """Split the selected set once, so each wave runs only its own nodes."""
+    if not nodes:
+        return []
+    return _collect(repo, python, nodes, marker=marker)
+
+
 def _run_wave(repo: Path, python: str, nodes: list[str], *, name: str, marker: str) -> int:
     if not nodes:
         print(f"wave={name} selected=0 skip")
@@ -305,14 +366,15 @@ def _run_wave(repo: Path, python: str, nodes: list[str], *, name: str, marker: s
         *nodes,
         "-o",
         "addopts=",
-        "-m",
-        marker,
         "-q",
         "--tb=line",
         "--no-header",
     ]
-    print(f"wave={name} marker={marker!r} nodes={len(nodes)}")
+    print(f"wave={name} marker={marker!r} nodes={len(nodes)} prefiltered=1")
     proc = subprocess.run(cmd, cwd=repo, check=False)
+    if proc.returncode == 5:
+        print(f"wave={name} exit=5 treated_as_empty")
+        return 0
     print(f"wave={name} exit={proc.returncode}")
     return proc.returncode
 
@@ -397,8 +459,18 @@ def main() -> int:
         )
         return 0
 
-    ci_exit = _run_wave(repo, python, selected, name="ci", marker=CI_MARKER)
-    nightly_exit = _run_wave(repo, python, selected, name="nightly_related", marker=NIGHTLY_RELATED_MARKER)
+    ci_nodes = _filter_wave(repo, python, selected, CI_MARKER)
+    nightly_nodes = _filter_wave(repo, python, selected, NIGHTLY_RELATED_MARKER)
+    print(f"wave_ci_nodes={len(ci_nodes)}")
+    print(f"wave_nightly_nodes={len(nightly_nodes)}")
+    ci_exit = _run_wave(repo, python, ci_nodes, name="ci", marker=CI_MARKER)
+    nightly_exit = _run_wave(repo, python, nightly_nodes, name="nightly_related", marker=NIGHTLY_RELATED_MARKER)
+    empty_note = []
+    if not ci_nodes:
+        empty_note.append("ci 波 0 条")
+    if not nightly_nodes:
+        empty_note.append("nightly_related 波 0 条")
+    empty_text = (" " + "；".join(empty_note) + "，记为该波通过。") if empty_note else ""
     if ci_exit == 0 and nightly_exit == 0:
         print("result=PASS both waves; this change should not interrupt nightly on the selected subset")
         _maybe_comment_result(
@@ -409,7 +481,7 @@ def main() -> int:
             selected=len(selected),
             changed=len(changed),
             base_ref=base_ref,
-            extra="ci + nightly_related 两波均绿。",
+            extra=f"ci + nightly_related 两波均绿。{empty_text}".rstrip(),
         )
         return 0
     print("result=FAIL; nightly can still be interrupted by this diff")
@@ -421,7 +493,10 @@ def main() -> int:
         selected=len(selected),
         changed=len(changed),
         base_ref=base_ref,
-        extra=f"ci exit={ci_exit} · nightly_related exit={nightly_exit}。这次 diff 仍可能打断 nightly 对应子集。",
+        extra=(
+            f"ci exit={ci_exit} · nightly_related exit={nightly_exit}。"
+            f"{empty_text}这次 diff 仍可能打断 nightly 对应子集。"
+        ),
     )
     return ci_exit or nightly_exit
 

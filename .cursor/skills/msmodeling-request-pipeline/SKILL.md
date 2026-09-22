@@ -42,8 +42,8 @@ skill-only 的 PR（例如 887 只加 `.agents/skills`）选测可以为 0，这
 
 ## 保证（以及保证不了什么）
 
-- **能保证**：两波都绿 ⇒ 这次 diff 映射到的 CI 用例，以及同文件/同目录里的 nightly、benchmark、network 用例，全场 nightly 再跑时不应被这批改动打断（失败 → 复跑/归因）。
-- **保证不了**：别人合入的代码、flaky、未映射的产品路径、整场 8000+ 里和本次 diff 无关的失败。那不是本 skill，去跑 `scripts/run_nightly.sh`。
+- **能保证**：两波都绿 ⇒ 本次 diff 命中子集（映射用例 + 同文件/同目录的 nightly、benchmark、network 用例）在整场 nightly 中应当通过；若仍失败，优先按 flaky / 跨模块间接影响归因。
+- **保证不了**：别人合入的代码、flaky、未映射的产品路径、跨目录间接影响、整场 8000+ 里和本次 diff 无关的失败。那不是本 skill，去跑 `scripts/run_nightly.sh`。
 
 ## 不要做的事
 
@@ -73,8 +73,8 @@ $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 
 ## 两波流水
 
-1. **ci**：选出的 node 上 `-m 'not npu and not nightly and not network'`（和门禁/test_map 同一波）
-2. **nightly_related**：同一批 node 上 `-m 'not npu and (nightly or benchmark or network)'`（nightly Wave A 里的 `@nightly` + Wave B）
+1. **ci**：先从选出的 node 里按 `not npu and not nightly and not network` 拆出子集再跑（和门禁/test_map 同一波）。0 条，或 pytest 退出码 5，记为该波通过。
+2. **nightly_related**：从同一批里按 `not npu and (nightly or benchmark or network)` 拆出子集再跑（nightly Wave A 里的 `@nightly` + Wave B）。0 条或退出码 5 同样记为通过。
 
 选测：改过的测试文件全量 collect；产品文件走 `test_map`；映射文件再 collect 以补 `@nightly` 兄弟；这些文件所在目录再 collect `nightly or benchmark or network`。
 
@@ -87,7 +87,9 @@ $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 默认 `--comment`：`gitcode pr comment <PR> -R Ascend/msmodeling --body ...`
 
 正文含：本地流水结果、HEAD、base、改动文件数、选测条数、两波 exit。
-PR 号：`--pr`、`GITCODE_PR_NUMBER`，或当前分支。`--no-comment` 仅在用户明确说不要留言时用。
+PR 号：`--pr`、`GITCODE_PR_NUMBER`，或当前分支。没有 `--no-comment-on-pass`；通过和失败都由 `--comment` / `--no-comment` 一起开关。`--no-comment` 仅在用户明确说不要留言时用。
+
+未传 `--pr` 时，用当前分支名，再加 `fork` 远端（没有则用非 Ascend 的 `origin`）的 owner 前缀去对 open PR，并核对命中 PR 的 head 分支。对不上就在 stderr 写 `comment=skip`，不写死某个账号。
 
 ## 跑完怎么回
 
