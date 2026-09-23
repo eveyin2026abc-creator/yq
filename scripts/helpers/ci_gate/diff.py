@@ -54,8 +54,11 @@ def _parse_fetch_remote_branch(ref: str) -> tuple[str, str]:
 
 def _fetch_deepen(repo_root: Path, ref: str) -> None:
     remote, branch = _parse_fetch_remote_branch(ref)
-    logger.info("Deepening shallow clone with git fetch --depth=50 %s %s", remote, branch)
-    proc = _run_git(repo_root, "fetch", "--depth=50", remote, branch)
+    # A bare ``git fetch origin <branch>`` only writes FETCH_HEAD. Single-branch
+    # CI clones do not map that branch, so origin/<branch> would stay missing.
+    refspec = f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
+    logger.info("Deepening shallow clone with git fetch --depth=50 %s %s", remote, refspec)
+    proc = _run_git(repo_root, "fetch", "--depth=50", remote, refspec)
     if proc.returncode != 0:
         logger.warning(
             "git fetch failed for %s (%s %s): %s",

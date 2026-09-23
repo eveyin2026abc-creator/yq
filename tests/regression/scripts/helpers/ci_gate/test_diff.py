@@ -111,7 +111,12 @@ def test_fetch_deepen_invokes_git_fetch_with_remote_and_branch(monkeypatch: pyte
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     _fetch_deepen(tmp_path, "origin/master")
-    assert recorded[-1][-4:] == ["fetch", "--depth=50", "origin", "master"]
+    assert recorded[-1][-4:] == [
+        "fetch",
+        "--depth=50",
+        "origin",
+        "+refs/heads/master:refs/remotes/origin/master",
+    ]
 
 
 def test_resolve_base_ref_deepens_with_split_fetch_before_retry(
@@ -134,7 +139,12 @@ def test_resolve_base_ref_deepens_with_split_fetch_before_retry(
     monkeypatch.setattr("subprocess.run", _fake_run)
     result = resolve_base_ref(tmp_path, "master")
     assert result == "mergebase"
-    assert recorded[2][-4:] == ["fetch", "--depth=50", "origin", "master"]
+    assert recorded[2][-4:] == [
+        "fetch",
+        "--depth=50",
+        "origin",
+        "+refs/heads/master:refs/remotes/origin/master",
+    ]
 
 
 # ---------------------------------------------------------------------------
