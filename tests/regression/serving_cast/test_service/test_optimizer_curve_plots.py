@@ -347,18 +347,21 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
             )
         self.assertTrue(printed.called)
         self.assertFalse(hasattr(fake, "scatter"))
-        fake.figure.signal.assert_called()
-        fake.figure.draw.assert_called()
-        fake.marker.assert_called()
-        self.assertEqual(fake.marker.call_args.args[0], ocp._TERMINAL_MARKER)
-        fake.terminal.limit.assert_any_call(False, False)
-        fake.terminal.limit.assert_any_call(True, True)
+        figure = getattr(fake, "figure")
+        marker = getattr(fake, "marker")
+        terminal = getattr(fake, "terminal")
+        figure.signal.assert_called()
+        figure.draw.assert_called()
+        marker.assert_called()
+        self.assertEqual(marker.call_args.args[0], ocp._TERMINAL_MARKER)
+        terminal.limit.assert_any_call(False, False)
+        terminal.limit.assert_any_call(True, True)
 
     def test_emit_terminal_plotext6_build_failure_is_handled(self):
         import sys
 
         fake = _install_fake_plotext6()
-        fake.figure.build = MagicMock(side_effect=RuntimeError("build fail"))
+        getattr(fake, "figure").build = MagicMock(side_effect=RuntimeError("build fail"))
         sys.modules["plotext"] = fake
         df = pd.DataFrame(
             {
