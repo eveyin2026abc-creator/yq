@@ -372,8 +372,7 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
                 "tpot": [11.0],
             }
         )
-        # logger.exception also calls print while formatting the traceback.
-        with patch("builtins.print") as printed:
+        with patch("builtins.print") as printed, patch.object(ocp.logger, "exception") as logged:
             ocp._emit_terminal_optimizer_curve_ascii(df, title_prefix="ut6")
         chart_prints = [
             call
@@ -381,6 +380,13 @@ class TestOptimizerCurvePlotsWithFakePlotext(TestCase):
             if call.kwargs.get("file") is None and call.args and str(call.args[0]).startswith("\n")
         ]
         self.assertEqual(chart_prints, [])
+        self.assertEqual(
+            [call.args for call in logged.call_args_list],
+            [
+                ("plotext failed to build chart: %s", "Throughput vs concurrency"),
+                ("plotext failed to build chart: %s", "Throughput vs TPOT"),
+            ],
+        )
 
     def test_emit_terminal_real_plotext6_when_installed(self):
         try:
