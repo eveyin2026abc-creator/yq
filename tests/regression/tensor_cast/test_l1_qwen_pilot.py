@@ -37,6 +37,10 @@ BLOCK_SIZE = 128
 EXPECTED_NUM_HIDDEN_LAYERS = 64
 # Qwen3-32B applies seven quantized linear projections per decoder layer.
 QUANT_LINEARS_PER_LAYER = 7
+# Pilot-local snapshot of the Qwen3-32B prefill numbers. Shared numeric
+# guardianship stays in tests/benchmark/models/cases/*.json. A later L1
+# migration should read that baseline for number assertions and keep only
+# structural and capability assertions in Python.
 EXPECTED_WEIGHT_SIZE_GB = 31.981241464614868
 # 64 layers x 8 KV heads x 128 head dim x 2 tensors x 2 bytes = 256 KiB per token.
 EXPECTED_KV_CACHE_PER_TOKEN_GB = 0.000244140625
@@ -148,36 +152,45 @@ def test_diagnostics_artifact_comes_from_the_shared_forward(prefill_artifact):
 def test_three_assertion_groups_cost_one_build_and_one_forward():
     """Three assertion groups over one scenario must not run the model twice."""
     executor = L1ScenarioExecutor()
-    user_config = make_user_config()
+    try:
+        user_config = make_user_config()
 
-    numbers = executor.run(user_config, generate_inputs_func=generate_inputs)
-    structure = executor.run(user_config, generate_inputs_func=generate_inputs)
-    diagnostics = executor.run(user_config, generate_inputs_func=generate_inputs)
+        numbers = executor.run(user_config, generate_inputs_func=generate_inputs)
+        structure = executor.run(user_config, generate_inputs_func=generate_inputs)
+        diagnostics = executor.run(user_config, generate_inputs_func=generate_inputs)
 
-    assert executor.counters.build_miss == 1
-    assert executor.counters.forward_count == 1
-    assert executor.counters.run_hit == 2
-    assert executor.counters.forwards_by_build[numbers.build_signature.describe()] == 1
-    assert numbers is structure is diagnostics
+        assert executor.counters.build_miss == 1
+        assert executor.counters.forward_count == 1
+        assert executor.counters.run_hit == 2
+        assert executor.counters.forwards_by_build[numbers.build_signature] == 1
+        assert numbers is structure is diagnostics
+    finally:
+        executor.reset()
 
 
-def test_shared_forward_matches_a_dedicated_capture_forward(prefill_artifact, l1_executor):
+def test_shared_forward_matches_a_dedicated_capture_forward(prefill_artifact):
     """Reusing the run_inference Runtime must lose no diagnostics evidence.
 
     If this ever fails, the executor's single-forward design is wrong and must be
     revised rather than papered over by letting diagnostics run its own forward.
+    The second forward uses its own executor so it is not missing from, and does
+    not inflate, the session executor's forward count.
     """
     shared = RuntimeArtifactCapture.snapshot(
         prefill_artifact.runtime,
         run_context=make_run_context(),
         producer=make_producer(),
     )
-    dedicated = capture_model_runner_artifact(
-        l1_executor.runner(make_user_config()),
-        generate_inputs_func=generate_inputs,
-        run_context=make_run_context(),
-        producer=make_producer(),
-    )
+    dedicated_executor = L1ScenarioExecutor()
+    try:
+        dedicated = capture_model_runner_artifact(
+            dedicated_executor.runner(make_user_config()),
+            generate_inputs_func=generate_inputs,
+            run_context=make_run_context(),
+            producer=make_producer(),
+        )
+    finally:
+        dedicated_executor.reset()
 
     assert [call.operator_name for call in shared.operator_calls] == [
         call.operator_name for call in dedicated.operator_calls
@@ -196,14 +209,17 @@ def test_reused_runner_serves_the_current_workload_not_the_first_one():
     report the first scenario's batch.
     """
     executor = L1ScenarioExecutor()
-    single = executor.run(make_user_config(), generate_inputs_func=generate_inputs)
+    try:
+        single = executor.run(make_user_config(), generate_inputs_func=generate_inputs)
 
-    batched_config = make_user_config()
-    batched_config.num_queries = 4
-    batched = executor.run(batched_config, generate_inputs_func=generate_inputs)
+        batched_config = make_user_config()
+        batched_config.num_queries = 4
+        batched = executor.run(batched_config, generate_inputs_func=generate_inputs)
 
-    assert executor.counters.build_miss == 1, "changing a run field must not trigger a rebuild"
-    assert executor.counters.forward_count == 2
-    assert single.metrics.batch_size == 1
-    assert batched.metrics.batch_size == 4
-    assert batched.metrics.model_weight_size_gb == pytest.approx(single.metrics.model_weight_size_gb, rel=1e-9)
+        assert executor.counters.build_miss == 1, "changing a run field must not trigger a rebuild"
+        assert executor.counters.forward_count == 2
+        assert single.metrics.batch_size == 1
+        assert batched.metrics.batch_size == 4
+        assert batched.metrics.model_weight_size_gb == pytest.approx(single.metrics.model_weight_size_gb, rel=1e-9)
+    finally:
+        executor.reset()

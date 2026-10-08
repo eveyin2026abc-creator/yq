@@ -41,6 +41,26 @@ pytest_plugins = (
 )
 
 
+@pytest.fixture(scope="session")
+def l1_executor():
+    """Shared model-level executor: one build and one forward per scenario.
+
+    Lives on the root conftest so L1 cases under regression, benchmark, and
+    other components share one fixture instead of copying it per package.
+    Session scope is what makes the reuse worthwhile, since ``ModelRunner``
+    builds its own model and does not consult ``session_model_cache``. Tests that
+    need to observe build counts from a clean slate should construct their own
+    ``L1ScenarioExecutor`` instead of using this fixture.
+    """
+    from tests.helpers.l1_scenario import L1ScenarioExecutor
+
+    executor = L1ScenarioExecutor()
+    try:
+        yield executor
+    finally:
+        executor.reset()
+
+
 def pytest_collection_modifyitems(items) -> None:
     """Mark parameterized.expand node ids that drop method-level nightly marks."""
     from tests.helpers.slow_ci_compile_nightly import EXPAND_NIGHTLY_NODE_IDS

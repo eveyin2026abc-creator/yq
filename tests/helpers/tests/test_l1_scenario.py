@@ -7,6 +7,7 @@ scenario really builds once and runs once live in the pilot regression test.
 from __future__ import annotations
 
 import dataclasses
+import functools
 
 import pytest
 
@@ -20,11 +21,13 @@ from tests.helpers.l1_scenario import (
     RUN_FIELDS,
     L1BuildSignature,
     L1ExecutionCounters,
+    L1RunArtifact,
     L1RunSignature,
     L1ScenarioExecutor,
     build_field_names,
     materialize_requests,
 )
+from tests.helpers import l1_scenario as l1_scenario_module
 from tests.helpers.model_cache import user_config_build_cache_key
 
 # Fields the legacy cache key omits even though the build path reads them.
@@ -128,9 +131,12 @@ def test_observability_field_change_changes_run_signature(field_name, value):
 
 
 # Demoting a field to RUN_FIELDS claims it cannot change the built graph. The
-# signature tests above only check that the claim is applied consistently; these
-# check that it is true, by building the model under two values and comparing the
-# resulting graph. One decoder layer is enough to expose a structural difference.
+# signature tests above only check that the claim is applied consistently. The
+# comparison below is structural, not semantic: module name/type inventory and
+# weight_size. It does not compare operator sequences, bindings, constants, or
+# runtime events. decode, prefix_cache_hit_rate, and mtp_acceptance_rate can
+# change execution without changing this fingerprint. One decoder layer is
+# enough to expose a structural difference.
 RUN_FIELD_ALTERNATIVES = [
     ("num_queries", 8),
     ("query_len", 1),
@@ -165,6 +171,7 @@ def test_every_demoted_field_is_exercised_by_a_behavioural_case():
 
 @pytest.mark.parametrize(("field_name", "value"), RUN_FIELD_ALTERNATIVES)
 def test_run_field_change_does_not_change_the_built_graph(field_name, value, single_layer_baseline):
+    """Structural demotion check only; see the note above RUN_FIELD_ALTERNATIVES."""
     changed = graph_fingerprint(make_config(num_hidden_layers_override=1, **{field_name: value}))
     assert changed == single_layer_baseline, f"{field_name} changes the built graph and is not a run field"
 
@@ -240,7 +247,48 @@ def test_counters_attribute_forwards_to_their_build():
     assert counters.build_miss == 1
     assert counters.build_hit == 1
     assert counters.forward_count == 2
-    assert counters.forwards_by_build[signature.describe()] == 2
+    assert counters.forwards_by_build[signature] == 2
+    assert signature.describe().endswith("@TEST_DEVICE")
+    assert signature.describe() != repr(signature)
+
+
+def test_forwards_of_one_model_stay_split_by_full_build_signature():
+    """describe() collapses compile variants; the counter must not."""
+    counters = L1ExecutionCounters()
+    plain = L1BuildSignature.from_user_config(make_config())
+    compiled = L1BuildSignature.from_user_config(make_config(), compilation_config=["enable_multistream"])
+
+    assert plain.describe() == compiled.describe()
+    counters.record_forward(plain)
+    counters.record_forward(compiled)
+
+    assert counters.forwards_by_build[plain] == 1
+    assert counters.forwards_by_build[compiled] == 1
+
+
+def test_run_signature_rejects_lambda_generate_inputs_func():
+    with pytest.raises(TypeError, match="not a lambda"):
+        L1RunSignature.from_user_config(make_config(), generate_inputs_func=lambda *_args, **_kwargs: None)
+
+
+def test_run_signature_rejects_partial_generate_inputs_func():
+    with pytest.raises(TypeError, match="named module-level function"):
+        L1RunSignature.from_user_config(
+            make_config(),
+            generate_inputs_func=functools.partial(generate_inputs_varlen),
+        )
+
+
+def test_operator_names_fails_when_observer_did_not_run():
+    artifact = L1RunArtifact(
+        build_signature=L1BuildSignature.from_user_config(make_config()),
+        run_signature=L1RunSignature.from_user_config(make_config()),
+        metrics=object(),
+        runtime=None,
+        model=object(),
+    )
+    with pytest.raises(RuntimeError, match="observer did not run"):
+        artifact.operator_names()
 
 
 def test_changing_compilation_config_with_cached_models_is_refused():
@@ -269,3 +317,35 @@ def test_reset_clears_caches_and_counters():
     assert not executor._runners
     assert not executor._artifacts
     assert executor.counters.build_miss == 0
+
+
+def test_another_executor_cannot_replace_the_applied_compilation_config():
+    """apply_compilation_config is process-global, so the guard cannot be per instance."""
+    owner = L1ScenarioExecutor()
+    other = L1ScenarioExecutor()
+    try:
+        owner._apply_compilation(())
+        owner._runners[L1BuildSignature.from_user_config(make_config())] = object()
+        with pytest.raises(RuntimeError, match="another L1ScenarioExecutor"):
+            other._apply_compilation(("enable_multistream",))
+        assert l1_scenario_module._compilation_claim is not None
+        assert l1_scenario_module._compilation_claim.owner is owner
+    finally:
+        owner.reset()
+        other.reset()
+
+
+def test_reset_releases_the_compilation_sentinel_for_a_later_executor():
+    owner = L1ScenarioExecutor()
+    other = L1ScenarioExecutor()
+    try:
+        owner._apply_compilation(("enable_multistream",))
+        owner.reset()
+        assert l1_scenario_module._compilation_claim is None
+        other._apply_compilation(())
+        assert l1_scenario_module._compilation_claim is not None
+        assert l1_scenario_module._compilation_claim.owner is other
+        assert l1_scenario_module._compilation_claim.config == ()
+    finally:
+        owner.reset()
+        other.reset()

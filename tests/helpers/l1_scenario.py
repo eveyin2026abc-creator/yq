@@ -24,19 +24,27 @@ SIGNATURE POLICY:
 
     Demoting a field to ``RUN_FIELDS`` is a claim that it cannot change the built
     graph. ``tests/helpers/tests/test_l1_scenario.py`` pins that claim
-    structurally against the config dataclass, and checks it behaviourally by
-    building a one-layer model under two values of the field and comparing the
-    resulting graph. The image and profiling fields are covered structurally
-    only, since they need a vision model or a profiling database.
+    structurally: it compares the module-name/type inventory and ``weight_size``
+    of a one-layer model. That check is not semantic. It does not compare
+    operator sequences, bindings, constants, or runtime events, so a field such
+    as ``decode``, ``prefix_cache_hit_rate``, or ``mtp_acceptance_rate`` can
+    still change execution without failing it. Image and profiling fields are
+    covered by the dataclass inventory only, since they need a vision model or
+    a profiling database.
 
 COMPILATION:
     ``apply_compilation_config`` mutates process-global config and resets absent
     options, so it is part of the build signature rather than of the config.
+    A process-wide sentinel records the config currently applied and the
+    executor that owns it. Another executor applying a different config fails
+    until that owner calls ``reset()``. ``reset()`` clears the sentinel and,
+    when this executor owns a non-empty config, restores the global defaults.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import types
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Callable, Iterable, Optional
@@ -45,6 +53,8 @@ from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs_varlen
 from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
 from tensor_cast.core.user_config import UserInputConfig
+from tensor_cast.runtime import Runtime
+from tensor_cast.transformers.model import TransformerModel
 
 # Workload and runtime fields. Each name here is a claim that the field cannot
 # change the built graph, verified by test_l1_scenario.py.
@@ -113,7 +123,7 @@ def _extract(user_config: UserInputConfig, names: Iterable[str]) -> tuple[tuple[
     return tuple((name, _normalize(getattr(user_config, name))) for name in names)
 
 
-def materialize_requests(requests: object) -> object:
+def materialize_requests(requests: object) -> Optional[list[Any]]:
     """Freeze ``requests`` once so a generator is not consumed twice.
 
     ``L1RunSignature`` and ``run_inference`` both iterate the value. A one-shot
@@ -123,6 +133,40 @@ def materialize_requests(requests: object) -> object:
     if requests is None:
         return None
     return list(requests)
+
+
+def _generate_inputs_identity(generate_inputs_func: Callable) -> str:
+    """Identity of a named module-level input generator.
+
+    Every lambda in a module has ``__qualname__ == "<lambda>"``, so two
+    different lambdas would share one run signature and silently reuse the
+    wrong artifact. ``functools.partial`` has no ``__qualname__``. Both are
+    rejected. Pass a module-level function.
+    """
+    if isinstance(generate_inputs_func, types.FunctionType) and generate_inputs_func.__name__ == "<lambda>":
+        raise TypeError("generate_inputs_func must be a named module-level function, not a lambda")
+    qualname = getattr(generate_inputs_func, "__qualname__", "")
+    module = getattr(generate_inputs_func, "__module__", None)
+    if (
+        not isinstance(generate_inputs_func, types.FunctionType)
+        or module in (None, "__main__")
+        or "<locals>" in qualname
+    ):
+        raise TypeError(
+            f"generate_inputs_func must be a named module-level function, not {type(generate_inputs_func).__name__}"
+        )
+    return f"{module}.{qualname}"
+
+
+@dataclass
+class _CompilationClaim:
+    """Process-wide owner of the compilation config last applied by an executor."""
+
+    config: tuple[str, ...]
+    owner: L1ScenarioExecutor
+
+
+_compilation_claim: Optional[_CompilationClaim] = None
 
 
 @dataclass(frozen=True)
@@ -172,7 +216,7 @@ class L1RunSignature:
         return cls(
             config_fields=_extract(user_config, sorted(RUN_FIELDS)),
             observability_fields=_extract(user_config, sorted(OBSERVABILITY_FIELDS)),
-            generate_inputs_func=f"{generate_inputs_func.__module__}.{generate_inputs_func.__qualname__}",
+            generate_inputs_func=_generate_inputs_identity(generate_inputs_func),
             with_sampler=with_sampler,
             requests=None if materialized is None else _normalize(materialized),
         )
@@ -191,8 +235,8 @@ class L1RunArtifact:
     build_signature: L1BuildSignature
     run_signature: L1RunSignature
     metrics: ModelRunnerMetrics
-    runtime: object
-    model: object
+    runtime: Runtime
+    model: TransformerModel
 
     @property
     def runtime_event_list(self) -> list:
@@ -204,8 +248,10 @@ class L1RunArtifact:
 
     def operator_names(self) -> tuple[str, ...]:
         """Operator names in invocation order, from this run's own events."""
+        if self.runtime is None:
+            raise RuntimeError("observer did not run; runtime events are unavailable")
         names = []
-        for event in getattr(self.runtime, "event_list", None) or []:
+        for event in self.runtime.event_list:
             invocation = getattr(event, "op_invoke_info", None)
             func = getattr(invocation, "func", None)
             if func is not None:
@@ -225,19 +271,20 @@ class L1ExecutionCounters:
     build_hit: int = 0
     forward_count: int = 0
     run_hit: int = 0
-    forwards_by_build: dict[str, int] = field(default_factory=dict)
+    # Full signature, not describe(). describe() is only model_id@device, so
+    # compile / quant / parallel variants of one model would share a bucket.
+    forwards_by_build: dict[L1BuildSignature, int] = field(default_factory=dict)
 
     def record_build(self, *, hit: bool, signature: L1BuildSignature) -> None:
         if hit:
             self.build_hit += 1
         else:
             self.build_miss += 1
-            self.forwards_by_build.setdefault(signature.describe(), 0)
+            self.forwards_by_build.setdefault(signature, 0)
 
     def record_forward(self, signature: L1BuildSignature) -> None:
         self.forward_count += 1
-        key = signature.describe()
-        self.forwards_by_build[key] = self.forwards_by_build.get(key, 0) + 1
+        self.forwards_by_build[signature] = self.forwards_by_build.get(signature, 0) + 1
 
 
 class L1ScenarioExecutor:
@@ -261,7 +308,14 @@ class L1ScenarioExecutor:
         *,
         compilation_config: Iterable[str] = (),
     ) -> ModelRunner:
-        """Return the shared ``ModelRunner`` for this build signature."""
+        """Return the shared ``ModelRunner`` for this build signature.
+
+        This is not a forward entry point. Counted forwards go through ``run()``
+        only; ``L1ExecutionCounters`` does not see ``run_inference`` calls made
+        on the returned runner. A check that needs a second forward must use
+        its own executor, so it does not perturb the counts of the executor
+        that produced the artifact under test.
+        """
         signature = L1BuildSignature.from_user_config(user_config, compilation_config=compilation_config)
         cached = self._runners.get(signature)
         if cached is not None:
@@ -309,12 +363,15 @@ class L1ScenarioExecutor:
             with_sampler=with_sampler,
             runtime_observer=lambda runtime: captured.__setitem__("runtime", runtime),
         )
+        runtime = captured.get("runtime")
+        if not isinstance(runtime, Runtime):
+            raise RuntimeError("observer did not run; runtime events are unavailable")
         self.counters.record_forward(build_signature)
         artifact = L1RunArtifact(
             build_signature=build_signature,
             run_signature=run_signature,
             metrics=metrics,
-            runtime=captured.get("runtime"),
+            runtime=runtime,
             model=runner.model,
         )
         self._artifacts[(build_signature, run_signature)] = artifact
@@ -322,18 +379,43 @@ class L1ScenarioExecutor:
 
     def reset(self) -> None:
         """Drop every cached runner and artifact, and reset global compile state."""
+        global _compilation_claim
         self._runners.clear()
         self._runner_baselines.clear()
         self._artifacts.clear()
-        if self._applied_compilation not in (None, ()):
-            apply_compilation_config(())
+        if _compilation_claim is not None and _compilation_claim.owner is self:
+            if _compilation_claim.config:
+                apply_compilation_config(())
+            _compilation_claim = None
         self._applied_compilation = None
         self.counters = L1ExecutionCounters()
 
     def _apply_compilation(self, compilation_config: tuple[str, ...]) -> None:
+        global _compilation_claim
+        if (
+            _compilation_claim is not None
+            and _compilation_claim.config != compilation_config
+            and _compilation_claim.owner is not self
+        ):
+            # apply_compilation_config resets options that are absent from the
+            # new set. Another executor's cached graphs would change with no
+            # local signal, so the second apply fails until the owner resets.
+            raise RuntimeError(
+                "compilation config is already applied by another L1ScenarioExecutor; "
+                "reset that executor before applying a different compilation config"
+            )
         if self._applied_compilation == compilation_config:
+            if _compilation_claim is None:
+                _compilation_claim = _CompilationClaim(compilation_config, self)
             return
-        if self._runners:
+        if (
+            _compilation_claim is not None
+            and _compilation_claim.config == compilation_config
+            and _compilation_claim.owner is not self
+        ):
+            self._applied_compilation = compilation_config
+            return
+        if self._runners and self._applied_compilation not in (None, compilation_config):
             # Options absent from the new set are reset globally, which would
             # silently change how already-built graphs behave.
             raise RuntimeError(
@@ -342,6 +424,7 @@ class L1ScenarioExecutor:
             )
         apply_compilation_config(compilation_config)
         self._applied_compilation = compilation_config
+        _compilation_claim = _CompilationClaim(compilation_config, self)
 
     @staticmethod
     def _snapshot_runner(runner: ModelRunner) -> dict[str, Any]:
