@@ -9,7 +9,7 @@
 3. `start_microbench.py`：运行 compute replay，通过 `msprof` 聚合并回写耗时。
 4. `comm_bench/generate_comm_microbench.py`：采集 HCCL 通信微基准，生成 `hcom_*.csv`。
 
-此外，`run_op_microbench.py` 提供与数据库回填解耦的单算子性能测试接口，覆盖当前 35 个单卡
+此外，`run_op_microbench.py` 提供与数据库回填解耦的单算子性能测试接口，覆盖当前 45 个单卡
 `op_replay` 算子（排除多卡 `DispatchFFNCombine`），支持真实 NPU/msprof 采集和 JSON/CSV 结果；
 无 NPU 环境也可只读已有 Profiling 数据进行模拟。详见
 [独立单算子性能测试工具](README_op_microbench.md)。
@@ -106,12 +106,12 @@ python tools/perf_data_collection/parsers/parse_kernel_details.py \
 ```bash
 python tools/perf_data_collection/generate_shape_grid.py \
   --database-path tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5_shape_generated \
-  --target-models deepseek-ai/DeepSeek-V3,Qwen/Qwen3-32B \
+  --target-models deepseek-ai/DeepSeek-V3 Qwen/Qwen3-32B \
   --rows 2000 \
   --seed 20260409
 ```
 
-该步骤会在已有 CSV 中追加理论生成的 shape 行，用于扩大 replay 覆盖。`--rows 0` 表示不限制每个 CSV 追加行数。
+该步骤会通过内部模型采样 sweep 捕获查询需求，并在已有 CSV 中追加可 replay 的 query 或通用 fallback shape 行。`--rows` 必须为正整数；它限制本次每个目标算子 CSV 追加的有效且唯一候选行数。来自 `--optimizer-args-file` 的精确查询需求不受该预算截断。
 
 ### 3. Replay 算子并回写耗时
 
@@ -172,23 +172,21 @@ python tools/perf_data_collection/parsers/parse_kernel_details.py \
 
 ### 2. Theory Shape 扩样入口：`generate_shape_grid.py`
 
-`generate_shape_grid.py` 用于在已有数据库 CSV 中追加 theory shape 行，解决真实 profiling 覆盖不完整的问题。
+`generate_shape_grid.py` 用于从吞吐优化器查询中生成可 replay 的 shape 行，解决真实 profiling 覆盖不完整的问题。
 
-- 输入：目标数据库目录，以及可选的模型名、行数、随机种子和 HBM 预算。
-- 输出：追加了 theory shape 行的 operator CSV。
-- 适用场景：某些算子或 shape 还没有真实样本，需要先生成候选行，再通过 replay 补齐耗时。
+- 输入：目标数据库目录，以及至少一种工作负载来源：模型 ID 或吞吐优化器场景文件。
+- 输出：追加了 query 或通用 fallback shape 行的 operator CSV，以及可选的 JSON 报告。
+- 适用场景：某些算子或 shape 还没有真实样本，需要先从模型或实际优化场景捕获候选行，再通过 replay 补齐耗时。
 
 | 参数 | 是否必选 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `--database-path` | 否 | 自动推导 | 显式 CSV 根目录。 |
-| `--target-models` | 否 | 全量网格 | 逗号分隔模型 ID（如 `deepseek-ai/DeepSeek-V3,Qwen/Qwen3-32B`），命名与 `text_generate` 一致，用于裁剪 GEMM `(N, K)` 候选。 |
-| `--device` | 否 | `ATLAS_800_A3_752T_128G_DIE` | 自动推导路径时使用的设备目录名。 |
-| `--vllm-version` | 否 | 无 | 自动推导路径时使用的 vLLM-Ascend 版本。 |
-| `--torch-version` | 否 | 无 | 自动推导路径时使用的 PyTorch 版本。 |
-| `--cann-version` | 否 | 无 | 自动推导路径时使用的 CANN 版本。 |
-| `--rows` | 否 | `1000` | 每个 CSV 最多追加的行数，`0` 表示不限制。 |
-| `--seed` | 否 | 无 | 随机采样种子。 |
-| `--max-hbm-gb` | 否 | `32.0` | 单行输入/输出张量 HBM 预算，`0` 表示关闭过滤。 |
+| `--database-path` | 是 | 无 | 包含 `op_mapping.yaml` 和算子 CSV 的性能数据库目录。 |
+| `--target-models` | 条件必选 | 无 | 一个或多个 HuggingFace 模型 ID，用于内部采样 sweep。多个 ID 可用空格分隔，也兼容逗号分隔；未传 `--optimizer-args-file` 时必选。 |
+| `--optimizer-args-file` | 条件必选 | 无 | YAML 或 JSON 文件，描述一个或多个实际吞吐优化器场景；字段使用优化器 CLI 的 snake_case 名称。未传 `--target-models` 时必选。 |
+| `--ops` | 否 | 模型查询到的算子 | 限制最终输出的可 replay kernel type；未查询到的选项使用通用 theory fallback。 |
+| `--rows` | 否 | `1000` | 每个目标算子 CSV 本次最多追加的有效且唯一行数；必须大于 `0`。已有、重复和被拒绝的行不占用预算。 |
+| `--seed` | 否 | `0` | coverage 候选排序的确定性随机种子。 |
+| `--report-path` | 否 | 自动 query cache 目录 | 机器可读 JSON 生成报告的输出路径。 |
 
 ### 3. 算子 Replay 回写入口：`start_microbench.py`
 
@@ -213,9 +211,11 @@ python tools/perf_data_collection/parsers/parse_kernel_details.py \
 | `--dispatch-ffn-combine-master-addr` | 否 | `127.0.0.1` | `torchrun` master 地址，msprof回放`DispatchFFNCombine`算子的配置参数。 |
 | `--dispatch-ffn-combine-master-port` | 否 | 无 | `torchrun` master 端口，msprof回放`DispatchFFNCombine`算子的配置参数。 |
 | `--repeat-count` | 否 | `1` | 传给 `run_all_op.py` 的 replay 重复次数。 |
+| `--num-devices` | 否 | `1` | 自动并行 replay 使用的本地 Ascend NPU 数；工具会分配和合并 worker。大于 `1` 时不能与 `DispatchFFNCombine` 或 `--prune-empty-duration-rows` 组合；`1` 表示单卡 replay。 |
 | `--update-mode` | 否 | `all` | `all` 表示更新全部匹配行；`missing-only` 只填充无有效耗时的行。 |
 | `--fail-fast` | 否 | `false` | 任一 replay 失败时立即停止。 |
 | `--prune-empty-duration-rows` | 否 | `false` | 回写后删除 replay/profiling 耗时仍无效的行。 |
+| `--keep-artifacts` | 否 | `false` | 并行 replay 成功后保留 worker 分片目录，便于调试。 |
 
 单算子调试示例：
 
@@ -257,10 +257,20 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | 参数 | 是否必选 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `--database-path` | 否 | 自动推导 | 显式数据库目录。 |
-| `--ops` | 否 | 全部算子 | 限制运行指定算子。 |
-| `--repeat-count` | 否 | 不传给子脚本 | 传给每个 operator replay 脚本。 |
+| `--device` | 否 | `ATLAS_800_A3_752T_128G_DIE` | 自动推导路径时使用的设备目录名。 |
+| `--vllm-version` | 否 | 无 | 自动推导路径时使用的 vLLM-Ascend 版本或完整版本目录名。 |
+| `--torch-version` | 否 | 无 | 自动推导路径时使用的 PyTorch 版本。 |
+| `--cann-version` | 否 | 无 | 自动推导路径时使用的 CANN 版本。 |
+| `--ops` | 否 | 全部算子 | 限制运行指定算子；接受 `OP`、`OP_run` 或 `OP_run.py` 形式。 |
+| `--repeat-count` | 否 | 不传给子脚本 | 传给每个 operator replay 脚本；省略时子脚本使用自身默认值。 |
 | `--update-mode` | 否 | `all` | 回写模式。 |
-| `--execution-mode` | 否 | `subprocess` | `subprocess` 或 `inprocess`。`start_microbench.py` 使用 `inprocess`。 |
+| `--execution-mode` | 否 | `inprocess` | `inprocess` 在同一 Python 进程运行；`subprocess` 为每个脚本创建子进程。`start_microbench.py` 使用 `inprocess`。 |
+| `--dispatch-ffn-combine-ep-size` | 否 | 无 | 传给 `DispatchFFNCombine_run.py` 的 EP size，其他算子忽略。 |
+| `--dispatch-ffn-combine-nproc-per-node` | 否 | 无 | `DispatchFFNCombine` EP replay 的每节点 `torchrun` 进程数。 |
+| `--dispatch-ffn-combine-nnodes` | 否 | `1` | `DispatchFFNCombine` EP replay 的 `torchrun` 节点数。 |
+| `--dispatch-ffn-combine-node-rank` | 否 | `0` | `DispatchFFNCombine` EP replay 的当前节点 rank。 |
+| `--dispatch-ffn-combine-master-addr` | 否 | `127.0.0.1` | `DispatchFFNCombine` EP replay 的 `torchrun` master 地址。 |
+| `--dispatch-ffn-combine-master-port` | 否 | 单机自动选择 | `DispatchFFNCombine` EP replay 的 `torchrun` master 端口；多机必填。 |
 | `--continue-on-error` | 否 | `false` | 单算子失败后继续执行剩余算子。 |
 
 #### 3.3 单算子 Replay 入口
@@ -272,8 +282,11 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `ArgMaxV2_run.py` | `ArgMaxV2` | Replay argmax。 |
 | `AscendQuantV2_run.py` | `AscendQuantV2` | Replay Ascend quantize。 |
 | `BatchMatMulV2_run.py` | `BatchMatMulV2` | Replay batch matmul。 |
+| `Cast_run.py` | `Cast` | Replay cast。 |
+| `CastAiCore_run.py` | `CastAiCore` | Replay AiCore cast。 |
 | `DispatchFFNCombine_run.py` | `DispatchFFNCombine` | Replay DFC fused 算子。 |
 | `DynamicQuant_run.py` | `DynamicQuant` | Replay dynamic quant。 |
+| `Fill_run.py` | `Fill` | Replay fill。 |
 | `FusedInferAttentionScore_run.py` | `FusedInferAttentionScore` | Replay FIA。 |
 | `GatherV2_run.py` | `GatherV2` | Replay gather/embedding。 |
 | `GroupedMatmul_run.py` | `GroupedMatmul` | Replay grouped matmul。 |
@@ -281,20 +294,25 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `Index_run.py` | `Index` | Replay index。 |
 | `InterleaveRope_run.py` | `InterleaveRope` | Replay interleaved RoPE。 |
 | `KvRmsNormRopeCache_run.py` | `KvRmsNormRopeCache` | Replay KV RMSNorm RoPE cache。 |
+| `LayerNormV3_run.py` | `LayerNormV3` | Replay LayerNormV3。 |
 | `LightningIndexer_run.py` | `LightningIndexer` | Replay LightningIndexer。 |
 | `MaskedFill_run.py` | `MaskedFill` | Replay masked fill。 |
 | `MatMulCommon_run.py` | `MatMulCommon` | Replay generic matmul。 |
 | `MatMulV2_run.py` | `MatMulV2` | Replay MatMulV2。 |
 | `MatMulV3_run.py` | `MatMulV3` | Replay MatMulV3。 |
+| `MoeGatingTopK_run.py` | `MoeGatingTopK` | Replay MoE gating top-k。 |
 | `MoeTokenPermute_run.py` | `MoeTokenPermute` | Replay MoE token permute。 |
 | `MoeTokenUnpermute_run.py` | `MoeTokenUnpermute` | Replay MoE token unpermute。 |
+| `Mul_run.py` | `Mul` | Replay elementwise multiply。 |
 | `PadV3_run.py` | `PadV3` | Replay pad。 |
 | `QuantBatchMatmulV3_run.py` | `QuantBatchMatmulV3` | Replay quant batch matmul。 |
 | `RINGMLAPrefillBF16Kernel_run.py` | `RINGMLAPrefillBF16Kernel` | Replay MLA prefill kernel。 |
 | `ReshapeAndCacheNdKernel_run.py` | `ReshapeAndCacheNdKernel` | Replay reshape-and-cache。 |
 | `RmsNorm_run.py` | `RmsNorm` | Replay RMSNorm。 |
 | `ScatterNdUpdate_run.py` | `ScatterNdUpdate` | Replay scatter update。 |
+| `ScatterNdUpdateAiCore_run.py` | `ScatterNdUpdateAiCore` | Replay AiCore scatter update。 |
 | `Slice_run.py` | `Slice` | Replay slice。 |
+| `SliceAiCore_run.py` | `SliceAiCore` | Replay AiCore slice。 |
 | `SoftmaxV2_run.py` | `SoftmaxV2` | Replay softmax。 |
 | `Sort_run.py` | `Sort` | Replay sort。 |
 | `SparseFlashAttention_run.py` | `SparseFlashAttention` | Replay sparse flash attention。 |
@@ -302,6 +320,8 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `TensorMove_run.py` | `TensorMove` | Replay tensor copy。 |
 | `TransposeBatchMatMul_run.py` | `TransposeBatchMatMul` | Replay transpose batch matmul。 |
 | `Transpose_run.py` | `Transpose` | Replay transpose。 |
+| `_triton_rope_siso_run.py` | `_triton_rope_siso` | Replay Triton RoPE SISO。 |
+| `mla_preprocess_0_mix_aic_run.py` | `mla_preprocess_0_mix_aic` | Replay MLA preprocess AiCore kernel。 |
 | `split_qkv_rmsnorm_rope_kernel_run.py` | `split_qkv_rmsnorm_rope_kernel` | Replay custom QKV/RMSNorm/RoPE fused kernel。 |
 
 ### 4. HCCL 通信微基准采集入口：`comm_bench/generate_comm_microbench.py`

@@ -9,7 +9,7 @@ Main tools in recommended order:
 3. `start_microbench.py`: run compute replay under `msprof`, aggregate results, and write durations back.
 4. `comm_bench/generate_comm_microbench.py`: collect HCCL communication microbench data into `hcom_*.csv`.
 
-`run_op_microbench.py` additionally provides a standalone operator performance interface for all 35 current
+`run_op_microbench.py` additionally provides a standalone operator performance interface for all 45 current
 single-card `op_replay` operators (excluding multi-card `DispatchFFNCombine`). It does not join the database writeback
 workflow. It runs allow-listed adapters under msprof and emits JSON or CSV; a no-NPU environment can
 also read existing Profiling data in simulation mode. See the
@@ -107,12 +107,12 @@ This creates or updates per-operator CSV files such as `MatMulV2.csv` and `Fused
 ```bash
 python tools/perf_data_collection/generate_shape_grid.py \
   --database-path tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5_shape_generated \
-  --target-models deepseek-ai/DeepSeek-V3,Qwen/Qwen3-32B \
+  --target-models deepseek-ai/DeepSeek-V3 Qwen/Qwen3-32B \
   --rows 2000 \
   --seed 20260409
 ```
 
-This appends theory-generated shape rows to existing CSV files. `--rows 0` means no per-CSV row cap.
+This captures query demand through internal model-sampling sweeps, then appends replayable query or generic fallback shape rows to existing CSV files. `--rows` must be a positive integer and caps the valid, unique candidate rows appended to each target operator CSV in this run. Exact query demand from `--optimizer-args-file` is not truncated by this budget.
 
 ### 3. Replay operators and write back durations
 
@@ -163,19 +163,17 @@ python tools/perf_data_collection/parsers/parse_kernel_details.py \
   --database-path tensor_cast/performance_model/profiling_database/data/ATLAS_800_A3_752T_128G_DIE/vllm_ascend/vllm0.18.0_torch2.9.0_cann8.5
 ```
 
-### 2. Theory shape expansion: `generate_shape_grid.py`
+### 2. Query-driven theory shape expansion: `generate_shape_grid.py`
 
 | Argument | Required | Default | Description |
 | --- | --- | --- | --- |
-| `--database-path` | No | auto-derived | Explicit CSV root directory. |
-| `--target-models` | No | full grid | Comma-separated model IDs (for example, `deepseek-ai/DeepSeek-V3,Qwen/Qwen3-32B`), matching `text_generate`, used to prune GEMM `(N, K)` candidates. |
-| `--device` | No | `ATLAS_800_A3_752T_128G_DIE` | Device directory name when deriving the path. |
-| `--vllm-version` | No | — | vLLM-Ascend version when deriving the path. |
-| `--torch-version` | No | — | PyTorch version when deriving the path. |
-| `--cann-version` | No | — | CANN version when deriving the path. |
-| `--rows` | No | `1000` | Max appended rows per CSV; `0` means no cap. |
-| `--seed` | No | — | Random sampling seed. |
-| `--max-hbm-gb` | No | `32.0` | Per-row HBM budget in GiB; `0` disables filtering. |
+| `--database-path` | Yes | — | Performance-database directory containing `op_mapping.yaml` and operator CSV files. |
+| `--target-models` | Conditionally | — | One or more HuggingFace model IDs for internal sampling sweeps. Separate IDs with spaces; comma-separated IDs are also accepted. Required when `--optimizer-args-file` is absent. |
+| `--optimizer-args-file` | Conditionally | — | YAML or JSON file describing one or more actual throughput-optimizer scenarios. Field names use the optimizer CLI's snake_case names. Required when `--target-models` is absent. |
+| `--ops` | No | model-queried operators | Limit the final output to replay-supported kernel types. Selections not queried use the generic theory fallback. |
+| `--rows` | No | `1000` | Maximum valid, unique rows appended to each target operator CSV in this run; must be greater than `0`. Existing, duplicate, and rejected rows do not use the budget. |
+| `--seed` | No | `0` | Deterministic seed for coverage-candidate ordering. |
+| `--report-path` | No | automatic query-cache directory | Output path for the machine-readable JSON generation report. |
 
 ### 3. Operator replay writeback: `start_microbench.py`
 
@@ -194,9 +192,11 @@ python tools/perf_data_collection/parsers/parse_kernel_details.py \
 | `--dispatch-ffn-combine-master-addr` | No | `127.0.0.1` | Master address for `torchrun`, a configuration parameter for replaying the `DispatchFFNCombine` operator with msprof. |
 | `--dispatch-ffn-combine-master-port` | No | — | Master port for `torchrun`, a configuration parameter for replaying the `DispatchFFNCombine` operator with msprof.|
 | `--repeat-count` | No | `1` | Replay repeat count forwarded to `run_all_op.py`. |
+| `--num-devices` | No | `1` | Local Ascend NPU count for automatic parallel replay; the tool assigns and merges workers. When greater than `1`, it cannot be combined with `DispatchFFNCombine` or `--prune-empty-duration-rows`; `1` means single-card replay. |
 | `--update-mode` | No | `all` | `all` updates all matched rows; `missing-only` fills rows without valid durations. |
 | `--fail-fast` | No | `false` | Stop immediately when one replay script fails. |
 | `--prune-empty-duration-rows` | No | `false` | Delete rows whose replay/profiling durations remain invalid after writeback. |
+| `--keep-artifacts` | No | `false` | Keep parallel worker shard directories after successful replay for debugging. |
 
 Single-operator debug example:
 
@@ -236,10 +236,20 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | Argument | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--database-path` | No | auto-derived | Explicit database directory. |
-| `--ops` | No | all operators | Restrict to selected operators. |
-| `--repeat-count` | No | not forwarded | Forwarded to each operator replay script when set. |
+| `--device` | No | `ATLAS_800_A3_752T_128G_DIE` | Device directory name used when deriving the path. |
+| `--vllm-version` | No | — | vLLM-Ascend version or full version-directory name used when deriving the path. |
+| `--torch-version` | No | — | PyTorch version used when deriving the path. |
+| `--cann-version` | No | — | CANN version used when deriving the path. |
+| `--ops` | No | all operators | Restrict to selected operators; accepts `OP`, `OP_run`, or `OP_run.py`. |
+| `--repeat-count` | No | not forwarded | Forwarded to each operator replay script when set; otherwise each script uses its own default. |
 | `--update-mode` | No | `all` | Writeback mode. |
-| `--execution-mode` | No | `subprocess` | `subprocess` or `inprocess`; `start_microbench.py` uses `inprocess`. |
+| `--execution-mode` | No | `inprocess` | `inprocess` runs in one Python process; `subprocess` creates a child process for each script. `start_microbench.py` uses `inprocess`. |
+| `--dispatch-ffn-combine-ep-size` | No | — | EP size passed to `DispatchFFNCombine_run.py`; ignored by other operators. |
+| `--dispatch-ffn-combine-nproc-per-node` | No | — | `torchrun` processes per node for `DispatchFFNCombine` EP replay. |
+| `--dispatch-ffn-combine-nnodes` | No | `1` | `torchrun` node count for `DispatchFFNCombine` EP replay. |
+| `--dispatch-ffn-combine-node-rank` | No | `0` | Current node rank for `DispatchFFNCombine` EP replay. |
+| `--dispatch-ffn-combine-master-addr` | No | `127.0.0.1` | `torchrun` master address for `DispatchFFNCombine` EP replay. |
+| `--dispatch-ffn-combine-master-port` | No | auto-selected on one node | `torchrun` master port for `DispatchFFNCombine` EP replay; required for multi-node. |
 | `--continue-on-error` | No | `false` | Continue after individual operator failures. |
 
 #### 3.3 Per-operator replay entry points
@@ -251,8 +261,11 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `ArgMaxV2_run.py` | `ArgMaxV2` | Replay argmax. |
 | `AscendQuantV2_run.py` | `AscendQuantV2` | Replay Ascend quantize. |
 | `BatchMatMulV2_run.py` | `BatchMatMulV2` | Replay batch matmul. |
+| `Cast_run.py` | `Cast` | Replay cast. |
+| `CastAiCore_run.py` | `CastAiCore` | Replay AiCore cast. |
 | `DispatchFFNCombine_run.py` | `DispatchFFNCombine` | Replay DFC fused operator. |
 | `DynamicQuant_run.py` | `DynamicQuant` | Replay dynamic quant. |
+| `Fill_run.py` | `Fill` | Replay fill. |
 | `FusedInferAttentionScore_run.py` | `FusedInferAttentionScore` | Replay FIA. |
 | `GatherV2_run.py` | `GatherV2` | Replay gather/embedding. |
 | `GroupedMatmul_run.py` | `GroupedMatmul` | Replay grouped matmul. |
@@ -260,20 +273,25 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `Index_run.py` | `Index` | Replay index. |
 | `InterleaveRope_run.py` | `InterleaveRope` | Replay interleaved RoPE. |
 | `KvRmsNormRopeCache_run.py` | `KvRmsNormRopeCache` | Replay KV RMSNorm RoPE cache. |
+| `LayerNormV3_run.py` | `LayerNormV3` | Replay LayerNormV3. |
 | `LightningIndexer_run.py` | `LightningIndexer` | Replay LightningIndexer. |
 | `MaskedFill_run.py` | `MaskedFill` | Replay masked fill. |
 | `MatMulCommon_run.py` | `MatMulCommon` | Replay generic matmul. |
 | `MatMulV2_run.py` | `MatMulV2` | Replay MatMulV2. |
 | `MatMulV3_run.py` | `MatMulV3` | Replay MatMulV3. |
+| `MoeGatingTopK_run.py` | `MoeGatingTopK` | Replay MoE gating top-k. |
 | `MoeTokenPermute_run.py` | `MoeTokenPermute` | Replay MoE token permute. |
 | `MoeTokenUnpermute_run.py` | `MoeTokenUnpermute` | Replay MoE token unpermute. |
+| `Mul_run.py` | `Mul` | Replay elementwise multiply. |
 | `PadV3_run.py` | `PadV3` | Replay pad. |
 | `QuantBatchMatmulV3_run.py` | `QuantBatchMatmulV3` | Replay quant batch matmul. |
 | `RINGMLAPrefillBF16Kernel_run.py` | `RINGMLAPrefillBF16Kernel` | Replay MLA prefill kernel. |
 | `ReshapeAndCacheNdKernel_run.py` | `ReshapeAndCacheNdKernel` | Replay reshape-and-cache. |
 | `RmsNorm_run.py` | `RmsNorm` | Replay RMSNorm. |
 | `ScatterNdUpdate_run.py` | `ScatterNdUpdate` | Replay scatter update. |
+| `ScatterNdUpdateAiCore_run.py` | `ScatterNdUpdateAiCore` | Replay AiCore scatter update. |
 | `Slice_run.py` | `Slice` | Replay slice. |
+| `SliceAiCore_run.py` | `SliceAiCore` | Replay AiCore slice. |
 | `SoftmaxV2_run.py` | `SoftmaxV2` | Replay softmax. |
 | `Sort_run.py` | `Sort` | Replay sort. |
 | `SparseFlashAttention_run.py` | `SparseFlashAttention` | Replay sparse flash attention. |
@@ -281,6 +299,8 @@ python tools/perf_data_collection/op_replay/MatMulV2_run.py \
 | `TensorMove_run.py` | `TensorMove` | Replay tensor copy. |
 | `TransposeBatchMatMul_run.py` | `TransposeBatchMatMul` | Replay transpose batch matmul. |
 | `Transpose_run.py` | `Transpose` | Replay transpose. |
+| `_triton_rope_siso_run.py` | `_triton_rope_siso` | Replay Triton RoPE SISO. |
+| `mla_preprocess_0_mix_aic_run.py` | `mla_preprocess_0_mix_aic` | Replay MLA preprocess AiCore kernel. |
 | `split_qkv_rmsnorm_rope_kernel_run.py` | `split_qkv_rmsnorm_rope_kernel` | Replay custom QKV/RMSNorm/RoPE fused kernel. |
 
 ### 4. HCCL communication microbench: `comm_bench/generate_comm_microbench.py`
