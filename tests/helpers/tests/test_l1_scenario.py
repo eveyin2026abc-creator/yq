@@ -12,6 +12,7 @@ import functools
 import pytest
 
 import tensor_cast.ops  # noqa: F401 — register custom ops before building
+from tensor_cast import config as tensor_cast_config
 from tensor_cast.core.input_generator import generate_inputs, generate_inputs_varlen
 from tensor_cast.core.model_builder import build_model
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
@@ -329,7 +330,7 @@ def test_another_executor_cannot_replace_the_applied_compilation_config():
         with pytest.raises(RuntimeError, match="another L1ScenarioExecutor"):
             other._apply_compilation(("enable_multistream",))
         assert l1_scenario_module._compilation_claim is not None
-        assert l1_scenario_module._compilation_claim.owner is owner
+        assert l1_scenario_module._compilation_claim.owners == {owner}
     finally:
         owner.reset()
         other.reset()
@@ -344,8 +345,44 @@ def test_reset_releases_the_compilation_sentinel_for_a_later_executor():
         assert l1_scenario_module._compilation_claim is None
         other._apply_compilation(())
         assert l1_scenario_module._compilation_claim is not None
-        assert l1_scenario_module._compilation_claim.owner is other
+        assert l1_scenario_module._compilation_claim.owners == {other}
         assert l1_scenario_module._compilation_claim.config == ()
     finally:
         owner.reset()
         other.reset()
+
+
+def test_shared_compilation_config_stays_applied_until_every_owner_resets():
+    """One owner resetting must not invalidate another owner's cached runners."""
+    first = L1ScenarioExecutor()
+    second = L1ScenarioExecutor()
+    different = L1ScenarioExecutor()
+    try:
+        config = ("enable_multistream",)
+        first._apply_compilation(config)
+        second._apply_compilation(config)
+
+        claim = l1_scenario_module._compilation_claim
+        assert claim is not None
+        assert claim.config == config
+        assert claim.owners == {first, second}
+        assert tensor_cast_config.compilation.multistream.enable is True
+
+        first.reset()
+
+        claim = l1_scenario_module._compilation_claim
+        assert claim is not None
+        assert claim.config == config
+        assert claim.owners == {second}
+        assert tensor_cast_config.compilation.multistream.enable is True
+        with pytest.raises(RuntimeError, match="another L1ScenarioExecutor"):
+            different._apply_compilation(())
+
+        second.reset()
+        assert l1_scenario_module._compilation_claim is None
+        assert tensor_cast_config.compilation.multistream.enable is False
+        different._apply_compilation(())
+    finally:
+        first.reset()
+        second.reset()
+        different.reset()

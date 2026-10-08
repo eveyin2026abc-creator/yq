@@ -35,10 +35,10 @@ SIGNATURE POLICY:
 COMPILATION:
     ``apply_compilation_config`` mutates process-global config and resets absent
     options, so it is part of the build signature rather than of the config.
-    A process-wide sentinel records the config currently applied and the
+    A process-wide sentinel records the config currently applied and every
     executor that owns it. Another executor applying a different config fails
-    until that owner calls ``reset()``. ``reset()`` clears the sentinel and,
-    when this executor owns a non-empty config, restores the global defaults.
+    until all owners call ``reset()``. The last owner's ``reset()`` clears the
+    sentinel and restores the global defaults for a non-empty config.
 """
 
 from __future__ import annotations
@@ -49,12 +49,13 @@ from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Callable, Iterable, Optional
 
+from torch import nn
+
 from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs_varlen
 from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.runtime import Runtime
-from tensor_cast.transformers.model import TransformerModel
 
 # Workload and runtime fields. Each name here is a claim that the field cannot
 # change the built graph, verified by test_l1_scenario.py.
@@ -160,10 +161,10 @@ def _generate_inputs_identity(generate_inputs_func: Callable) -> str:
 
 @dataclass
 class _CompilationClaim:
-    """Process-wide owner of the compilation config last applied by an executor."""
+    """Process-wide owners of the compilation config currently applied."""
 
     config: tuple[str, ...]
-    owner: L1ScenarioExecutor
+    owners: set[L1ScenarioExecutor] = field(default_factory=set)
 
 
 _compilation_claim: Optional[_CompilationClaim] = None
@@ -236,7 +237,7 @@ class L1RunArtifact:
     run_signature: L1RunSignature
     metrics: ModelRunnerMetrics
     runtime: Runtime
-    model: TransformerModel
+    model: nn.Module
 
     @property
     def runtime_event_list(self) -> list:
@@ -383,48 +384,56 @@ class L1ScenarioExecutor:
         self._runners.clear()
         self._runner_baselines.clear()
         self._artifacts.clear()
-        if _compilation_claim is not None and _compilation_claim.owner is self:
-            if _compilation_claim.config:
-                apply_compilation_config(())
-            _compilation_claim = None
+        if _compilation_claim is not None and self in _compilation_claim.owners:
+            _compilation_claim.owners.remove(self)
+            if not _compilation_claim.owners:
+                if _compilation_claim.config:
+                    apply_compilation_config(())
+                _compilation_claim = None
         self._applied_compilation = None
         self.counters = L1ExecutionCounters()
 
     def _apply_compilation(self, compilation_config: tuple[str, ...]) -> None:
         global _compilation_claim
-        if (
-            _compilation_claim is not None
-            and _compilation_claim.config != compilation_config
-            and _compilation_claim.owner is not self
-        ):
-            # apply_compilation_config resets options that are absent from the
-            # new set. Another executor's cached graphs would change with no
-            # local signal, so the second apply fails until the owner resets.
-            raise RuntimeError(
-                "compilation config is already applied by another L1ScenarioExecutor; "
-                "reset that executor before applying a different compilation config"
-            )
+        claim = _compilation_claim
         if self._applied_compilation == compilation_config:
-            if _compilation_claim is None:
-                _compilation_claim = _CompilationClaim(compilation_config, self)
-            return
-        if (
-            _compilation_claim is not None
-            and _compilation_claim.config == compilation_config
-            and _compilation_claim.owner is not self
-        ):
-            self._applied_compilation = compilation_config
+            if claim is None:
+                apply_compilation_config(compilation_config)
+                _compilation_claim = _CompilationClaim(compilation_config, {self})
+            elif claim.config != compilation_config:
+                raise RuntimeError("process compilation config changed outside this L1ScenarioExecutor")
+            else:
+                claim.owners.add(self)
             return
         if self._runners and self._applied_compilation not in (None, compilation_config):
             # Options absent from the new set are reset globally, which would
             # silently change how already-built graphs behave.
             raise RuntimeError(
                 "compilation config changed while built models are cached; "
-                "use a separate executor instance for a different compilation config"
+                "reset this executor before applying a different compilation config"
             )
+        if claim is not None and claim.config != compilation_config:
+            other_owners = claim.owners - {self}
+            if not other_owners:
+                apply_compilation_config(compilation_config)
+                claim.config = compilation_config
+                claim.owners = {self}
+                self._applied_compilation = compilation_config
+                return
+            # apply_compilation_config resets options that are absent from the
+            # new set. Other executors' cached graphs would change with no local
+            # signal, so the apply fails until every owner releases the config.
+            raise RuntimeError(
+                "compilation config is already applied by another L1ScenarioExecutor; "
+                "reset those executors before applying a different compilation config"
+            )
+        if claim is not None:
+            claim.owners.add(self)
+            self._applied_compilation = compilation_config
+            return
         apply_compilation_config(compilation_config)
         self._applied_compilation = compilation_config
-        _compilation_claim = _CompilationClaim(compilation_config, self)
+        _compilation_claim = _CompilationClaim(compilation_config, {self})
 
     @staticmethod
     def _snapshot_runner(runner: ModelRunner) -> dict[str, Any]:
