@@ -16,6 +16,7 @@
 
 import math
 import unittest
+from contextlib import contextmanager
 
 import pytest
 import torch
@@ -44,6 +45,29 @@ from .conftest import get_session_hf_config
 from .test_common import get_quant_config
 
 # Core RMS pattern-consistency assertions were moved to test_ops.py::test_rms_norm_non_default_eps_path_consistency.
+
+
+def _snapshot_pattern_passes():
+    """Return the process pattern registry after its patterns have been registered."""
+    compilation_patterns.lazy_init()
+    return compilation_patterns.all_passes
+
+
+@contextmanager
+def _temporary_pattern_passes(original_passes):
+    """Register patterns onto a fresh registry, then put the original registry back.
+
+    ``situ._INSTALLED`` stays true after the first registration, so replacing
+    ``all_passes`` with another empty list and only clearing the ``lazy_init``
+    cache drops SiTU from every later compile in the same process.
+    """
+    compilation_patterns.all_passes = [PatternMatchPass(), PatternMatchPass(), PatternMatchPass()]
+    compilation_patterns.lazy_init.cache_clear()
+    try:
+        compilation_patterns.lazy_init()
+        yield
+    finally:
+        compilation_patterns.all_passes = original_passes
 
 
 def test_pass_uuid_and_pattern_pass_loop():
@@ -523,18 +547,16 @@ class PatternReplaceTestCase(unittest.TestCase):
         self.assertEqual(self._gelu_approximate(gelu_event), "none")
 
     def test_gelu_pattern_config_gate(self):
+        original_passes = _snapshot_pattern_passes()
         old_enable_gelu = config.compilation.fusion_patterns.enable_gelu
         try:
             config.compilation.fusion_patterns.enable_gelu = False
-            compilation_patterns.all_passes = [PatternMatchPass(), PatternMatchPass(), PatternMatchPass()]
-            compilation_patterns.lazy_init.cache_clear()
-            compilation_patterns.lazy_init()
-            for pattern_pass in compilation_patterns.all_passes:
-                self.assertFalse(any("gelu" in name for name in pattern_pass.pattern_replacements))
+            with _temporary_pattern_passes(original_passes):
+                for pattern_pass in compilation_patterns.all_passes:
+                    self.assertFalse(any("gelu" in name for name in pattern_pass.pattern_replacements))
         finally:
             config.compilation.fusion_patterns.enable_gelu = old_enable_gelu
-            compilation_patterns.all_passes = [PatternMatchPass(), PatternMatchPass(), PatternMatchPass()]
-            compilation_patterns.lazy_init.cache_clear()
+            compilation_patterns.all_passes = original_passes
 
     @parameterized.expand(
         [
@@ -645,30 +667,44 @@ class PatternReplaceTestCase(unittest.TestCase):
         ]
     )
     def test_gated_residual_add_pattern_when_enabled(self, reverse_mul, reverse_add):
+        original_passes = _snapshot_pattern_passes()
         old_enable_gated_residual_add = config.compilation.fusion_patterns.enable_gated_residual_add
         try:
             config.compilation.fusion_patterns.enable_gated_residual_add = True
-            compilation_patterns.all_passes = [PatternMatchPass(), PatternMatchPass(), PatternMatchPass()]
-            compilation_patterns.lazy_init.cache_clear()
-            compilation_patterns.lazy_init()
-            torch.compiler.reset()
+            with _temporary_pattern_passes(original_passes):
+                torch.compiler.reset()
 
-            model = GatedResidualAddModule(reverse_mul, reverse_add)
-            model = torch.compile(model, backend=self.compile_backend, fullgraph=True, dynamic=True)
-            machine_config = TEST_DEVICE
-            perf_model = AnalyticPerformanceModel(machine_config)
-            residual = torch.empty(1, 3, 1, device="meta", dtype=torch.bfloat16)
-            update = torch.empty(2, 1, 4, device="meta", dtype=torch.bfloat16)
-            gate = torch.empty(1, 3, 4, device="meta", dtype=torch.bfloat16)
-            with Runtime(perf_model, machine_config) as runtime, torch.no_grad():
-                outputs = model(residual, update, gate)
-                self.assertEqual(outputs.shape, (2, 3, 4))
-            result = runtime.table_averages()
-            self.assertIn("tensor_cast.gated_residual_add.default", result)
+                model = GatedResidualAddModule(reverse_mul, reverse_add)
+                model = torch.compile(model, backend=self.compile_backend, fullgraph=True, dynamic=True)
+                machine_config = TEST_DEVICE
+                perf_model = AnalyticPerformanceModel(machine_config)
+                residual = torch.empty(1, 3, 1, device="meta", dtype=torch.bfloat16)
+                update = torch.empty(2, 1, 4, device="meta", dtype=torch.bfloat16)
+                gate = torch.empty(1, 3, 4, device="meta", dtype=torch.bfloat16)
+                with Runtime(perf_model, machine_config) as runtime, torch.no_grad():
+                    outputs = model(residual, update, gate)
+                    self.assertEqual(outputs.shape, (2, 3, 4))
+                result = runtime.table_averages()
+                self.assertIn("tensor_cast.gated_residual_add.default", result)
         finally:
             config.compilation.fusion_patterns.enable_gated_residual_add = old_enable_gated_residual_add
-            compilation_patterns.all_passes = [PatternMatchPass(), PatternMatchPass(), PatternMatchPass()]
-            compilation_patterns.lazy_init.cache_clear()
+            compilation_patterns.all_passes = original_passes
+
+    def test_temporary_pattern_passes_restore_situ_patterns(self):
+        original_passes = _snapshot_pattern_passes()
+        old_enable_gated_residual_add = config.compilation.fusion_patterns.enable_gated_residual_add
+        try:
+            config.compilation.fusion_patterns.enable_gated_residual_add = True
+            with _temporary_pattern_passes(original_passes):
+                pass
+        finally:
+            config.compilation.fusion_patterns.enable_gated_residual_add = old_enable_gated_residual_add
+            compilation_patterns.all_passes = original_passes
+        pattern_names = [
+            name for pattern_pass in compilation_patterns.all_passes for name in pattern_pass.pattern_replacements
+        ]
+        self.assertTrue(any(name.startswith("situ_") for name in pattern_names))
+        self.assertIs(compilation_patterns.all_passes, original_passes)
 
     @parameterized.expand(
         [

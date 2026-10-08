@@ -35,6 +35,7 @@ from tensor_cast.compilation.passes.sequence_parallel_pass import (
     Pattern3Rewriter,
     _is_moe_p3_tail,
 )
+from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs
 from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
@@ -131,6 +132,18 @@ class SequenceParallelPassTestCase(unittest.TestCase):
 
 class SequenceParallelPassRegressionTestCase(unittest.TestCase):
     """Regression tests for sequence parallel pass that must run in CI gate."""
+
+    def tearDown(self) -> None:
+        apply_compilation_config(None)
+        torch.compiler.reset()
+
+    def test_compilation_config_reset_clears_sequence_parallel_and_multistream(self) -> None:
+        apply_compilation_config(["enable_sequence_parallel", "enable_multistream"])
+        self.assertTrue(config.compilation.passes.enable_sequence_parallel)
+        self.assertTrue(config.compilation.multistream.enable)
+        apply_compilation_config(None)
+        self.assertFalse(config.compilation.passes.enable_sequence_parallel)
+        self.assertFalse(config.compilation.multistream.enable)
 
     def test_local_descendants_rewrites_only_sequence_dimension(self):
         graph = Graph()
