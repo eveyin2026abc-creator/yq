@@ -1,10 +1,8 @@
 # MindStudio Modeling 26.2.0 版本发布说明
 
-*发布日期：2026-10-09（以分支 `26.2.0` 最新构建标签 `tag_MindStudio_26.2.0.B100_001` 为准；正式发布件日期以版本发布流程为准）*
-
 ## 1. 版本概述
 
-MindStudio Modeling（msModeling）26.2.0 是面向昇腾 AI 处理器的推理性能仿真与服务寻优版本，主要服务模型适配、部署评估和实测调优人员。本说明依据 [2026 Q3 Roadmap](https://gitcode.com/Ascend/msmodeling/issues/286)（里程碑 MindStudio 26.2.0），整理 `26.2.0` 相对 `26.1.0` 在 2026-06-23 至 2026-10-09 合入的用户可见能力。核心亮点如下：
+MindStudio Modeling 26.2.0 是面向昇腾 AI 处理器的推理性能仿真与服务寻优版本，主要服务于模型适配、性能预研、容量规划和大模型服务化调优场景。核心亮点如下：
 
 - 扩展重点模型与生成式模型仿真，覆盖 GLM-5.2 / GLM-5.3 Flash、Kimi K3、MiniMax M3、Qwen3.8，以及 FLUX.1-dev、Qwen-Image-Edit 图像生成。
 - 把流水线并行、DSA 上下文并行、DFlash/DSpark 投机解码和 Chunked Prefill 接到服务化吞吐评估，便于评估长序列和复杂并行部署。
