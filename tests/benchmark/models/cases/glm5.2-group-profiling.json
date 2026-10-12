@@ -7,7 +7,7 @@
     "glm5.2-3.5k-1.5k-decode": {
       "description": "GLM-5.2 3.5K decode, 1 query, qlen=1, ctx=3585, TP=16, EP=16, embedding-tp=row, shared-expert-tp, W4A8, profiling model, compile",
       "initial_time_s": 0.04288,
-      "baseline_time_s": 0.042342,
+      "baseline_time_s": 0.070613,
       "initial_tolerance": 0.1,
       "baseline_tolerance": 0.15,
       "operator_top_n": 10,
@@ -75,7 +75,7 @@
     "glm5.2-3.5k-1.5k-prefill": {
       "description": "GLM-5.2 3.5K prefill, 1 query, qlen=3596, TP=16, EP=16, embedding-tp=row, shared-expert-tp, W4A8, profiling model, compile",
       "initial_time_s": 1.025,
-      "baseline_time_s": 1.264,
+      "baseline_time_s": 1.034,
       "initial_tolerance": 0.1,
       "baseline_tolerance": 0.15,
       "operator_top_n": 10,
@@ -143,7 +143,7 @@
     "glm5.2-64k-1k-decode": {
       "description": "GLM-5.2 64K decode, 1 query, qlen=1, ctx=65536, TP=16, EP=16, embedding-tp=row, shared-expert-tp, W4A8, profiling model, compile",
       "initial_time_s": 0.043389,
-      "baseline_time_s": 0.043373,
+      "baseline_time_s": 0.042611,
       "initial_tolerance": 0.1,
       "baseline_tolerance": 0.15,
       "operator_top_n": 10,
@@ -211,7 +211,7 @@
     "glm5.2-64k-1k-prefill": {
       "description": "GLM-5.2 64K prefill, 1 query, qlen=8192, TP=16, EP=16, embedding-tp=row, shared-expert-tp, W4A8, profiling model, compile",
       "initial_time_s": 2.229,
-      "baseline_time_s": 2.586,
+      "baseline_time_s": 2.175,
       "initial_tolerance": 0.1,
       "baseline_tolerance": 0.15,
       "operator_top_n": 10,
