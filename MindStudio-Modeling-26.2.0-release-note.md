@@ -50,13 +50,7 @@ MindStudio Modeling 26.2.0 是面向昇腾 AI 处理器的推理性能仿真与�
 
 | 序号 | 变更内容 | 变更影响 | 关联 Issue/PR |
 | --- | --- | --- | --- |
-| 1 | OptiX 与仿真环境分离 | **不兼容变更**：msModeling / OptiX 必须安装在独立虚拟环境。vLLM、MindIE 和测评工具使用系统部署环境。不要在 msModeling 虚拟环境中执行 `pip install vllm`。 | [!577](https://gitcode.com/Ascend/msmodeling/merge_requests/577) |
-| 2 | vLLM 寻优参数位置统一 | **不兼容变更**：vLLM 命令行寻优字段的 `config_position` 统一为 `run`。仍使用旧位置的配置需要改为 `run` 后才能被追加到 `vllm serve`。环境变量继续使用 `env`，MindIE 仍使用服务配置路径。 | [!877](https://gitcode.com/Ascend/msmodeling/merge_requests/877) |
-| 3 | 编译路径默认开启多流 | 多流调度改为默认开启。未显式关闭时，同一配置的算子时延和端到端结果可能与 26.1.0 不同。 | [!410](https://gitcode.com/Ascend/msmodeling/merge_requests/410) |
-| 4 | DFC 默认启用 | TensorCast 与吞吐寻优默认启用 DFC。依赖旧默认关闭行为的对比实验需要显式关闭后再对比。 | [!206](https://gitcode.com/Ascend/msmodeling/merge_requests/206) |
-| 5 | DeepSeek V4 主 KV 存储口径 | 未开启 attention 量化时，V4 主 KV 固定按 BF16 估算，不再跟随模型默认 dtype。开启 FP8 时改为混合行存储。显存和带宽结果会随之变化。 | [!840](https://gitcode.com/Ascend/msmodeling/merge_requests/840) |
-| 6 | GLM5 依赖的 Transformers 下限 | GLM5 系列要求 Transformers 5.16.x。使用更低 Transformers 版本时需要先升级环境。 | [!510](https://gitcode.com/Ascend/msmodeling/merge_requests/510) |
-| 7 | 解析模型校准为显式选项 | 新增 `--performance-model calibrated` 及 calibration profile 参数。不传 profile 时，原有 analytic 行为保持不变；profile 与设备或软件栈不匹配时回退原始解析结果。 | [!816](https://gitcode.com/Ascend/msmodeling/merge_requests/816) |
+| 1 | GLM5 依赖的 Transformers 下限 | GLM5 系列要求 Transformers 5.16.x。使用更低 Transformers 版本时需要先升级环境。 | [!510](https://gitcode.com/Ascend/msmodeling/merge_requests/510) |
 
 ## 5. 修复缺陷
 
