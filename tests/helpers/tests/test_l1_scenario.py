@@ -1,7 +1,7 @@
 """Contract tests for the L1 scenario signatures and executor bookkeeping.
 
-These run without building a model. The paired model-level checks that a
-scenario really builds once and runs once live in the pilot regression test.
+These run without building a model. The model-level check that a scenario
+builds once and runs once is deferred to the first migration PR.
 """
 
 from __future__ import annotations
