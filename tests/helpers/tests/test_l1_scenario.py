@@ -292,18 +292,54 @@ def test_operator_names_fails_when_observer_did_not_run():
         artifact.operator_names()
 
 
-def test_changing_compilation_config_with_cached_models_is_refused():
-    """apply_compilation_config resets absent options process-wide.
+class _FakeRuntime:
+    pass
 
-    Silently re-applying it would change how an already-built graph behaves, so
-    the executor refuses instead of returning a stale model.
-    """
+
+class _FakeModelRunner:
+    def __init__(self, user_input):
+        self.user_input = user_input
+        self.model_weight_size_gb = 1.0
+        self.model = object()
+        self.request_info_default = [user_input.get_request_info()]
+
+    def run_inference(self, *, runtime_observer, **_kwargs):
+        runtime_observer(_FakeRuntime())
+        return object()
+
+
+def test_one_executor_supports_multiple_compilation_configs(monkeypatch):
+    applied = []
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda config: applied.append(config))
+
     executor = L1ScenarioExecutor()
-    executor._runners[L1BuildSignature.from_user_config(make_config())] = object()
-    executor._applied_compilation = ()
+    plain = executor.runner(make_config(), compilation_config=())
+    multistream = executor.runner(make_config(), compilation_config=("enable_multistream",))
 
-    with pytest.raises(RuntimeError, match="compilation config changed"):
-        executor._apply_compilation(("enable_fusion",))
+    assert plain is not multistream
+    assert len(executor._runners) == 2
+    assert applied == [(), ("enable_multistream",)]
+
+
+def test_forward_reapplies_compilation_config_after_external_drift(monkeypatch):
+    applied = []
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "Runtime", _FakeRuntime)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda config: applied.append(config))
+
+    executor = L1ScenarioExecutor()
+    compilation = ("enable_multistream",)
+    executor.run(make_config(query_len=32), compilation_config=compilation)
+    l1_scenario_module.apply_compilation_config(("enable_sequence_parallel",))
+    executor.run(make_config(query_len=64), compilation_config=compilation)
+
+    assert applied == [
+        compilation,
+        compilation,
+        ("enable_sequence_parallel",),
+        compilation,
+    ]
 
 
 def test_reset_clears_caches_and_counters():
@@ -320,69 +356,12 @@ def test_reset_clears_caches_and_counters():
     assert executor.counters.build_miss == 0
 
 
-def test_another_executor_cannot_replace_the_applied_compilation_config():
-    """apply_compilation_config is process-global, so the guard cannot be per instance."""
-    owner = L1ScenarioExecutor()
-    other = L1ScenarioExecutor()
+def test_reset_restores_default_compilation_config():
+    executor = L1ScenarioExecutor()
     try:
-        owner._apply_compilation(())
-        owner._runners[L1BuildSignature.from_user_config(make_config())] = object()
-        with pytest.raises(RuntimeError, match="another L1ScenarioExecutor"):
-            other._apply_compilation(("enable_multistream",))
-        assert l1_scenario_module._compilation_claim is not None
-        assert l1_scenario_module._compilation_claim.owners == {owner}
-    finally:
-        owner.reset()
-        other.reset()
-
-
-def test_reset_releases_the_compilation_sentinel_for_a_later_executor():
-    owner = L1ScenarioExecutor()
-    other = L1ScenarioExecutor()
-    try:
-        owner._apply_compilation(("enable_multistream",))
-        owner.reset()
-        assert l1_scenario_module._compilation_claim is None
-        other._apply_compilation(())
-        assert l1_scenario_module._compilation_claim is not None
-        assert l1_scenario_module._compilation_claim.owners == {other}
-        assert l1_scenario_module._compilation_claim.config == ()
-    finally:
-        owner.reset()
-        other.reset()
-
-
-def test_shared_compilation_config_stays_applied_until_every_owner_resets():
-    """One owner resetting must not invalidate another owner's cached runners."""
-    first = L1ScenarioExecutor()
-    second = L1ScenarioExecutor()
-    different = L1ScenarioExecutor()
-    try:
-        config = ("enable_multistream",)
-        first._apply_compilation(config)
-        second._apply_compilation(config)
-
-        claim = l1_scenario_module._compilation_claim
-        assert claim is not None
-        assert claim.config == config
-        assert claim.owners == {first, second}
+        executor._apply_compilation(("enable_multistream",))
         assert tensor_cast_config.compilation.multistream.enable is True
-
-        first.reset()
-
-        claim = l1_scenario_module._compilation_claim
-        assert claim is not None
-        assert claim.config == config
-        assert claim.owners == {second}
-        assert tensor_cast_config.compilation.multistream.enable is True
-        with pytest.raises(RuntimeError, match="another L1ScenarioExecutor"):
-            different._apply_compilation(())
-
-        second.reset()
-        assert l1_scenario_module._compilation_claim is None
-        assert tensor_cast_config.compilation.multistream.enable is False
-        different._apply_compilation(())
     finally:
-        first.reset()
-        second.reset()
-        different.reset()
+        executor.reset()
+
+    assert tensor_cast_config.compilation.multistream.enable is False

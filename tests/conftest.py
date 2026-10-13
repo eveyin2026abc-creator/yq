@@ -50,7 +50,9 @@ def l1_executor():
     Session scope is what makes the reuse worthwhile, since ``ModelRunner``
     builds its own model and does not consult ``session_model_cache``. Tests that
     need to observe build counts from a clean slate should construct their own
-    ``L1ScenarioExecutor`` instead of using this fixture.
+    ``L1ScenarioExecutor`` instead of using this fixture. The cache has no
+    eviction policy; model-dense suites must likewise use a module- or
+    function-local executor and reset it when that shorter reuse window ends.
     """
     from tests.helpers.l1_scenario import L1ScenarioExecutor
 

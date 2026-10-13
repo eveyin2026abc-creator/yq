@@ -35,10 +35,9 @@ SIGNATURE POLICY:
 COMPILATION:
     ``apply_compilation_config`` mutates process-global config and resets absent
     options, so it is part of the build signature rather than of the config.
-    A process-wide sentinel records the config currently applied and every
-    executor that owns it. Another executor applying a different config fails
-    until all owners call ``reset()``. The last owner's ``reset()`` clears the
-    sentinel and restores the global defaults for a non-empty config.
+    Each build and forward re-applies its signature's config. This lets one
+    executor cache scenarios with different compilation configs and repairs
+    drift caused by tests that mutate the same process-global config directly.
 """
 
 from __future__ import annotations
@@ -157,17 +156,6 @@ def _generate_inputs_identity(generate_inputs_func: Callable) -> str:
             f"generate_inputs_func must be a named module-level function, not {type(generate_inputs_func).__name__}"
         )
     return f"{module}.{qualname}"
-
-
-@dataclass
-class _CompilationClaim:
-    """Process-wide owners of the compilation config currently applied."""
-
-    config: tuple[str, ...]
-    owners: set[L1ScenarioExecutor] = field(default_factory=set)
-
-
-_compilation_claim: Optional[_CompilationClaim] = None
 
 
 @dataclass(frozen=True)
@@ -292,15 +280,15 @@ class L1ScenarioExecutor:
     """Build each distinct graph once and run each distinct workload once.
 
     Scope is one executor instance. Tests get a session-scoped instance from the
-    ``l1_executor`` fixture so reuse spans a whole test class or module, and a
-    fresh instance whenever isolation matters more than reuse.
+    ``l1_executor`` fixture so reuse spans a whole worker session. Its caches are
+    unbounded, so model-dense suites should construct a module- or function-local
+    instance and call ``reset()`` when that shorter reuse window ends.
     """
 
     def __init__(self) -> None:
         self._runners: dict[L1BuildSignature, ModelRunner] = {}
         self._runner_baselines: dict[L1BuildSignature, dict[str, Any]] = {}
         self._artifacts: dict[tuple[L1BuildSignature, L1RunSignature], L1RunArtifact] = {}
-        self._applied_compilation: Optional[tuple[str, ...]] = None
         self.counters = L1ExecutionCounters()
 
     def runner(
@@ -355,6 +343,10 @@ class L1ScenarioExecutor:
             return cached
 
         runner = self.runner(user_config, compilation_config=compilation_config)
+        # Compilation options are process-global and other tests can mutate them
+        # without going through this executor. Re-apply immediately before every
+        # forward, including forwards on cached runners.
+        self._apply_compilation(build_signature.compilation_config)
         # run_inference invokes the observer after Runtime.__exit__, so event_list
         # is already populated and the artifact needs no second forward.
         captured: dict[str, object] = {}
@@ -380,60 +372,16 @@ class L1ScenarioExecutor:
 
     def reset(self) -> None:
         """Drop every cached runner and artifact, and reset global compile state."""
-        global _compilation_claim
         self._runners.clear()
         self._runner_baselines.clear()
         self._artifacts.clear()
-        if _compilation_claim is not None and self in _compilation_claim.owners:
-            _compilation_claim.owners.remove(self)
-            if not _compilation_claim.owners:
-                if _compilation_claim.config:
-                    apply_compilation_config(())
-                _compilation_claim = None
-        self._applied_compilation = None
+        apply_compilation_config(())
         self.counters = L1ExecutionCounters()
 
-    def _apply_compilation(self, compilation_config: tuple[str, ...]) -> None:
-        global _compilation_claim
-        claim = _compilation_claim
-        if self._applied_compilation == compilation_config:
-            if claim is None:
-                apply_compilation_config(compilation_config)
-                _compilation_claim = _CompilationClaim(compilation_config, {self})
-            elif claim.config != compilation_config:
-                raise RuntimeError("process compilation config changed outside this L1ScenarioExecutor")
-            else:
-                claim.owners.add(self)
-            return
-        if self._runners and self._applied_compilation not in (None, compilation_config):
-            # Options absent from the new set are reset globally, which would
-            # silently change how already-built graphs behave.
-            raise RuntimeError(
-                "compilation config changed while built models are cached; "
-                "reset this executor before applying a different compilation config"
-            )
-        if claim is not None and claim.config != compilation_config:
-            other_owners = claim.owners - {self}
-            if not other_owners:
-                apply_compilation_config(compilation_config)
-                claim.config = compilation_config
-                claim.owners = {self}
-                self._applied_compilation = compilation_config
-                return
-            # apply_compilation_config resets options that are absent from the
-            # new set. Other executors' cached graphs would change with no local
-            # signal, so the apply fails until every owner releases the config.
-            raise RuntimeError(
-                "compilation config is already applied by another L1ScenarioExecutor; "
-                "reset those executors before applying a different compilation config"
-            )
-        if claim is not None:
-            claim.owners.add(self)
-            self._applied_compilation = compilation_config
-            return
+    @staticmethod
+    def _apply_compilation(compilation_config: tuple[str, ...]) -> None:
+        """Align process-global compilation options for the next operation."""
         apply_compilation_config(compilation_config)
-        self._applied_compilation = compilation_config
-        _compilation_claim = _CompilationClaim(compilation_config, {self})
 
     @staticmethod
     def _snapshot_runner(runner: ModelRunner) -> dict[str, Any]:
