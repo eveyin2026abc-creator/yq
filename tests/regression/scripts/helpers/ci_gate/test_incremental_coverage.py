@@ -43,7 +43,9 @@ class _FakeCoverageData:
 def _write_source(repo: Path) -> Path:
     source = repo / "cli" / "main.py"
     source.parent.mkdir(parents=True)
-    source.write_text("def main():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    return a + b + c + d\n", encoding="utf-8")
+    source.write_text(
+        "def main():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    return a + b + c + d\n", encoding="utf-8"
+    )
     return source
 
 
@@ -129,10 +131,7 @@ def test_import_time_lines_are_removed_from_new_source_denominator(tmp_path: Pat
     source = tmp_path / "cli" / "main.py"
     source.parent.mkdir(parents=True)
     source.write_text(
-        "import os\n\n"
-        "@staticmethod\n"
-        "def current_dir():\n"
-        "    return os.getcwd()\n",
+        "import os\n\n@staticmethod\ndef current_dir():\n    return os.getcwd()\n",
         encoding="utf-8",
     )
     data = _FakeCoverageData(

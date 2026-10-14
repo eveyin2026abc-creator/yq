@@ -80,11 +80,7 @@ def _candidate_lines(
         if not source_path.is_file():
             continue
         executable = ast_utils.filter_test_context_executable_lines(source_path, raw_lines)
-        gated = {
-            line_no
-            for line_no in executable
-            if not _is_exempt_line(source_path, rel_path, line_no, exemptions)
-        }
+        gated = {line_no for line_no in executable if not _is_exempt_line(source_path, rel_path, line_no, exemptions)}
         if gated:
             candidates[rel_path] = frozenset(gated)
     return candidates

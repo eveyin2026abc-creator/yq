@@ -427,10 +427,7 @@ def test_filter_test_context_lines_keeps_only_function_body(tmp_path: Path) -> N
 def test_filter_test_context_lines_maps_multiline_body_to_coverage_start(tmp_path: Path) -> None:
     path = tmp_path / "module.py"
     path.write_text(
-        "def run():\n"
-        "    return call(\n"
-        "        'value',\n"
-        "    )\n",
+        "def run():\n    return call(\n        'value',\n    )\n",
         encoding="utf-8",
     )
 
