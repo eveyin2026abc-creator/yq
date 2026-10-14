@@ -40,6 +40,7 @@ from scripts.helpers.common.ast_utils import (
     coverage_measurable_lines,
     executable_lines_for_canonical_symbol,
     filter_executable_lines,
+    filter_test_context_executable_lines,
     gated_coverage_symbols,
     import_symbol_for_definition,
     iter_canonical_definition_spans,
@@ -401,6 +402,39 @@ def test_filter_syntax_error_file_falls_back_to_text_filter(tmp_path: Path) -> N
     path.write_text("def foo(\n  pass\n", encoding="utf-8")
     result = filter_executable_lines(path, {1, 2})
     assert result == {1, 2}
+
+
+def test_filter_test_context_lines_keeps_only_function_body(tmp_path: Path) -> None:
+    path = tmp_path / "module.py"
+    path.write_text(
+        "import os\n"
+        "MODULE_VALUE = os.getcwd()\n\n"
+        "@decorator(\n"
+        "    'value'\n"
+        ")\n"
+        "def run(\n"
+        "    enabled: bool,\n"
+        "):\n"
+        "    if enabled:\n"
+        "        return os.getcwd()\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+
+    assert filter_test_context_executable_lines(path, set(range(1, 13))) == {10, 11, 12}
+
+
+def test_filter_test_context_lines_maps_multiline_body_to_coverage_start(tmp_path: Path) -> None:
+    path = tmp_path / "module.py"
+    path.write_text(
+        "def run():\n"
+        "    return call(\n"
+        "        'value',\n"
+        "    )\n",
+        encoding="utf-8",
+    )
+
+    assert filter_test_context_executable_lines(path, {3, 4}) == {2}
 
 
 # ---------------------------------------------------------------------------

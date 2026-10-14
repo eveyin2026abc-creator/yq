@@ -79,7 +79,7 @@ def _candidate_lines(
         source_path = repo_root / rel_path
         if not source_path.is_file():
             continue
-        executable = ast_utils.filter_executable_lines(source_path, raw_lines)
+        executable = ast_utils.filter_test_context_executable_lines(source_path, raw_lines)
         gated = {
             line_no
             for line_no in executable

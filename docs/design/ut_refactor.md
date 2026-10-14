@@ -433,7 +433,7 @@ The complete environment variable list lives in `tests/README.md`. The design do
 | `MSMODELING_TEST_MAP_PATH` | Required for ci_gate and nightly | Absolute path to external `test_map` JSON file; must exist for ci_gate; created by nightly phase 1 on success |
 | `MSMODELING_TEST_BASE_BRANCH` | Optional | Default `master`; used for `git merge-base HEAD $MSMODELING_TEST_BASE_BRANCH` |
 | `MSMODELING_TEST_LINE_THRESHOLD` / `MSMODELING_TEST_BRANCH_THRESHOLD` | Optional | Whole-repository nightly thresholds. Helper default **80** / **40**; `run_nightly.sh` exports **80** / **60** |
-| `MSMODELING_TEST_DIFF_LINE_THRESHOLD` | Optional | PR incremental threshold, default **80**. Applies only to added or modified executable product lines collected by `run_ci_gate.sh` |
+| `MSMODELING_TEST_DIFF_LINE_THRESHOLD` | Optional | PR incremental threshold, default **80**. Applies to added or modified executable function/method body lines collected by `run_ci_gate.sh`; import-time module/class lines, definition headers, decorators, comments, docstrings, and type-only lines are excluded |
 | `MSMODELING_BENCHMARK_PARALLEL` | Optional | Default `0`; set `1` for benchmark `-n auto` |
 | `MSMODELING_OFFLINE` | CI recommends `1` | Enables Hub offline triplet through `tests/conftest.py` |
 | `MSMODELING_TEST_WEIGHTS_PRUNE` | Optional | Default `0`; prunes weight shards after session |
