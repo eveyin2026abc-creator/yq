@@ -106,7 +106,7 @@ class Config(BaseSettings):
 
     test_map_path: str | None = Field(default=None, validation_alias="MSMODELING_TEST_MAP_PATH")
     base_branch: str = Field(default=DEFAULT_BASE_BRANCH, validation_alias="MSMODELING_TEST_BASE_BRANCH")
-    line_threshold: float = Field(default=60.0, validation_alias="MSMODELING_TEST_LINE_THRESHOLD")
+    line_threshold: float = Field(default=80.0, validation_alias="MSMODELING_TEST_LINE_THRESHOLD")
     branch_threshold: float = Field(default=40.0, validation_alias="MSMODELING_TEST_BRANCH_THRESHOLD")
     benchmark_parallel: bool = Field(default=False, validation_alias="MSMODELING_BENCHMARK_PARALLEL")
     feishu_webhook_url: str = Field(default="", validation_alias="FEISHU_WEBHOOK_URL")
@@ -163,7 +163,7 @@ class Config(BaseSettings):
     @classmethod
     def _parse_line_threshold(cls, value: object, info: ValidationInfo) -> float:
         field_name = info.field_name or "line_threshold"
-        return _parse_float_env(value, default=60.0, field=_FIELD_ENV_KEYS[field_name])
+        return _parse_float_env(value, default=80.0, field=_FIELD_ENV_KEYS[field_name])
 
     @field_validator("branch_threshold", mode="before")
     @classmethod

@@ -47,7 +47,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_from_env_all_optional_vars_use_fallbacks() -> None:
     cfg = Config.from_env()
     assert cfg.base_branch == "master"
-    assert cfg.line_threshold == 60.0
+    assert cfg.line_threshold == 80.0
     assert cfg.branch_threshold == 40.0
     assert cfg.benchmark_parallel is False
     assert cfg.feishu_webhook_url == ""

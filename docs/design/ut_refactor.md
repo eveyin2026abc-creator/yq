@@ -215,7 +215,7 @@ Shell scripts are the unified entry point for CodeArts build tasks and local deb
 | `run_regression.sh` | Full `tests/regression/`; same as smoke | — |
 | `run_ci_gate.sh` | Incremental smoke and regression via external `test_map` | Plan-first: pre-run policy, deduplicated pytest waves; no `--cov` |
 | `run_benchmark.sh` | Full `tests/benchmark/`, marker `not npu and not network`, optional `-n auto` when `MSMODELING_BENCHMARK_PARALLEL=1` | — |
-| `run_nightly.sh` | Four-phase nightly pipeline via `scripts/helpers/nightly/main.py` | Phase 1: `--cov`; 60/40 thresholds in report |
+| `run_nightly.sh` | Four-phase nightly pipeline via `scripts/helpers/nightly/main.py` | Phase 1: `--cov`; line 80 / branch 60 thresholds in report |
 
 Local developers run `run_smoke.sh` and `run_regression.sh` directly. CI PR incremental runs use `run_ci_gate.sh` with `MSMODELING_TEST_MAP_PATH` pointing to the runner-maintained JSON file.
 
@@ -432,7 +432,7 @@ The complete environment variable list lives in `tests/README.md`. The design do
 |------|----------|------|
 | `MSMODELING_TEST_MAP_PATH` | Required for ci_gate and nightly | Absolute path to external `test_map` JSON file; must exist for ci_gate; created by nightly phase 1 on success |
 | `MSMODELING_TEST_BASE_BRANCH` | Optional | Default `master`; used for `git merge-base HEAD $MSMODELING_TEST_BASE_BRANCH` |
-| `MSMODELING_TEST_LINE_THRESHOLD` / `MSMODELING_TEST_BRANCH_THRESHOLD` | Optional | Default **60** / **40**; nightly coverage report |
+| `MSMODELING_TEST_LINE_THRESHOLD` / `MSMODELING_TEST_BRANCH_THRESHOLD` | Optional | Helper default **80** / **40**. `run_nightly.sh` exports **80** / **60**. Line coverage below 80% fails the gate |
 | `MSMODELING_BENCHMARK_PARALLEL` | Optional | Default `0`; set `1` for benchmark `-n auto` |
 | `MSMODELING_OFFLINE` | CI recommends `1` | Enables Hub offline triplet through `tests/conftest.py` |
 | `MSMODELING_TEST_WEIGHTS_PRUNE` | Optional | Default `0`; prunes weight shards after session |
@@ -516,7 +516,7 @@ Build jobs depend on Python 3.9 or higher, pytest, and coverage packages from pr
 | Incremental CI gate duration | — | ≤ 180 s | Duration of `run_ci_gate.sh` on typical PR diffs |
 | Single full regression duration | — | ≤ 300 s | Duration of `run_regression.sh` |
 | Number of >300 s test cases | 15 | ≤ 3 | pytest `--durations=20` |
-| UT line coverage | 74% | ≥ 60% reported, 80% aspirational for new code | nightly phase 1 report |
+| UT line coverage | 74% | ≥ 80% | nightly phase 1 report |
 | UT branch coverage | 61.8% | ≥ 40% reported | nightly phase 1 report |
 
 Parallelism uses `pytest -n auto` for all UT entry scripts; benchmark stays sequential unless `MSMODELING_BENCHMARK_PARALLEL=1`.
