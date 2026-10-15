@@ -37,7 +37,9 @@ from tensor_cast.compilation.passes.sequence_parallel_pass import (
 )
 from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.model_config import WordEmbeddingTPMode
@@ -87,8 +89,12 @@ class SequenceParallelPassTestCase(unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(
+                user_input,
+                generate_inputs_func=generate_inputs,
+                compilation_config=["enable_sequence_parallel"],
+            ).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
 

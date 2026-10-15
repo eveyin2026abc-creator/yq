@@ -22,9 +22,11 @@ import torch
 from parameterized import parameterized
 from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 
 
 @pytest.mark.nightly
@@ -56,8 +58,12 @@ class MatmulAllReducePassTestCase(unittest.TestCase):
 
     def test_qwen3_fp_matmul_allreduce_fused(self):
         user_input = self._base_user_config(QuantizeLinearAction.DISABLED)
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(
+                user_input,
+                generate_inputs_func=generate_inputs,
+                compilation_config=["enable_matmul_allreduce"],
+            ).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         self.assertIn("tensor_cast.matmul_all_reduce.default", result["table_result"])
@@ -84,8 +90,12 @@ class MatmulAllReducePassTestCase(unittest.TestCase):
     )
     def test_qwen3_quant_matmul_allreduce_fused(self, quant_action: QuantizeLinearAction, expected_op):
         user_input = self._base_user_config(quant_action)
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(
+                user_input,
+                generate_inputs_func=generate_inputs,
+                compilation_config=["enable_matmul_allreduce"],
+            ).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         self.assertIn(expected_op, result["table_result"])

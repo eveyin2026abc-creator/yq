@@ -23,7 +23,9 @@ from unittest import mock
 import pytest
 import torch
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo
@@ -205,8 +207,8 @@ class TestKimiK3(unittest.TestCase):
             moe_dp_size=1,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
         self._validate_inference_result(result, "test_kimi_k3_text_prefill")
@@ -245,8 +247,8 @@ class TestKimiK3(unittest.TestCase):
             decode=True,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
         self._validate_inference_result(result, "test_kimi_k3_text_decode")
@@ -305,7 +307,8 @@ class TestKimiK3(unittest.TestCase):
             image_width=1920,
         )
 
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
 
         # Verify the model is correctly identified as a VLM
         self.assertTrue(
@@ -402,7 +405,8 @@ class TestKimiK3(unittest.TestCase):
             decode=True,
         )
 
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
 
         # Verify the model is correctly identified as a VLM
         self.assertTrue(

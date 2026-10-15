@@ -299,10 +299,11 @@ def tiny_glm5_next_path(tmp_path):
 
 @pytest.mark.parametrize("tp,query_len,context", [(1, 1, 32), (2, 1, 32), (1, 7, 0)])
 def test_glm5_next_model_compiled_semantic_coverage(tiny_glm5_next_path, tp, query_len, context):
-    from tensor_cast.core.model_runner import ModelRunner
     from tensor_cast.core.input_generator import generate_inputs
     from tensor_cast.core.user_config import UserInputConfig
     from tensor_cast.device import TEST_DEVICE
+
+    from tests.helpers.l1_scenario import isolated_l1_executor
 
     user = UserInputConfig(
         model_id=tiny_glm5_next_path,
@@ -314,7 +315,8 @@ def test_glm5_next_model_compiled_semantic_coverage(tiny_glm5_next_path, tp, que
         query_len=query_len,
         context_length=context,
     )
-    runner = ModelRunner(user)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user)
     inputs = generate_inputs(runner.model, runner.request_info_default)
     assert inputs["kv_cache_by_layers"][0].dtype == torch.uint8
     assert inputs["kv_cache_by_layers"][0].shape[0] == 2
@@ -337,8 +339,9 @@ def test_glm5_next_model_compiled_semantic_coverage(tiny_glm5_next_path, tp, que
 
 @pytest.mark.parametrize("num_mtp_tokens,tp,fp8", [(1, 1, False), (3, 2, True)])
 def test_glm5_next_mtp_compiled_nope_path(tiny_glm5_next_path, num_mtp_tokens, tp, fp8):
-    from tensor_cast.core.model_runner import ModelRunner
     from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
+
+    from tests.helpers.l1_scenario import isolated_l1_executor
     from tensor_cast.core.user_config import UserInputConfig
     from tensor_cast.device import TEST_DEVICE
 
@@ -355,7 +358,8 @@ def test_glm5_next_mtp_compiled_nope_path(tiny_glm5_next_path, num_mtp_tokens, t
         query_len=1,
         context_length=32,
     )
-    runner = ModelRunner(user)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user)
     assert runner.model._inner.rotary_emb is None
     result = runner.run_inference()
     indexer_event = next(
@@ -404,8 +408,9 @@ def test_glm5_next_hc_mtp_normalizes_decoder_output(returns_tuple):
 
 def test_glm5_next_visual_tp_compile(tiny_glm5_next_path):
     from tensor_cast.core.input_generator import generate_inputs
-    from tensor_cast.core.model_runner import ModelRunner
     from tensor_cast.core.user_config import UserInputConfig
+
+    from tests.helpers.l1_scenario import isolated_l1_executor
     from tensor_cast.device import TEST_DEVICE
 
     user = UserInputConfig(
@@ -422,7 +427,8 @@ def test_glm5_next_visual_tp_compile(tiny_glm5_next_path):
         image_height=28,
         image_width=28,
     )
-    runner = ModelRunner(user)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user)
     inputs = generate_inputs(runner.model, runner.request_info_default)
     # GLM5Next's official resize policy has a 16-token minimum.  A 28x28
     # image is therefore resized to 112x112, yielding an 8x8 patch grid.

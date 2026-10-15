@@ -1523,8 +1523,10 @@ class TestDflashVarlenEndToEnd(unittest.TestCase):
     @staticmethod
     def _run_mixed_varlen(do_compile: bool):
         from tensor_cast.core.input_generator import RequestInfo, generate_inputs_varlen
-        from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+        from tensor_cast.core.model_runner import ModelRunnerMetrics
         from tensor_cast.core.user_config import UserInputConfig
+
+        from tests.helpers.l1_scenario import isolated_l1_executor
 
         config = UserInputConfig(
             model_id="tests/assets/model_config/qwen3_dense_0_6b",
@@ -1538,7 +1540,8 @@ class TestDflashVarlenEndToEnd(unittest.TestCase):
             num_speculative_tokens=2,
             num_draft_layers=1,
         )
-        runner = ModelRunner(config)
+        with isolated_l1_executor() as executor:
+            runner = executor.runner(config)
         requests = [
             RequestInfo(query_len=3, seq_len=16, is_decode=True),
             RequestInfo(query_len=2, seq_len=8, is_decode=False),

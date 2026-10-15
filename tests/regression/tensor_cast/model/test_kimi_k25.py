@@ -21,9 +21,11 @@ from typing import Union
 import pytest
 import torch
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 
 
 @pytest.mark.nightly
@@ -136,8 +138,8 @@ class TestKimiK25(unittest.TestCase):
             enable_dispatch_ffn_combine=False,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
         self._validate_inference_result(result, "test_kimi_k25_text_only_generation")
@@ -190,7 +192,8 @@ class TestKimiK25(unittest.TestCase):
             decode=True,
         )
 
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
 
         # Verify the model is correctly identified as a VLM
         self.assertTrue(model_runner.model.is_vl_model, msg="Kimi K2.5 should be identified as a vision-language model")
@@ -266,8 +269,8 @@ class TestKimiK25(unittest.TestCase):
             enable_dispatch_ffn_combine=False,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
         self._validate_inference_result(result, "test_kimi_k25_long_context_text_generation")
@@ -325,7 +328,8 @@ class TestKimiK25(unittest.TestCase):
             image_width=1920,
         )
 
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
 
         # Verify the model is correctly identified as a VLM
         self.assertTrue(model_runner.model.is_vl_model, msg="Kimi K2.5 should be identified as a vision-language model")
@@ -398,8 +402,8 @@ class TestKimiK25(unittest.TestCase):
             num_mtp_tokens=3,
         )
 
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
         self._validate_inference_result(result, "test_kimi_k25_text_only_decode_with_mtp")
@@ -454,7 +458,8 @@ class TestKimiK25(unittest.TestCase):
             num_mtp_tokens=3,
         )
 
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
 
         # Verify the model is correctly identified as a VLM
         self.assertTrue(model_runner.model.is_vl_model, msg="Kimi K2.5 should be identified as a vision-language model")

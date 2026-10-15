@@ -67,6 +67,8 @@ Until both are approved, later pull requests must not move node ids. The next co
 
 ## Code already on this branch
 
+`isolated_l1_executor()` is the one-case entry. `test_text_generate.py`, the Kimi K2.5 / K3 cases, GLM5-Next compile cases, the VL compile case, the matmul-allreduce and sequence-parallel pass cases, the DFC model runs, the DFlash varlen run, and the serving optimizer factory now build through it. Pass flags that the executor would otherwise clear are passed back in `compilation_config`. Node ids are unchanged.
+
 `tests/regression/tensor_cast/test_text_generate.py` now runs its cases through `L1ScenarioExecutor`. Metric-only cases and model inspections use the class executor (`_run_shared`, `_shared_runner`). Compile cases and the expected-failure device case use `_isolated_executor`, so a compiled runner is not kept across `torch.compiler.reset()`. Node ids are unchanged.
 
 `tests/helpers/l2_artifacts.py` adds the seven synthetic L2 builders: quant, parallel, FX, runtime event, diagnostics, replay, and microbench. They do not accept a model identity. `tests/helpers/l3_contracts.py` adds the pure exit-code, exception, and default contracts. `tests/helpers/layer_guard.py` scans an L2 module for `ModelRunner`, `build_model`, `TransformerModel`, and `model_id`. The scanner is covered by tests and is not wired into `run_ci_gate.sh`. Diagnostics e2e cases still build through `capture_artifact_for_profile`.
