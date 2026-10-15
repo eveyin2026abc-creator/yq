@@ -18,6 +18,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from dataclasses import asdict
 from io import StringIO
 from pathlib import Path
@@ -69,6 +70,20 @@ class TextGenerateTestMixin:
     def _shared_runner(self, user_input):
         """Return the class executor's runner without counting another forward."""
         return self._l1_executor.runner(user_input)
+
+    @contextmanager
+    def _isolated_executor(self):
+        """One executor for a compile or expected-failure case.
+
+        ``setUp`` resets the compiler before every test. A compiled runner kept
+        on the class executor would outlive that reset, so those cases get a
+        fresh executor and drop it before the next test.
+        """
+        executor = L1ScenarioExecutor()
+        try:
+            yield executor
+        finally:
+            executor.reset()
 
     def _validate_inference_result(self, result: Union[dict, ModelRunnerMetrics], test_name: str = ""):
         """Validate the result from run_inference.
@@ -832,8 +847,8 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
         new = UserInputConfig(**common, speculative_method="mtp", num_speculative_tokens=2)
         self.assertEqual(new.num_mtp_tokens, 2)
 
-        legacy_result = ModelRunner(legacy).run_inference(generate_inputs_func=generate_inputs)
-        new_result = ModelRunner(new).run_inference(generate_inputs_func=generate_inputs)
+        legacy_result = self._run_shared(legacy)
+        new_result = self._run_shared(new)
 
         self.assertAlmostEqual(
             legacy_result.execution_time_s["analytic"],
@@ -967,8 +982,8 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
                 allow_graph_break=False,
                 quantize_linear_action=QuantizeLinearAction.DISABLED,
             )
-            model_runner = ModelRunner(user_input)
-            model_runner.run_inference(generate_inputs_func=generate_inputs)
+            with self._isolated_executor() as executor:
+                executor.run(user_input, generate_inputs_func=generate_inputs)
 
     def test_large_batch_size(self):
         """Test with large batch size."""
@@ -1054,7 +1069,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             tp_size=2,
             word_embedding_tp=embedding_tp_mode,
         )
-        model_runner = ModelRunner(user_input)
+        model_runner = self._shared_runner(user_input)
         embedding_layers = [module for module in model_runner.model.modules() if isinstance(module, ParallelEmbedding)]
         self.assertGreaterEqual(
             len(embedding_layers),
@@ -1074,7 +1089,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             self.assertGreaterEqual(sharded_vocab * embedding_layer.tp_size, embedding_layer.num_embeddings)
             self.assertLess(embedding_layer._row_start, embedding_layer._row_end)
             self.assertLessEqual(embedding_layer._row_end, embedding_layer._vocab_size)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, f"test_word_embedding_parallel_{embedding_tp_mode}")
 
     def test_qwen3_32b_tp16(self):
@@ -1163,7 +1178,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
+        model_runner = self._shared_runner(user_input)
         self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
         input_kwargs = generate_inputs(
             model_runner.model,
@@ -1183,7 +1198,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
         query_len = input_kwargs.get("attention_meta").query_lens[0].item()
         self.assertEqual(query_len, num_image_tokens + user_input.query_len)
         self.assertIn("pixel_values", input_kwargs)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_qwen3_vl_with_basic_prefill")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1201,7 +1216,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
+        model_runner = self._shared_runner(user_input)
         self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
         input_kwargs = generate_inputs(
             model_runner.model,
@@ -1209,7 +1224,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             block_size=user_input.block_size,
         )
         self.assertNotIn("pixel_values", input_kwargs)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_qwen3_vl_without_img_prefill")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1231,7 +1246,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             decode=True,
         )
-        model_runner = ModelRunner(user_input)
+        model_runner = self._shared_runner(user_input)
         self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
         input_kwargs = generate_inputs(
             model_runner.model,
@@ -1251,7 +1266,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
         query_len = input_kwargs.get("attention_meta").query_lens[0].item()
         self.assertEqual(query_len, user_input.query_len)
         self.assertNotIn("pixel_values", input_kwargs)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_qwen3_vl_decode_mode")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1284,7 +1299,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             moe_dp_size=1 if ep else 2,
             moe_tp_size=1,
         )
-        model_runner = ModelRunner(user_input)
+        model_runner = self._shared_runner(user_input)
         self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
         input_kwargs = generate_inputs(
             model_runner.model,
@@ -1292,7 +1307,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             block_size=user_input.block_size,
         )
         self.assertIn("pixel_values", input_kwargs)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_qwen3_vl_with_basic_prefill")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1508,9 +1523,6 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             world_size=4,
             tp_size=4,
         )
-        model_runner_a3 = ModelRunner(user_input_a3)
-        result_a3 = model_runner_a3.run_inference(generate_inputs_func=generate_inputs)
-        self._validate_inference_result(result_a3)
         user_input_a2 = UserInputConfig(
             device="ATLAS_800_A2_376T_64G",
             model_id="Qwen/Qwen3-32B",
@@ -1523,8 +1535,10 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             world_size=4,
             tp_size=4,
         )
-        model_runner_a2 = ModelRunner(user_input_a2)
-        result_a2 = model_runner_a2.run_inference(generate_inputs_func=generate_inputs)
+        with self._isolated_executor() as executor:
+            result_a3 = executor.run(user_input_a3, generate_inputs_func=generate_inputs).metrics
+            result_a2 = executor.run(user_input_a2, generate_inputs_func=generate_inputs).metrics
+        self._validate_inference_result(result_a3)
         self._validate_inference_result(result_a2)
         if isinstance(result_a3, ModelRunnerMetrics):
             result_a3 = asdict(result_a3)
@@ -1552,9 +1566,6 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             world_size=8,
             tp_size=8,
         )
-        model_runner_a3 = ModelRunner(user_input_a3)
-        result_a3 = model_runner_a3.run_inference(generate_inputs_func=generate_inputs)
-        self._validate_inference_result(result_a3)
         user_input_a2 = UserInputConfig(
             device="ATLAS_800_A2_376T_64G",
             model_id="Qwen/Qwen3-32B",
@@ -1567,8 +1578,10 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             world_size=8,
             tp_size=8,
         )
-        model_runner_a2 = ModelRunner(user_input_a2)
-        result_a2 = model_runner_a2.run_inference(generate_inputs_func=generate_inputs)
+        with self._isolated_executor() as executor:
+            result_a3 = executor.run(user_input_a3, generate_inputs_func=generate_inputs).metrics
+            result_a2 = executor.run(user_input_a2, generate_inputs_func=generate_inputs).metrics
+        self._validate_inference_result(result_a3)
         self._validate_inference_result(result_a2)
         if isinstance(result_a3, ModelRunnerMetrics):
             result_a3 = asdict(result_a3)
@@ -1656,15 +1669,16 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             moe_dp_size=1,
             moe_tp_size=1,
         )
-        model_runner = ModelRunner(user_input)
-        self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
-        input_kwargs = generate_inputs(
-            model_runner.model,
-            model_runner.request_info_default,
-            block_size=user_input.block_size,
-        )
-        self.assertIn("pixel_values", input_kwargs)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with self._isolated_executor() as executor:
+            model_runner = executor.runner(user_input)
+            self.assertTrue(model_runner.model.is_vl_model, msg="Model should be vl model")
+            input_kwargs = generate_inputs(
+                model_runner.model,
+                model_runner.request_info_default,
+                block_size=user_input.block_size,
+            )
+            self.assertIn("pixel_values", input_kwargs)
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
         self._validate_inference_result(result, "test_vl_moe_tp_ep_different_parallel")
 
     @parameterized.expand(

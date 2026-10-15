@@ -67,7 +67,9 @@ Until both are approved, later pull requests must not move node ids. The next co
 
 ## Code already on this branch
 
-`tests/regression/tensor_cast/test_text_generate.py` now runs its single-model cases through one `L1ScenarioExecutor` per test class. Cases that only need metrics call `_run_shared`. Cases that inspect `runner.model` still construct `ModelRunner` directly. Node ids are unchanged.
+`tests/regression/tensor_cast/test_text_generate.py` now runs its cases through `L1ScenarioExecutor`. Metric-only cases and model inspections use the class executor (`_run_shared`, `_shared_runner`). Compile cases and the expected-failure device case use `_isolated_executor`, so a compiled runner is not kept across `torch.compiler.reset()`. Node ids are unchanged.
+
+`tests/helpers/l2_artifacts.py` adds the seven synthetic L2 builders: quant, parallel, FX, runtime event, diagnostics, replay, and microbench. They do not accept a model identity. `tests/helpers/l3_contracts.py` adds the pure exit-code, exception, and default contracts. `tests/helpers/layer_guard.py` scans an L2 module for `ModelRunner`, `build_model`, `TransformerModel`, and `model_id`. The scanner is covered by tests and is not wired into `run_ci_gate.sh`. Diagnostics e2e cases still build through `capture_artifact_for_profile`.
 
 `tests/helpers/l1_qwen.py` and `tests/regression/tensor_cast/test_l1_qwen.py` cover the reuse contract on Qwen3-32B with `num_hidden_layers_override=1`:
 
