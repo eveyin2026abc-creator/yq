@@ -71,7 +71,7 @@ def test_run_pytest_invokes_subprocess_for_targets(
         captured.append(cmd)
         return FakeCompleted(0, "", "")
 
-    monkeypatch.setattr("scripts.helpers.ci_gate.main.subprocess.run", _fake_run)
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._execute_pytest", _fake_run)
     monkeypatch.setattr(
         "scripts.helpers.ci_gate.main.count_collected_tests",
         lambda *_args, **_kwargs: 2,
@@ -117,7 +117,7 @@ def test_run_pytest_node_targets_filter_via_collect_only(
     monkeypatch.setattr("scripts.helpers.ci_gate.main.filter_collectable_node_ids", _fake_collect)
     monkeypatch.setattr("scripts.helpers.ci_gate.main.build_pytest_cmd", _fake_build)
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.main.subprocess.run",
+        "scripts.helpers.ci_gate.main._execute_pytest",
         lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
     )
 
@@ -154,7 +154,7 @@ def test_run_pytest_stale_node_targets_skip_wave(
         return FakeCompleted(0, "", "")
 
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.main.subprocess.run",
+        "scripts.helpers.ci_gate.main._execute_pytest",
         _fake_run,
     )
 
@@ -175,7 +175,7 @@ def test_run_pytest_stale_node_targets_log_skipped(
         lambda *_args, **_kwargs: ("tests/regression/cli/test_a.py::test_a",),
     )
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.main.subprocess.run",
+        "scripts.helpers.ci_gate.main._execute_pytest",
         lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
     )
     monkeypatch.setattr(
@@ -210,7 +210,7 @@ def test_run_pytest_adds_cov_args_when_requested(
 
     monkeypatch.setattr("scripts.helpers.ci_gate.main.build_pytest_cmd", _fake_build)
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.main.subprocess.run",
+        "scripts.helpers.ci_gate.main._execute_pytest",
         lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
     )
     monkeypatch.setattr(
@@ -238,7 +238,7 @@ def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr("scripts.helpers.ci_gate.main.build_pytest_cmd", _fake_build)
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.main.subprocess.run",
+        "scripts.helpers.ci_gate.main._execute_pytest",
         lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
     )
     monkeypatch.setattr(
@@ -259,7 +259,7 @@ def test_run_pytest_full_suite_marker_uses_not_npu_only(
         captured.append(cmd)
         return FakeCompleted(0, "", "")
 
-    monkeypatch.setattr("scripts.helpers.ci_gate.main.subprocess.run", _fake_run)
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._execute_pytest", _fake_run)
     monkeypatch.setattr(
         "scripts.helpers.ci_gate.main.count_collected_tests",
         lambda *_args, **_kwargs: 1,

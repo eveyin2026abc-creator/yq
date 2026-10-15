@@ -373,7 +373,12 @@ def _run_pytest(
         extra_args=extra_args,
     )
     logger.info("Running pytest: %s", shlex.join(cmd))
-    return subprocess.run(cmd, cwd=REPO_ROOT, check=False).returncode
+    return _execute_pytest(cmd).returncode
+
+
+def _execute_pytest(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    """Execute one planned pytest command without exposing shared subprocess state to tests."""
+    return subprocess.run(cmd, cwd=REPO_ROOT, check=False, text=True)
 
 
 def _sample_nodes(nodes: tuple[str, ...], limit: int = _SAMPLE_NODE_LIMIT) -> str:
