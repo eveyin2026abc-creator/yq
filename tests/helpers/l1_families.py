@@ -29,14 +29,21 @@ FAMILY_MODEL_IDS = {
     "qwen3_dense": "tests/assets/model_config/qwen3_dense_0_6b",
     "qwen3_moe": "tests/assets/model_config/qwen3_moe_30b_a3b",
     "qwen3_vl": "tests/assets/model_config/qwen3_vl_8b_instruct",
+    "qwen3_vl_moe": "tests/assets/model_config/qwen3_vl_moe_235b_a22b",
     "qwen3_5": "tests/assets/model_config/qwen3_5_27b",
+    "qwen3_5_moe": "tests/assets/model_config/qwen3_5_moe_397b_a17b",
+    "qwen3_next": "tests/assets/model_config/qwen3_next_80b_a3b",
     "deepseek_v3": "tests/assets/model_config/deepseek_v3",
+    "deepseek_v32": "tests/assets/model_config/deepseek_v32",
     "deepseek_v4": "tests/assets/model_config/deepseek_v4_flash",
     "glm5": "tests/assets/model_config/glm5_1",
     "glm4": "tests/assets/model_config/glm4_7",
+    "glm4v": "tests/assets/model_config/glm4v_9b_thinking",
+    "glm4v_moe": "tests/assets/model_config/glm4v_moe_4_5v",
     "minimax_m2": "tests/assets/model_config/minimax_m2",
     "mimo_v2": "tests/assets/model_config/mimo_v2_flash",
     "ling": "tests/assets/model_config/ling_flash_2_0",
+    "kimi_k25": "tests/assets/model_config/kimi_k2_5",
 }
 
 
