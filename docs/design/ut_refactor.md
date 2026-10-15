@@ -70,6 +70,8 @@ When adding a new `@pytest.mark.nightly` case, a smoke counterpart should be add
 
 Model identity belongs to L1. One L1 scenario should carry numeric, structural, and capability assertions together when they activate the same graph and workload; that path is `tests/helpers/l1_scenario.py`. L2 never repeats an L1 output. L3 checks a smaller pure contract.
 
+The node register for that migration is [`ut_refactor_implementation_plan.md`](ut_refactor_implementation_plan.md) and [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx). It records the collected node id and a proposed layer. It does not move, merge, or delete tests. Migration code waits until the build-signature contract and the family assertion matrix in that plan are approved.
+
 **Subsequent Maintenance**
 
 1. New cases are placed by directory first. Model guardianship goes to `tests/benchmark/models/`; operator guardianship goes to `tests/benchmark/ops/`. High-duration regression paths receive `@pytest.mark.nightly` and a smoke guard. NPU dependencies receive `@pytest.mark.npu`.
