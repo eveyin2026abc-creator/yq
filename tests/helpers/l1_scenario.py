@@ -44,9 +44,10 @@ from __future__ import annotations
 
 import dataclasses
 import types
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 from enum import Enum
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 
 from torch import nn
 
@@ -274,6 +275,20 @@ class L1ExecutionCounters:
     def record_forward(self, signature: L1BuildSignature) -> None:
         self.forward_count += 1
         self.forwards_by_build[signature] = self.forwards_by_build.get(signature, 0) + 1
+
+
+@contextmanager
+def isolated_l1_executor() -> Iterator[L1ScenarioExecutor]:
+    """One executor for a single case, dropped before the next test.
+
+    Compile cases call ``torch.compiler.reset()`` in ``setUp``. A runner kept
+    on a class executor would outlive that reset.
+    """
+    executor = L1ScenarioExecutor()
+    try:
+        yield executor
+    finally:
+        executor.reset()
 
 
 class L1ScenarioExecutor:

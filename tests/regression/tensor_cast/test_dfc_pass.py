@@ -31,7 +31,9 @@ from tensor_cast.compilation.freezing_passes.dispatch_ffn_combine_pass import (
 from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.config_resolver import ConfigResolver
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import TEST_DEVICE
@@ -125,8 +127,8 @@ class DfcPassTestMixin:
             quantize_linear_action=quantize_linear_action,
             enable_dispatch_ffn_combine=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         # Any DFC variant should be present (quant variant depends on model config)
@@ -194,8 +196,8 @@ class DfcPassTestMixin:
             ),
             enable_dispatch_ffn_combine=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
 
@@ -225,8 +227,8 @@ class DfcPassTestMixin:
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
             enable_dispatch_ffn_combine=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
 

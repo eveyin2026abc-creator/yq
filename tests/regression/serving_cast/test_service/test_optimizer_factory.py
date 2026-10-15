@@ -19,8 +19,9 @@ import unittest
 from serving_cast.service.agg_throughput_optimizer import AggThroughputOptimizer
 from serving_cast.service.disagg_throughput_optimizer import DisaggThroughputOptimizer
 from serving_cast.service.optimizer_factory import OptimizerFactory
-from tensor_cast.core.model_runner import ModelRunner
 from tensor_cast.core.user_config import UserInputConfig
+
+from tests.helpers.l1_scenario import isolated_l1_executor
 
 from .test_common import SimpleArgs
 
@@ -33,7 +34,8 @@ class TestStrategyFactory(unittest.TestCase):
     def test_create_aggregation_optimizer(self):
         """Test creating aggregation strategy"""
         user_input = UserInputConfig.from_args(self.args)
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
         strategy = OptimizerFactory.create_strategy(model_runner)
 
         self.assertIsInstance(strategy, AggThroughputOptimizer)
@@ -43,7 +45,8 @@ class TestStrategyFactory(unittest.TestCase):
         """Test creating disaggregation strategy"""
         self.args.disagg = True
         user_input = UserInputConfig.from_args(self.args)
-        model_runner = ModelRunner(user_input)
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(user_input)
         strategy = OptimizerFactory.create_strategy(model_runner, True)
 
         self.assertIsInstance(strategy, DisaggThroughputOptimizer)
