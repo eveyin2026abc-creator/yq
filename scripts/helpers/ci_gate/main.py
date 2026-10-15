@@ -608,10 +608,22 @@ def _incremental_coverage_exit_code(
     suffix = f"\n  ... and {remaining} more" if remaining > 0 else ""
     return (
         1,
-        (
-            f"CI gate failed: incremental line coverage {summary.percent:.1f}% "
-            f"({summary.covered}/{summary.total}) < {threshold:.1f}%.\n"
-            f"Uncovered changed executable lines:\n{shown}{suffix}"
+        "\n".join(
+            [
+                (
+                    f"CI gate failed: incremental line coverage {summary.percent:.1f}% "
+                    f"({summary.covered}/{summary.total}) < {threshold:.1f}%."
+                ),
+                f"Uncovered changed executable lines:\n{shown}{suffix}",
+                "",
+                "Next steps:",
+                "  1. Add or update a relevant pytest test in this PR, and cover enough lines",
+                f"     listed above to reach the {threshold:.1f}% threshold.",
+                "  2. If this PR changes product code only, ensure an existing mapped test",
+                "     exercises the changed symbol.",
+                "  3. Only when a symbol cannot run in CI, request an approved, time-bounded",
+                "     exemptions.sources entry in tests/.ci/gate_policy.yaml.",
+            ]
         ),
     )
 

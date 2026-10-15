@@ -86,6 +86,10 @@ def test_incremental_coverage_threshold(
         assert message is not None
         assert "60.0% (3/5) < 80.0%" in message
         assert "cli/main.py:5" in message
+        assert "Next steps:" in message
+        assert "cover enough lines" in message
+        assert "reach the 80.0% threshold" in message
+        assert "exemptions.sources entry in tests/.ci/gate_policy.yaml" in message
     else:
         assert message is None
 
