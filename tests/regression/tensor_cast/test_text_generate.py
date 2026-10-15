@@ -38,10 +38,21 @@ from tensor_cast.core.quantization.datatypes import (
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.layers.parallel_embedding import ParallelEmbedding
 from tensor_cast.model_config import WordEmbeddingTPMode
+from tests.helpers.l1_scenario import L1ScenarioExecutor
 from tests.helpers.model_assets import vendored_model_config_path
 
 
 class TextGenerateTestMixin:
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._l1_executor = L1ScenarioExecutor()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._l1_executor.reset()
+        super().tearDownClass()
+
     def setUp(self):
         """Set up test fixtures."""
         self.device = "TEST_DEVICE"
@@ -50,6 +61,14 @@ class TextGenerateTestMixin:
         self.query_len = 10
         self.context_length = 0
         torch.compiler.reset()
+
+    def _run_shared(self, user_input, generate_inputs_func=generate_inputs):
+        """Run through the class executor so identical graphs are built once."""
+        return self._l1_executor.run(user_input, generate_inputs_func=generate_inputs_func).metrics
+
+    def _shared_runner(self, user_input):
+        """Return the class executor's runner without counting another forward."""
+        return self._l1_executor.runner(user_input)
 
     def _validate_inference_result(self, result: Union[dict, ModelRunnerMetrics], test_name: str = ""):
         """Validate the result from run_inference.
@@ -174,8 +193,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_basic_prefill")
 
     def test_prefix_cache_rewrites_request_info(self):
@@ -267,8 +285,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_prefill_with_context")
 
     def test_prefill_with_w8a8_dynamic_quant(self):
@@ -283,8 +300,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_prefill_with_w8a8_dynamic_quant")
 
     def test_decode_with_w8a8_static_quant(self):
@@ -299,8 +315,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_decode_with_w8a8_static_quant")
 
     def test_decode_mode(self):
@@ -315,8 +330,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_decode_mode")
 
     def test_w4a8_dynamic_quantization(self):
@@ -331,8 +345,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.W4A8_DYNAMIC,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_w4a8_dynamic_quantization")
 
     def test_w4a8_static_quantization(self):
@@ -347,8 +360,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.W4A8_STATIC,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_w4a8_static_quantization")
 
     def test_fp8_quantization(self):
@@ -363,8 +375,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.FP8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_fp8_quantization")
 
     def test_fp8_with_context(self):
@@ -379,8 +390,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.FP8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_fp8_with_context")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -398,8 +408,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.FP8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_fp8_decode_mode")
 
     def test_mxfp4_quantization(self):
@@ -414,8 +423,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.MXFP4,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_mxfp4_quantization")
 
     def test_mxfp4_with_context(self):
@@ -430,8 +438,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.MXFP4,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_mxfp4_with_context")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -449,8 +456,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.MXFP4,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_mxfp4_decode_mode")
 
     def test_kvcache_int8_quantization(self):
@@ -466,8 +472,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             quantize_attention_action=QuantizeAttentionAction.INT8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_kvcache_int8_quantization")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -487,8 +492,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
             quantize_attention_action=QuantizeAttentionAction.INT8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_kvcache_int8_with_linear_quant")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -508,8 +512,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
             quantize_attention_action=QuantizeAttentionAction.INT8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_kvcache_int8_decode_mode")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -534,8 +537,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
             quantize_attention_action=QuantizeAttentionAction.INT8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_kvcache_int8_with_linear_quant")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -560,8 +562,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
             quantize_attention_action=QuantizeAttentionAction.INT8,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_kvcache_int8_decode_mode")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -587,8 +588,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             quantize_attention_action=QuantizeAttentionAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         self.assertIn("tensor_cast.mlapo.default", result["table_result"])
@@ -613,8 +613,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
             quantize_attention_action=QuantizeAttentionAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         self.assertIn("tensor_cast.mlapo_quant.default", result["table_result"])
@@ -632,8 +631,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             num_queries=1,
             query_len=1,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_moe_gating_top_k_softmax")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -646,8 +644,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             num_queries=1,
             query_len=1,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_gate_returns_precomputed_topk")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -678,8 +675,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             query_len=1,
             context_length=0,
         )
-        prefill_runner = ModelRunner(prefill_input)
-        prefill_result = prefill_runner.run_inference(generate_inputs_func=generate_inputs)
+        prefill_result = self._run_shared(prefill_input)
         self._validate_inference_result(prefill_result, "test_single_token_prefill")
 
         decode_input = UserInputConfig(
@@ -689,8 +685,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             query_len=1,
             context_length=10,
         )
-        decode_runner = ModelRunner(decode_input)
-        decode_result = decode_runner.run_inference(generate_inputs_func=generate_inputs)
+        decode_result = self._run_shared(decode_input)
         self._validate_inference_result(decode_result, "test_single_token_decode")
 
         if isinstance(prefill_result, ModelRunnerMetrics) and isinstance(decode_result, ModelRunnerMetrics):
@@ -717,8 +712,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
             quantize_lmhead=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_quantized_lmhead")
 
     def test_tensor_parallel(self):
@@ -735,8 +729,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             world_size=2,
             tp_size=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_tensor_parallel")
 
     def test_data_parallel(self):
@@ -754,8 +747,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             tp_size=1,
             dp_size=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_data_parallel")
 
     def test_mixed_parallelism(self):
@@ -773,8 +765,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             tp_size=2,
             dp_size=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_mixed_parallelism")
 
     def _run_test_with_different_parallel_mtp_tokens(self, tp_size, ep_size, moe_tp_size, do_compile):
@@ -796,8 +787,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             moe_tp_size=moe_tp_size,
             moe_dp_size=16 // moe_tp_size // ep_size,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_different_parallel_mtp_tokens")
 
     @parameterized.expand(
@@ -822,8 +812,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             num_mtp_tokens=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_auto_mtp")
 
     def test_mtp_legacy_and_new_entry_same_decode_metrics(self):
@@ -867,8 +856,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             disable_repetition=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_disable_repetition")
 
     def test_with_reserved_memory(self):
@@ -885,8 +873,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             reserved_memory_gb=reserved_gb,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_reserved_memory")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -906,8 +893,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             num_hidden_layers_override=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_num_hidden_layers_override")
 
     def test_mlp_specific_parallelism(self):
@@ -926,8 +912,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             mlp_tp_size=2,
             mlp_dp_size=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_mlp_specific_parallelism")
 
     def test_lmhead_specific_parallelism(self):
@@ -946,8 +931,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             lmhead_tp_size=2,
             lmhead_dp_size=2,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_lmhead_specific_parallelism")
 
     def test_expert_parallel(self):
@@ -967,8 +951,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             moe_tp_size=1,
             moe_dp_size=1,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_expert_parallel")
 
     def test_invalid_device(self):
@@ -999,8 +982,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_large_batch_size")
 
     def test_long_context(self):
@@ -1015,8 +997,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_long_context")
 
     def test_padding(self):
@@ -1036,8 +1017,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_padding")
 
     def test_o_proj_specific_parallelism(self):
@@ -1055,8 +1035,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             tp_size=2,
             o_proj_tp_size=4,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_o_proj_specific_parallelism")
 
     @parameterized.expand([["col"], ["row"]])
@@ -1112,8 +1091,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             world_size=16,
             tp_size=16,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "qwen3_32b_tp16")
 
     def test_redundant_experts(self):
@@ -1133,8 +1111,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             moe_dp_size=1,
             enable_redundant_experts=True,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_redundant_experts")
 
     @parameterized.expand(
@@ -1161,8 +1138,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             enable_external_shared_experts=True,
             host_external_shared_experts=host_external_shared_experts,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_external_shared_experts")
 
     @parameterized.expand(
@@ -1348,8 +1324,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
             world_size=64,
         )
-        model_runner = ModelRunner(user_input)
-        _ = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        _ = self._run_shared(user_input)
 
     def test_ling_tp_size_greater_than_num_kv_heads(self):
         user_input = UserInputConfig(
@@ -1364,8 +1339,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             world_size=64,
             tp_size=16,
         )
-        model_runner = ModelRunner(user_input)
-        _ = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        _ = self._run_shared(user_input)
 
     def test_tps_per_model_basic(self):
         # test config
@@ -1383,8 +1357,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             world_size=64,
             tp_size=16,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         exec_time = result["execution_time_s"]
@@ -1428,8 +1401,7 @@ class TestTextGenerate(TextGenerateTestMixin, unittest.TestCase):
             ep_size=ep_size,
             moe_tp_size=moe_tp_size,
         )
-        model_runner = ModelRunner(user_input)
-        _ = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        _ = self._run_shared(user_input)
 
 
 @pytest.mark.nightly
@@ -1446,8 +1418,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_compilation")
 
     def test_with_compilation_and_graph_break(self):
@@ -1462,8 +1433,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=True,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_with_compilation_and_graph_break")
 
     @parameterized.expand(
@@ -1489,8 +1459,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             world_size=4,
             tp_size=4,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "qwen3_32b_4_a3die_decode")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1516,8 +1485,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             moe_tp_size=1,
             moe_dp_size=1,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_deepseek_v3_1_a3_ep64_decode")
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -1632,8 +1600,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             allow_graph_break=False,
             quantize_linear_action=quant_linear_action,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         self._validate_inference_result(result, "test_qwen2_5_with_compile")
 
     @parameterized.expand(
@@ -1665,8 +1632,7 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
             tp_size=8 if enable_tp else 1,
             enable_dispatch_ffn_combine=False,
         )
-        model_runner = ModelRunner(user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        result = self._run_shared(user_input)
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
         self.assertIn("tensor_cast.grouped_matmul", result["table_result"])

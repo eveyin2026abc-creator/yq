@@ -64,3 +64,13 @@ Two decisions are still open. Neither is made by this register.
 2. Approve the model-family matrix for numeric, structural, and capability assertions, and the incremental / regression / nightly time budget (about 180 / 300 / 3000 seconds).
 
 Until both are approved, later pull requests must not move node ids. The next code change, after that approval, is the Qwen L1 merge only.
+
+## Code already on this branch
+
+`tests/regression/tensor_cast/test_text_generate.py` now runs its single-model cases through one `L1ScenarioExecutor` per test class. Cases that only need metrics call `_run_shared`. Cases that inspect `runner.model` still construct `ModelRunner` directly. Node ids are unchanged.
+
+`tests/helpers/l1_qwen.py` and `tests/regression/tensor_cast/test_l1_qwen.py` cover the reuse contract on Qwen3-32B with `num_hidden_layers_override=1`:
+
+- the same scenario builds once and forwards once
+- a different `query_len` reuses that build
+- a different quantization is a second build
