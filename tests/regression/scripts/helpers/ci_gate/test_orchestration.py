@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -28,7 +29,7 @@ import pytest
 import scripts.helpers.ci_gate.main as ci_gate_main
 from scripts.helpers._config import Config
 from scripts.helpers.ci_gate.diff import GitDiffResult
-from scripts.helpers.ci_gate.main import _run_pytest, main
+from scripts.helpers.ci_gate.main import _execute_pytest, _run_pytest, main
 from scripts.helpers.ci_gate.models import Baseline, ChangeSet, TestExemption
 from scripts.helpers.common.test_map_loader import TestMapFreshness
 from tests.helpers.fake_subprocess import FakeCompleted
@@ -248,6 +249,12 @@ def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> N
 
     _run_pytest(["tests"], marker="not npu", use_cov=True, cov_append=True)
     assert "--cov-append" in captured[-1]
+
+
+def test_execute_pytest_returns_process_result() -> None:
+    result = _execute_pytest([sys.executable, "-c", "raise SystemExit(0)"])
+
+    assert result.returncode == 0
 
 
 def test_run_pytest_full_suite_marker_uses_not_npu_only(
