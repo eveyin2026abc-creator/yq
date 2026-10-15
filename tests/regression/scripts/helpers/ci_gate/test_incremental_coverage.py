@@ -87,6 +87,33 @@ def test_only_pytest_context_counts(tmp_path: Path) -> None:
     assert result.missing == ("cli/main.py:2", "cli/main.py:3")
 
 
+def test_exception_branches_are_removed_from_denominator(tmp_path: Path) -> None:
+    source = tmp_path / "cli" / "main.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def main(value):\n"
+        "    try:\n"
+        "        parsed = int(value)\n"
+        "    except ValueError:\n"
+        "        return None\n"
+        "    return parsed\n",
+        encoding="utf-8",
+    )
+    data = _FakeCoverageData(source, {3: ["tests/regression/cli/test_main.py::test_main"]})
+
+    result = measure_incremental_coverage(
+        tmp_path,
+        ChangeSet.build(modified_source={"cli/main.py": frozenset({3, 4, 5})}),
+        ("cli/",),
+        (),
+        data,
+    )
+
+    assert result.total == 1
+    assert result.covered == 1
+    assert result.missing == ()
+
+
 def test_non_executable_changed_lines_have_zero_denominator(tmp_path: Path) -> None:
     source = tmp_path / "cli" / "main.py"
     source.parent.mkdir(parents=True)
