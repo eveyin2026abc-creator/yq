@@ -434,7 +434,7 @@ def test_filter_test_context_lines_maps_multiline_body_to_coverage_start(tmp_pat
     assert filter_test_context_executable_lines(path, {3, 4}) == {2}
 
 
-def test_filter_test_context_lines_drops_exception_branches(tmp_path: Path) -> None:
+def test_filter_test_context_lines_keeps_exception_branches(tmp_path: Path) -> None:
     path = tmp_path / "module.py"
     path.write_text(
         "\n".join(
@@ -456,8 +456,8 @@ def test_filter_test_context_lines_drops_exception_branches(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    assert filter_test_context_executable_lines(path, set(range(1, 13))) == {2, 3, 4, 5, 9, 11, 12}
-    assert filter_test_context_executable_lines(path, {6, 7}) == set()
+    assert filter_test_context_executable_lines(path, set(range(1, 13))) == {2, 3, 4, 5, 6, 7, 9, 11, 12}
+    assert filter_test_context_executable_lines(path, {6, 7}) == {6, 7}
 
 
 # ---------------------------------------------------------------------------

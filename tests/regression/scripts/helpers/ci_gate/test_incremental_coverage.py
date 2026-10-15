@@ -87,7 +87,7 @@ def test_only_pytest_context_counts(tmp_path: Path) -> None:
     assert result.missing == ("cli/main.py:2", "cli/main.py:3")
 
 
-def test_exception_branches_are_removed_from_denominator(tmp_path: Path) -> None:
+def test_exception_branches_stay_in_denominator(tmp_path: Path) -> None:
     source = tmp_path / "cli" / "main.py"
     source.parent.mkdir(parents=True)
     source.write_text(
@@ -109,9 +109,9 @@ def test_exception_branches_are_removed_from_denominator(tmp_path: Path) -> None
         data,
     )
 
-    assert result.total == 1
+    assert result.total == 3
     assert result.covered == 1
-    assert result.missing == ()
+    assert result.missing == ("cli/main.py:4", "cli/main.py:5")
 
 
 def test_non_executable_changed_lines_have_zero_denominator(tmp_path: Path) -> None:
