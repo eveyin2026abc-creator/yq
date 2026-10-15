@@ -75,4 +75,4 @@ Until both are approved, later pull requests must not move node ids. The next co
 - a different `query_len` reuses that build
 - a different quantization is a second build
 
-`tests/helpers/l1_families.py` and `tests/regression/tensor_cast/test_l1_families.py` apply that same contract to the vendored one-layer configs for Qwen3 dense, Qwen3 MoE, Qwen3-VL, Qwen3.5, DeepSeek-V3, DeepSeek-V4-Flash, GLM-4.7, GLM-5.1, MiniMax-M2, MiMo-V2-Flash, and Ling-flash-2.0. Kimi stays on the network-marked diagnostics cases and is not in this offline set.
+`tests/helpers/l1_families.py` and `tests/regression/tensor_cast/test_l1_families.py` apply that same contract to the vendored one-layer configs for Qwen3 dense, Qwen3 MoE, Qwen3-VL, Qwen3-VL-MoE, Qwen3.5, Qwen3.5-MoE, Qwen3-Next, DeepSeek-V3, DeepSeek-V3.2, DeepSeek-V4-Flash, GLM-4.7, GLM-4.1V, GLM-4.5V, GLM-5.1, MiniMax-M2, MiMo-V2-Flash, Ling-flash-2.0, and Kimi-K2.5. Kimi-K2-Thinking stays on the network-marked diagnostics cases and is not in this offline set.
