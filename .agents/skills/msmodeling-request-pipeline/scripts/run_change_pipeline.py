@@ -445,6 +445,12 @@ def _filter_wave(repo: Path, python: str, nodes: list[str], marker: str) -> list
     return _collect(repo, python, nodes, marker=marker)
 
 
+def _exclude_precision_nodes(nodes: list[str], precision_nodes: list[str]) -> list[str]:
+    """Keep the dedicated precision wave disjoint from the first two waves."""
+    precision = frozenset(precision_nodes)
+    return [node for node in nodes if node not in precision]
+
+
 def _run_wave(repo: Path, python: str, nodes: list[str], *, name: str, marker: str) -> int:
     if not nodes:
         print(f"wave={name} selected=0 skip")
@@ -547,7 +553,7 @@ def main() -> int:
             "Check out the PR head (or the change under test) before syncing."
         )
 
-    reported = len(selected) + len(precision_nodes)
+    reported = len(set(selected) | set(precision_nodes))
     if args.dry_run and not args.run:
         for node in selected:
             print(node)
@@ -569,8 +575,11 @@ def main() -> int:
         )
         return 0
 
-    ci_nodes = _filter_wave(repo, python, selected, CI_MARKER)
-    nightly_nodes = _filter_wave(repo, python, selected, NIGHTLY_RELATED_MARKER)
+    ci_nodes = _exclude_precision_nodes(_filter_wave(repo, python, selected, CI_MARKER), precision_nodes)
+    nightly_nodes = _exclude_precision_nodes(
+        _filter_wave(repo, python, selected, NIGHTLY_RELATED_MARKER),
+        precision_nodes,
+    )
     print(f"wave_ci_nodes={len(ci_nodes)}")
     print(f"wave_nightly_nodes={len(nightly_nodes)}")
     print(f"wave_precision_nodes={len(precision_nodes)}")

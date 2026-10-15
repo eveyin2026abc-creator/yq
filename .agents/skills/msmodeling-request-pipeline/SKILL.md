@@ -77,6 +77,7 @@ $PY "$SCRIPT" --run --repo "$REPO" --pr "<N>"
 3. **precision**：模型精度防护网 `tests/benchmark/models/test_model_regression.py`，算子精度防护网 `tests/benchmark/ops/perf_database/`。按目录收集，marker 是 `not npu and not network`。不要跑 `auto_baseline.py`。diff 含产品 `.py`、`tests/` 或 `tests/benchmark/` 时才跑；只改文档或 `.agents/` 时不跑。0 条或退出码 5 记为通过。
 
 选测：改过的测试文件全量 collect；产品文件走 `test_map`；映射文件再 collect 以补 `@nightly` 兄弟；这些文件所在目录再 collect `nightly or benchmark or network`。精度防护网另按上面两个路径收集，不从 `test_map` 推断。
+若精度节点也被改动测试或 `test_map` 选中，从前两波移除，只在 precision 波执行一次；评论里的选测数量同样按 node 去重。
 
 `test_map`：`MSMODELING_TEST_MAP_PATH` → `.msmodeling_cache/test_map/<base>/test_map.json`。产品改动没有 map 必须写明，不能声称 nightly 不会被打断。
 
