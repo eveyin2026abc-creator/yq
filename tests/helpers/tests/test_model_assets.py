@@ -87,3 +87,21 @@ def test_resolve_offline_model_id_rewrites_registered_hub_id() -> None:
     resolved = resolve_offline_model_id("Qwen/Qwen3-32B")
     assert resolved == vendored_model_config_path("Qwen/Qwen3-32B")
     assert resolve_offline_model_id("unknown/Model") == "unknown/Model"
+
+
+def test_get_hf_config_loads_vendored_directory_for_registered_hub_id(monkeypatch) -> None:
+    loaded: dict[str, str] = {}
+
+    class _Loader:
+        def load_config(self, model_id: str):
+            loaded["model_id"] = model_id
+            return {"model_type": "qwen3"}
+
+    monkeypatch.setattr("tests.helpers.model_cache.AutoModelConfigLoader", lambda: _Loader())
+    monkeypatch.setattr("tests.helpers.model_cache._HF_CONFIG_CACHE", {})
+    from tests.helpers.model_cache import get_hf_config
+
+    get_hf_config("Qwen/Qwen3-32B")
+    assert loaded["model_id"] == vendored_model_config_path("Qwen/Qwen3-32B")
+    assert "hf-mirror.com" not in loaded["model_id"]
+    assert not loaded["model_id"].startswith("Qwen/")

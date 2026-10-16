@@ -73,11 +73,14 @@ def pytest_collection_modifyitems(items) -> None:
             item.add_marker(nightly)
 
 
-@pytest.fixture(autouse=True)
-def remap_registered_hub_ids_for_wave_a(request, monkeypatch):
-    """Load vendored configs for registered Hub ids unless the test is marked network."""
-    if request.node.get_closest_marker("network"):
-        return
+@pytest.fixture(autouse=True, scope="session")
+def _remap_registered_hub_ids_session():
+    """Rewrite Hub ids before module fixtures build models.
+
+    The function-scoped hook below runs too late for module-scoped fixtures and
+    ``unittest`` class setup. Those paths were still passing ``Qwen/Qwen3-32B``
+    to Hugging Face.
+    """
     from tensor_cast.core.user_config import UserInputConfig
     from tests.helpers.model_assets import resolve_offline_model_id
 
@@ -87,7 +90,22 @@ def remap_registered_hub_ids_for_wave_a(request, monkeypatch):
         self.model_id = resolve_offline_model_id(self.model_id)
         original(self)
 
-    monkeypatch.setattr(UserInputConfig, "__post_init__", _post_init)
+    UserInputConfig.__post_init__ = _post_init
+    yield
+    UserInputConfig.__post_init__ = original
+
+
+@pytest.fixture(autouse=True)
+def remap_registered_hub_ids_for_wave_a(request):
+    """Keep the original Hub id for tests marked ``network``."""
+    if request.node.get_closest_marker("network") is None:
+        yield
+        return
+    from tests.helpers.model_assets import set_offline_hub_remap
+
+    set_offline_hub_remap(False)
+    yield
+    set_offline_hub_remap(True)
 
 
 _REPO_CACHE = Path.cwd() / ".msmodeling_cache"
