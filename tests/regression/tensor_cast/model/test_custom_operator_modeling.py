@@ -17,7 +17,7 @@
 import unittest
 
 import torch
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import TEST_DEVICE
 from tensor_cast.model_config import ModelConfig, ParallelConfig, QuantConfig
@@ -29,6 +29,7 @@ from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.utils import AutoModelConfigLoader
 
 from ..unit.test_common import create_attn_metadata_and_kv_cache
@@ -82,7 +83,7 @@ class CustomModelingOperatorTestCase(unittest.TestCase):
             return properties
 
         user_config = UserInputConfig(model_id=MODEL_ID)
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         inputs = torch.empty([1, NUM_TOKENS], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, NUM_TOKENS], dtype=torch.long, device="meta")
         device_profile = TEST_DEVICE
@@ -156,7 +157,7 @@ class CustomModelingOperatorTestCase(unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
 
         NUM_TOKENS = 100
         inputs = torch.empty([1, NUM_TOKENS], dtype=torch.long, device="meta")

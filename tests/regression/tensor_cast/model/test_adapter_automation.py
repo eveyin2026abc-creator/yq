@@ -58,7 +58,7 @@ from tensor_cast.adapter.st_case import (
     build_st_cases_from_verification,
     write_st_cases,
 )
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import TEST_DEVICE
 from tensor_cast.model_config import (
@@ -1240,7 +1240,7 @@ RuntimeError: aten.nonzero.default cannot infer output shape for meta tensor boo
         original_profile = registry._MODEL_PROFILE_REGISTRY[model_type]
         del registry._MODEL_PROFILE_REGISTRY[model_type]
         try:
-            unpatched_model = build_model(make_user_input())
+            unpatched_model = model_from_user_input(make_user_input())
             structure, candidate = inspect_model_structure(unpatched_model)
             register_model_profile(materialize_profile_candidate(structure, candidate))
             generated_ops = summarize_key_ops()

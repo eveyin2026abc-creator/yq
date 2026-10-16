@@ -31,7 +31,7 @@ test_compile_with_tp_parallel_deepseek    -> ParallelLinearNightlyTestCase
                                              SequenceParallelPassTestCase
 """
 
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
@@ -47,7 +47,7 @@ def test_compile_w8a8_dynamic_quant_deepseek():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 
@@ -59,7 +59,7 @@ def test_compile_with_mtp_tokens_deepseek():
         num_hidden_layers_override=1,
         num_mtp_tokens=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 
@@ -72,5 +72,5 @@ def test_compile_with_tp_parallel_deepseek():
         world_size=2,
         tp_size=2,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None

@@ -89,3 +89,12 @@ def test_parallel_degrees_multiply_into_world_size():
 def test_word_embedding_mode_is_copied():
     user_input = user_input_from_profile(_profile(word_embedding_tp="col"))
     assert user_input.word_embedding_tp == "col"
+
+
+def test_diagnostics_user_input_uses_the_capture_contract():
+    from tests.helpers.l1_diagnostics import diagnostics_user_input
+
+    user_input = diagnostics_user_input(_profile())
+    assert user_input.performance_model == ["analytic"]
+    assert user_input.moe_tp_size is None
+    assert user_input.quantize_linear_action is QuantizeLinearAction.DISABLED

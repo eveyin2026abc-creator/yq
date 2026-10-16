@@ -36,6 +36,7 @@ from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 
 from ..conftest import get_session_hf_config
 from ..unit.test_common import create_mla_metadata_and_kv_cache, get_cached_build_model
@@ -68,7 +69,7 @@ class ParallelMoETestCase(unittest.TestCase):
     def _get_transformer_model(cls, model_id: str, model_config: ModelConfig) -> TransformerModel:
         key = (model_id, repr(model_config))
         if key not in cls._transformer_cache:
-            cls._transformer_cache[key] = TransformerModel(model_id, model_config)
+            cls._transformer_cache[key] = layer_transformer(model_id, model_config)
         return cls._transformer_cache[key]
 
     def setUp(self):

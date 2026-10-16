@@ -34,6 +34,7 @@ from tensor_cast.layers.attention import AttentionTensorCast
 from tensor_cast.model_config import ModelConfig, ParallelConfig, QuantConfig
 from tensor_cast.transformers.model import TransformerModel
 from tests.helpers.model_assets import vendored_model_config_path, vendored_preprocessor_config_path
+from tests.helpers.model_builder import layer_transformer
 from tests.helpers.model_cache import _BUILT_MODEL_CACHE, get_built_model, get_hf_config
 from tests.helpers.op_registry import build_op_registry
 
@@ -110,7 +111,7 @@ def layer_builder(cfg_registry, op_registry) -> Callable[[str], TransformerModel
             attention_cls=AttentionTensorCast,
             hf_config=hf_config,
         )
-        return TransformerModel(model_id, model_config)
+        return layer_transformer(model_id, model_config)
 
     return _build
 
@@ -125,7 +126,7 @@ def qwen3_32b_lmhead_attention_transformer() -> TransformerModel:
         enable_repetition=True,
         hf_config=hf_config,
     )
-    return TransformerModel("Qwen/Qwen3-32B", model_config)
+    return layer_transformer("Qwen/Qwen3-32B", model_config)
 
 
 @pytest.fixture(scope="module")
@@ -170,4 +171,4 @@ def qwen3_vl_8b_instruct_transformer() -> TransformerModel:
         dtype=torch.bfloat16,
         hf_config=hf_config,
     )
-    return TransformerModel(model_id, model_config)
+    return layer_transformer(model_id, model_config)

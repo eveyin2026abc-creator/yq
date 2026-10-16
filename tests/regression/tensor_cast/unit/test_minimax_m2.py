@@ -25,6 +25,7 @@ from tensor_cast.model_config import ModelConfig, ParallelConfig, QuantConfig
 from tensor_cast.transformers.builtin_model.minimax_m2 import shard_qk_norm
 from tensor_cast.transformers.custom_model_registry import get_model_profile, get_mtp_block_module_name
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from torch import nn
 
 
@@ -51,7 +52,7 @@ class MiniMaxM2ShardQkNormTestCase(unittest.TestCase):
             QuantConfig(),
             num_hidden_layers_override=1,
         )
-        return TransformerModel(self.model_id, model_config)
+        return layer_transformer(self.model_id, model_config)
 
     def _get_self_attn(self, model: TransformerModel):
         layer = model.unwrap().layers[0]

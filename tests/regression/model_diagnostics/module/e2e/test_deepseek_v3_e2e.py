@@ -25,7 +25,7 @@ from tests.helpers.model_diagnostics import assert_parallel_contract
 from tools.model_diagnostics import create_model_diagnostics_application
 from tools.model_diagnostics.domain import ExecutionPhase, FindingStatus, ParallelContext
 from tools.model_diagnostics.integrations import assert_diagnostics_passed
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 from tools.model_diagnostics.specification import DiagnosticsRunProfile
 from tools.model_diagnostics.specification.context_env import build_theory_env
 
@@ -103,7 +103,7 @@ def deepseek_v3_case(request, enable_mlapo):
         word_embedding_tp=None,
     )
     torch.compiler.reset()
-    return profile, capture_artifact_for_profile(profile)
+    return profile, capture_profile_with_executor(profile)
 
 
 def test_deepseek_v3_capture_organize_and_compare(deepseek_v3_case) -> None:
@@ -175,7 +175,7 @@ def test_deepseek_v3_mtp_capture_organize_and_compare(model_name: str, enable_ml
         word_embedding_tp=None,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     request = profile.to_request(context=artifact.run_context, spec=spec)
@@ -257,7 +257,7 @@ def test_deepseek_v3_parallel_shapes_compare(
         word_embedding_tp=None,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     request = profile.to_request(context=artifact.run_context, spec=spec)
@@ -328,7 +328,7 @@ def test_deepseek_v3_legacy_parallel_shapes_compare(
         word_embedding_tp=None,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     result = application.run_against_artifact(

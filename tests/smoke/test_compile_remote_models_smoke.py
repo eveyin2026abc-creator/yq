@@ -41,7 +41,7 @@ test_vl_compile_glm45v           -> TestVLCompilePrefillNightly
 """
 
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
@@ -56,7 +56,7 @@ def test_compile_qwen3_vanilla():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 
@@ -68,7 +68,7 @@ def test_compile_qwen3_moe():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 
@@ -80,7 +80,7 @@ def test_compile_deepseek_v31():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 

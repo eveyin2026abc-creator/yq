@@ -34,6 +34,7 @@ from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_mtp_block_module_name
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.transformations import maybe_reuse_layers
 
 from ..conftest import get_session_hf_config
@@ -320,7 +321,7 @@ class RepetitionTestMixin:
     def _get_transformer_model(cls, model_id: str, model_config: ModelConfig) -> TransformerModel:
         key = (model_id, repr(model_config))
         if key not in cls._transformer_cache:
-            cls._transformer_cache[key] = TransformerModel(model_id, model_config)
+            cls._transformer_cache[key] = layer_transformer(model_id, model_config)
         return cls._transformer_cache[key]
 
     def setUp(self):

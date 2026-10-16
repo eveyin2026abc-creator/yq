@@ -23,7 +23,7 @@ import pytest
 import torch
 from parameterized import parameterized
 from tensor_cast.compilation import get_backend
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import TEST_DEVICE
 from tensor_cast.layers.parallel_linear import ColumnParallelLinear
@@ -499,7 +499,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             num_hidden_layers_override=1,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         linear_attn = model.unwrap().language_model.layers[0].linear_attn
         hidden_states = torch.randn(1, 8, model.hidden_size, device="meta")
         attention_mask = torch.ones(1, 1, 1, 8, device="meta")
@@ -527,7 +527,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             num_hidden_layers_override=1,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         linear_attn = model.unwrap().language_model.layers[0].linear_attn
         hidden_states = torch.randn(1, 8, model.hidden_size, device="meta")
 
@@ -606,7 +606,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             num_hidden_layers_override=1,
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         linear_attn = model.unwrap().layers[0].linear_attn
         hidden_states = torch.randn(1, 8, model.hidden_size, device="meta", dtype=torch.bfloat16)
 
@@ -653,7 +653,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             num_hidden_layers_override=1,
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
         )
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         linear_attn = model.unwrap().language_model.layers[0].linear_attn
         hidden_states = torch.randn(1, 8, model.hidden_size, device="meta")
 
@@ -684,7 +684,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
         )
 
         with self.assertRaises(ValueError) as cm:
-            build_model(user_config)
+            model_from_user_input(user_config)
 
         self.assertIn("num_k_heads=16", str(cm.exception))
         self.assertIn("tp_size=32", str(cm.exception))
@@ -699,7 +699,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
 
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         vision_attn = model.unwrap().visual.blocks[0].attn
 
         self.assertEqual(model.parallel_group_manager.vision_tp_group.world_size, 1)
@@ -717,7 +717,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
 
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
         vision_attn = model.unwrap().visual.blocks[0].attn
 
         self.assertEqual(model.parallel_group_manager.vision_tp_group.world_size, 2)
@@ -735,7 +735,7 @@ class PerfAnalysisTestCase(PerfAnalysisTestMixin, unittest.TestCase):
             quantize_linear_action=QuantizeLinearAction.DISABLED,
         )
 
-        model = build_model(user_config)
+        model = model_from_user_input(user_config)
 
         self.assertIsInstance(model._inner.mtp.lm_head, ColumnParallelLinear)
         self.assertEqual(model._inner.mtp.lm_head.tp_group.world_size, 2)

@@ -36,7 +36,7 @@ from __future__ import annotations
 import pytest
 import torch
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.user_config import UserInputConfig
@@ -92,7 +92,7 @@ def test_perf_analysis_mla_no_compile_local():
         do_compile=False,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast")
     attn_meta, kv_cache_by_layers, num_tokens = create_mla_metadata_and_kv_cache(model, model.model_config)
     inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -119,7 +119,7 @@ def test_perf_analysis_kimi_k2_remote():
         do_compile=True,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast")
     attn_meta, kv_cache_by_layers, num_tokens = create_mla_metadata_and_kv_cache(model, model.model_config)
     inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -146,7 +146,7 @@ def test_perf_analysis_glm45_compile_remote():
         do_compile=True,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     attn_meta, kv_cache_by_layers, num_tokens = create_attn_metadata_and_kv_cache(model, model.model_config)
     inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
     position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -173,7 +173,7 @@ def test_perf_analysis_qwen235b_compile_remote():
         do_compile=True,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     attn_meta, kv_cache_by_layers, num_tokens = create_attn_metadata_and_kv_cache(model, model.model_config)
     inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
     position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")

@@ -42,6 +42,7 @@ from tensor_cast.quantize_utils import AttentionQuantType, LinearQuantType
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config, get_mtp_block_module_name
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tensor_cast.utils import DTYPE_FP8, is_fp8_dtype, performance_dtype
 
 from ..conftest import get_session_hf_config
@@ -107,7 +108,7 @@ class TestQuantAttention(unittest.TestCase):
     def _get_transformer_model(cls, model_id: str, model_config: ModelConfig) -> TransformerModel:
         key = (model_id, repr(model_config))
         if key not in cls._transformer_cache:
-            cls._transformer_cache[key] = TransformerModel(model_id, model_config)
+            cls._transformer_cache[key] = layer_transformer(model_id, model_config)
         return cls._transformer_cache[key]
 
     def test_all_torch_float8_dtypes_share_fp8_performance_dtype(self):

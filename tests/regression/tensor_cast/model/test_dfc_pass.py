@@ -41,6 +41,7 @@ from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 
 
 _MTP_UNFUSED_TAG_TARGETS = sorted(
@@ -153,7 +154,7 @@ class DfcPassTestMixin:
             )
             config_resolver = ConfigResolver(user_input=user_input)
             model_config = config_resolver.resolve()
-            model = TransformerModel(model_id, model_config)
+            model = layer_transformer(model_id, model_config)
             model = torch.compile(model, backend=get_backend(), fullgraph=True)
             inputs = torch.empty([1, 100], dtype=torch.long, device="meta")
             pos = torch.empty([1, 100], dtype=torch.long, device="meta")

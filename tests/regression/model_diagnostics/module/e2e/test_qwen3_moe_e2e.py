@@ -24,7 +24,7 @@ import torch
 from tools.model_diagnostics import create_model_diagnostics_application
 from tools.model_diagnostics.domain import ExecutionPhase, ParallelContext, SourceKind
 from tools.model_diagnostics.integrations import assert_diagnostics_passed
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 from tools.model_diagnostics.specification import DiagnosticsRunProfile
 
 _QUANT_LINEAR = "tensor_cast.static_quant_linear.default"
@@ -90,7 +90,7 @@ def _profile(case, *, num_mtp_tokens: int = 0) -> DiagnosticsRunProfile:
 def _capture(case, *, num_mtp_tokens: int = 0):
     profile = _profile(case, num_mtp_tokens=num_mtp_tokens)
     torch.compiler.reset()
-    return profile, capture_artifact_for_profile(profile)
+    return profile, capture_profile_with_executor(profile)
 
 
 def _assert_quantization_context(profile, artifact) -> None:

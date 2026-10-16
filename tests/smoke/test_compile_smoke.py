@@ -14,7 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-from tensor_cast.core.model_builder import build_model
+from tests.helpers.model_builder import model_from_user_input
 from tensor_cast.core.user_config import UserInputConfig
 
 DATA_DIR = "tests/assets/model_config"
@@ -27,7 +27,7 @@ def test_compile_no_graph_break_deepseek():
         do_compile=True,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None
 
 
@@ -38,5 +38,5 @@ def test_compile_no_graph_break_minimax():
         do_compile=True,
         num_hidden_layers_override=1,
     )
-    model = build_model(user_config)
+    model = model_from_user_input(user_config)
     assert model is not None

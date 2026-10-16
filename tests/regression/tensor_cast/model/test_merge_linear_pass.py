@@ -28,6 +28,7 @@ from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.quantize_utils import LinearQuantType, QuantGranularity
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 
 from ..unit.test_common import count_events, get_quant_config
 
@@ -47,7 +48,7 @@ class MergeLinearPassTestCase(unittest.TestCase):
             attention_cls=AttentionTensorCast,
             num_hidden_layers_override=1,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -75,7 +76,7 @@ class MergeLinearPassTestCase(unittest.TestCase):
             attention_cls=AttentionTensorCast,
             num_hidden_layers_override=1,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -114,7 +115,7 @@ class MergeLinearPassTestCase(unittest.TestCase):
             attention_cls=AttentionTensorCast,
             num_hidden_layers_override=1,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
