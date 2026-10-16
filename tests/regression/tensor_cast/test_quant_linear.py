@@ -32,6 +32,7 @@ from tensor_cast.quantize_utils import LinearQuantType, QuantGranularity, QuantS
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config, get_mtp_block_module_name
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.utils import AutoModelConfigLoader
 from tensor_cast.utils import DTYPE_FP8
 
@@ -204,7 +205,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_quant)
+        qmodel = layer_transformer(model_id, model_config_with_quant)
         num_linear_modules = sum(1 for _, module in qmodel.named_modules() if isinstance(module, torch.nn.Linear))
         # lm_head will never be quantized
         self.assertEqual(num_linear_modules, 1)
@@ -237,7 +238,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         num_linear_modules = sum(1 for _, module in model.named_modules() if isinstance(module, torch.nn.Linear))
 
         model_config_with_quant = ModelConfig(
@@ -248,7 +249,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_quant)
+        qmodel = layer_transformer(model_id, model_config_with_quant)
         num_qlinear_modules = sum(1 for _, module in qmodel.named_modules() if isinstance(module, QuantLinearBase))
         # lm_head will never be quantized
         self.assertEqual(num_qlinear_modules + 1, num_linear_modules)
@@ -283,7 +284,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
 
         model_config_with_quant = ModelConfig(
             ParallelConfig(),
@@ -298,7 +299,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_quant)
+        qmodel = layer_transformer(model_id, model_config_with_quant)
 
         num_tokens = 100
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -335,7 +336,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
 
         num_tokens = 100
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -353,7 +354,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_quant)
+        qmodel = layer_transformer(model_id, model_config_with_quant)
         machine_config = TEST_DEVICE
         perf_model = AnalyticPerformanceModel(machine_config)
         with (
@@ -425,7 +426,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             quant_linear_cls=TensorCastQuantLinear,
             num_hidden_layers_override=2,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
 
         num_tokens = 100
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -475,7 +476,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             mtp_block_module_name=mtp_block_module_name,
         )
         model_config.mtp_config = mtp_config
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         # make sure all original attention modules have been replaced
         self.assertTrue(has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast"))
         attn_meta, kv_cache_by_layers, num_tokens = create_mla_metadata_and_kv_cache(model, model_config)
@@ -608,7 +609,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_fp8)
+        qmodel = layer_transformer(model_id, model_config_with_fp8)
 
         num_tokens = 100
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -673,7 +674,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        qmodel = TransformerModel(model_id, model_config_with_mxfp4)
+        qmodel = layer_transformer(model_id, model_config_with_mxfp4)
 
         num_tokens = 100
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")

@@ -23,7 +23,7 @@ import torch
 
 from tools.model_diagnostics.domain import ExecutionPhase, ParallelContext
 from tools.model_diagnostics.specification import DiagnosticsRunProfile
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 
 
 _QWEN3_DENSE_MODELS = (
@@ -121,7 +121,7 @@ def qwen3_dense_case(request):
         context_length=context_length,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     return profile, artifact
 
 
@@ -143,5 +143,5 @@ def qwen3_dense_mtp_case(request):
         num_mtp_tokens=2,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     return profile, artifact

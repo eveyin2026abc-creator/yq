@@ -43,11 +43,39 @@ def make_user_input_config(
     )
 
 
+def model_from_user_input(user_config: UserInputConfig) -> TransformerModel:
+    """Build one model through the L1 executor and return its module.
+
+    Callers that assert on a ``TransformerModel`` keep that object. The executor
+    owns the ``ModelRunner``. ``reset`` drops the runner and does not destroy
+    the module.
+    """
+
+    from tests.helpers.l1_scenario import isolated_l1_executor
+
+    with isolated_l1_executor() as executor:
+        return executor.runner(user_config).model
+
+
+def layer_transformer(model_id: str, model_config) -> TransformerModel:
+    """Build a layer-test model from a config the executor does not accept.
+
+    Pass and quant tests prepare ``ModelConfig`` (attention class, quant, repetition)
+    before construction. ``L1ScenarioExecutor`` only accepts ``UserInputConfig``.
+    """
+
+    return TransformerModel(model_id, model_config)
+
+
 def build_or_get_cached_model(
     user_config: UserInputConfig,
     cache: dict[tuple, TransformerModel],
 ) -> TransformerModel:
-    """Build model once per config key and reuse from provided cache."""
+    """Build model once per config key and reuse from provided cache.
+
+    This helper still calls ``build_model`` so a unit test can patch that name.
+    Session caches use ``model_from_user_input``.
+    """
     key = user_config_build_cache_key(user_config)
     if key not in cache:
         cache[key] = build_model(user_config)

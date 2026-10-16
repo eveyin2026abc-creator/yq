@@ -24,7 +24,7 @@ import torch
 from tools.model_diagnostics import create_model_diagnostics_application
 from tools.model_diagnostics.domain import ExecutionPhase, FindingStatus, ParallelContext
 from tools.model_diagnostics.integrations import assert_diagnostics_passed
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 from tools.model_diagnostics.specification import DiagnosticsRunProfile
 
 
@@ -98,7 +98,7 @@ def test_glm4v_offline_capture_and_compare(
     )
 
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     request = profile.to_request(context=artifact.run_context, spec=spec)
@@ -167,7 +167,7 @@ def test_glm4v_mtp_capture_and_compare(
     )
 
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     request = profile.to_request(context=artifact.run_context, spec=spec)

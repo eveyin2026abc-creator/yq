@@ -24,7 +24,7 @@ import torch
 from tools.model_diagnostics import create_model_diagnostics_application
 from tools.model_diagnostics.domain import ExecutionPhase, ParallelContext, SourceKind
 from tools.model_diagnostics.integrations import assert_diagnostics_passed
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 from tools.model_diagnostics.specification.context_env import build_theory_env
 from tools.model_diagnostics.specification.run_profile import DiagnosticsRunProfile
 
@@ -72,7 +72,7 @@ def test_qwen3_moe_e2e_with_moe_dp_size() -> None:
         )
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     assert artifact.run_context.parallel.moe_data_parallel_size == 2
     assert artifact.run_context.model_config.get("moe_dp_size") == 2
 
@@ -99,7 +99,7 @@ def test_qwen3_moe_e2e_with_enable_redundant_experts() -> None:
         enable_redundant_experts=True,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     assert artifact.run_context.model_config.get("enable_redundant_experts") is True
 
     application = create_model_diagnostics_application()
@@ -124,7 +124,7 @@ def test_qwen3_moe_e2e_with_ep_dp_token_transform() -> None:
         query_length=3,
     )
     torch.compiler.reset()
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     env = build_theory_env(artifact.run_context)
     assert env["T"] == 3
     assert env["Tmoe"] == 2
@@ -153,4 +153,4 @@ def test_qwen3_moe_rejects_external_shared_without_shared_experts() -> None:
     )
     torch.compiler.reset()
     with pytest.raises(AssertionError):
-        capture_artifact_for_profile(profile)
+        capture_profile_with_executor(profile)

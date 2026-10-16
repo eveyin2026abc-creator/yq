@@ -22,7 +22,7 @@ from pathlib import Path
 from tools.model_diagnostics import create_model_diagnostics_application
 from tools.model_diagnostics.domain import ExecutionPhase, ParallelContext
 from tools.model_diagnostics.specification import DiagnosticsRunProfile
-from tools.model_diagnostics.sources.runtime_capture import capture_artifact_for_profile
+from tests.helpers.l1_diagnostics import capture_profile_with_executor
 
 _QWEN3_DENSE_CONFIG = Path(__file__).resolve().parents[1] / "assets" / "model_config" / "qwen3_dense_0_6b"
 
@@ -53,7 +53,7 @@ def test_model_diagnostics_capture_and_theory_resolution_smoke(monkeypatch) -> N
         word_embedding_tp=None,
     )
 
-    artifact = capture_artifact_for_profile(profile)
+    artifact = capture_profile_with_executor(profile)
     application = create_model_diagnostics_application()
     spec = application.spec_provider.get(artifact.run_context)
     request = profile.to_request(context=artifact.run_context, spec=spec)

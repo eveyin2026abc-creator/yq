@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 from serving_cast import stime
 from serving_cast.config import Config, ParallelConfig
+from tests.helpers.serving_runner import serving_model_runner
 from serving_cast.model_runner import (
     AsyncTask,
     AsyncTaskManager,
@@ -37,6 +38,7 @@ from serving_cast.model_runner import (
 from serving_cast.request import Request, RequestState
 from tensor_cast.core.input_generator import RequestInfo
 from tensor_cast.core.model_runner import ModelRunner as TensorCastModelRunner
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
@@ -106,14 +108,15 @@ def create_test_config_files():
 
 class TestTensorCastModelRunner(unittest.TestCase):
     def test_init_valid_device(self):
-        runner = TensorCastModelRunner(
-            UserInputConfig(
-                device="TEST_DEVICE",
-                model_id="Qwen/Qwen3-32B",
-                world_size=1,
-                tp_size=1,
+        with isolated_l1_executor() as executor:
+            runner = executor.runner(
+                UserInputConfig(
+                    device="TEST_DEVICE",
+                    model_id="Qwen/Qwen3-32B",
+                    world_size=1,
+                    tp_size=1,
+                )
             )
-        )
         self.assertIsNotNone(runner.model)
         self.assertEqual(runner.model.model_config.parallel_config.world_size, 1)
         self.assertEqual(runner.model.model_config.parallel_config.tensor_parallel_size, 1)
@@ -121,14 +124,15 @@ class TestTensorCastModelRunner(unittest.TestCase):
 
     def test_init_invalid_device(self):
         with self.assertRaises(ValueError):
-            TensorCastModelRunner(
-                UserInputConfig(
-                    device="invalid-device",
-                    model_id="test-model",
-                    world_size=1,
-                    tp_size=1,
+            with isolated_l1_executor() as executor:
+                executor.runner(
+                    UserInputConfig(
+                        device="invalid-device",
+                        model_id="test-model",
+                        world_size=1,
+                        tp_size=1,
+                    )
                 )
-            )
 
     def test_run_inference_basic(self):
         mock_requests: list[RequestInfo] = [
@@ -136,29 +140,31 @@ class TestTensorCastModelRunner(unittest.TestCase):
             RequestInfo(query_len=1, seq_len=10, is_decode=True),
         ]
 
-        runner = TensorCastModelRunner(
-            UserInputConfig(
-                device="TEST_DEVICE",
-                model_id="Qwen/Qwen3-32B",
+        with isolated_l1_executor() as executor:
+            runner = executor.runner(
+                UserInputConfig(
+                    device="TEST_DEVICE",
+                    model_id="Qwen/Qwen3-32B",
+                )
             )
-        )
 
         metrics = runner.run_inference(mock_requests)
         self.assertIsNotNone(metrics)
 
     def test_run_inference_with_ep(self):
-        model_runner = TensorCastModelRunner(
-            UserInputConfig(
-                device="TEST_DEVICE",
-                model_id="deepseek-ai/DeepSeek-V3.1",
-                quantize_linear_action=QuantizeLinearAction.FP8,
-                quantize_attention_action=QuantizeAttentionAction.INT8,
-                world_size=8,
-                tp_size=8,
-                dp_size=1,
-                ep_size=8,
+        with isolated_l1_executor() as executor:
+            model_runner = executor.runner(
+                UserInputConfig(
+                    device="TEST_DEVICE",
+                    model_id="deepseek-ai/DeepSeek-V3.1",
+                    quantize_linear_action=QuantizeLinearAction.FP8,
+                    quantize_attention_action=QuantizeAttentionAction.INT8,
+                    world_size=8,
+                    tp_size=8,
+                    dp_size=1,
+                    ep_size=8,
+                )
             )
-        )
         requests = [RequestInfo(1, 65, True)]
         metrics = model_runner.run_inference(requests)
         self.assertIsNotNone(metrics)
@@ -1121,7 +1127,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
         self.assertIsNotNone(runner.tensor_cast_model_runner)
         self.assertFalse(runner.enable_multi_process)
         runner.shutdown()
@@ -1137,7 +1143,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
         num_bytes = runner.get_kv_cache_num_bytes(100)
         self.assertIsInstance(num_bytes, int)
         self.assertGreater(num_bytes, 0)
@@ -1150,7 +1156,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         request = Request(num_input_tokens=100, num_output_tokens=50)
         request.state = RequestState.PREFILLING
@@ -1168,7 +1174,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         request = Request(num_input_tokens=100, num_output_tokens=50)
         request.state = RequestState.PREFILLING
@@ -1185,7 +1191,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         num_blocks, block_size = runner.warmup()
         self.assertIsInstance(num_blocks, int)
@@ -1204,7 +1210,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
         from unittest.mock import patch
 
         parallel_config = ParallelConfig(world_size=1, tp_size=1, moe_dp_size=1)
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         def _fake_metrics(factor):
             return ModelRunnerMetrics(
@@ -1239,7 +1245,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
         runner._interpolation_ready = False
         runner._interpolation_model = None
 
@@ -1255,7 +1261,7 @@ class TestModelRunnerIntegration(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         # Manually set up the interpolation model
         x = np.array([[0, 0], [1000, 0], [0, 1000], [1000, 1000]])
@@ -1351,7 +1357,7 @@ class TestModelRunnerWithInterpolation(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
         self.assertTrue(runner.enable_interpolate)
         self.assertTrue(runner._interpolation_ready)
         self.assertIsNotNone(runner._interpolation_model)
@@ -1364,7 +1370,7 @@ class TestModelRunnerWithInterpolation(unittest.TestCase):
             tp_size=1,
             moe_dp_size=1,
         )
-        runner = ModelRunner(parallel_config, "TEST_DEVICE", dp_rank=0)
+        runner = serving_model_runner(parallel_config)
 
         request = Request(num_input_tokens=100, num_output_tokens=50)
         request.state = RequestState.PREFILLING

@@ -39,6 +39,7 @@ from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tests.helpers.model_cache import user_config_build_cache_key
 
 from .test_common import (
@@ -255,7 +256,7 @@ class SwiGLUFusionPassTestMixin:
             )
             config_resolver = ConfigResolver(user_input=user_input)
             model_config = config_resolver.resolve()
-            model = TransformerModel(model_id, model_config)
+            model = layer_transformer(model_id, model_config)
             cls._model_cache[key] = torch.compile(model, backend=get_backend(), fullgraph=True)
         return cls._model_cache[key]
 
@@ -265,7 +266,7 @@ class SwiGLUFusionPassTestMixin:
         if key not in cls._model_cache:
             config_resolver = ConfigResolver(user_input=user_input)
             model_config = config_resolver.resolve()
-            model = TransformerModel(user_input.model_id, model_config)
+            model = layer_transformer(user_input.model_id, model_config)
             cls._model_cache[key] = torch.compile(model, backend=get_backend(), fullgraph=True)
         return cls._model_cache[key]
 

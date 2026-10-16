@@ -19,7 +19,7 @@
 CACHE POLICY:
     Only deterministic, pure-construction artifacts are cached:
         * Hugging Face configs from ``AutoModelConfigLoader.load_config``.
-        * Freshly ``build_model(...)`` results.
+        * Models built through the L1 executor (``model_from_user_input``).
     Entries are keyed by their full determining inputs (``model_id`` for configs,
     ``user_config_build_cache_key`` for models).
 
@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import copy
 
-from tensor_cast.core.model_builder import build_model
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.transformers.model import TransformerModel
 from tensor_cast.transformers.utils import AutoModelConfigLoader
@@ -94,5 +93,7 @@ def get_built_model(user_config: UserInputConfig) -> TransformerModel:
     """
     key = user_config_build_cache_key(user_config)
     if key not in _BUILT_MODEL_CACHE:
-        _BUILT_MODEL_CACHE[key] = build_model(user_config)
+        from tests.helpers.model_builder import model_from_user_input
+
+        _BUILT_MODEL_CACHE[key] = model_from_user_input(user_config)
     return _BUILT_MODEL_CACHE[key]

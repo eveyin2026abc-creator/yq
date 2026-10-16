@@ -34,6 +34,7 @@ from tensor_cast.quantize_utils import LinearQuantType, QuantGranularity
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config
 from tensor_cast.transformers.model import TransformerModel
+from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.utils import AutoModelConfigLoader
 
 from .test_common import count_events, get_quant_config
@@ -65,7 +66,7 @@ class GmmPassTestCase(unittest.TestCase):
         )
         config_resolver = ConfigResolver(user_input=user_input)
         model_config = config_resolver.resolve()
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
 
         num_tokens = 100
@@ -99,7 +100,7 @@ class GmmPassTestCase(unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
@@ -146,7 +147,7 @@ class GmmPassTestCase(unittest.TestCase):
             moe_config=moe_config,
             hf_config=hf_config,
         )
-        model = TransformerModel(model_id, model_config)
+        model = layer_transformer(model_id, model_config)
         model = torch.compile(model, backend=get_backend(), fullgraph=True)
         inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
         position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
