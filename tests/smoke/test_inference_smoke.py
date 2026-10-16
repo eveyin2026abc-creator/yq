@@ -37,7 +37,8 @@ import pytest
 import torch
 from tensor_cast.core.input_generator import generate_inputs
 from tensor_cast.core.model_builder import build_model
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import TEST_DEVICE
 from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
@@ -66,7 +67,6 @@ def test_single_token_prefill_slower_than_decode_smoke():
         num_hidden_layers_override=1,
         do_compile=False,
     )
-    prefill_result = ModelRunner(prefill_config).run_inference(generate_inputs_func=generate_inputs)
     decode_config = UserInputConfig(
         model_id=model_id,
         num_queries=1,
@@ -75,7 +75,9 @@ def test_single_token_prefill_slower_than_decode_smoke():
         num_hidden_layers_override=1,
         do_compile=False,
     )
-    decode_result = ModelRunner(decode_config).run_inference(generate_inputs_func=generate_inputs)
+    with isolated_l1_executor() as executor:
+        prefill_result = executor.run(prefill_config, generate_inputs_func=generate_inputs).metrics
+        decode_result = executor.run(decode_config, generate_inputs_func=generate_inputs).metrics
     assert prefill_result is not None and decode_result is not None
     if isinstance(prefill_result, ModelRunnerMetrics) and isinstance(decode_result, ModelRunnerMetrics):
         prefill_time = prefill_result.execution_time_s.get("analytic", 0)

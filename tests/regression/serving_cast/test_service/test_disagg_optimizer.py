@@ -35,7 +35,7 @@ from serving_cast.service.utils import (
     OptimizerData,
 )
 
-from tensor_cast.core.model_runner import ModelRunner
+from tests.helpers.l1_scenario import L1ScenarioExecutor
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import DeviceProfile
 from tests.helpers.model_assets import vendored_model_config_path
@@ -91,9 +91,13 @@ class TestDisaggStrategy(unittest.TestCase):
         self.device_profiler = DeviceProfile.all_device_profiles[self.args.device]
 
         self.user_input = UserInputConfig.from_args(self.args)
-        self.model_runner = ModelRunner(self.user_input)
+        self._l1_executor = L1ScenarioExecutor()
+        self.model_runner = self._l1_executor.runner(self.user_input)
         # Initialize strategy
         self.strategy.initialize(self.model_runner)
+
+    def tearDown(self):
+        self._l1_executor.reset()
 
     def test_name_attribute(self):
         """Test that name attribute is set correctly"""

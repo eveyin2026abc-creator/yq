@@ -34,7 +34,8 @@ from dataclasses import asdict
 import pytest
 
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
@@ -52,7 +53,8 @@ def test_gmm_pass_grouped_matmul_smoke():
         quantize_linear_action=QuantizeLinearAction.DISABLED,
         enable_dispatch_ffn_combine=False,
     )
-    result = ModelRunner(user_input).run_inference(generate_inputs_func=generate_inputs)
+    with isolated_l1_executor() as executor:
+        result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
     assert result is not None
     if isinstance(result, ModelRunnerMetrics):
         result = asdict(result)
@@ -75,7 +77,8 @@ def test_gmm_pass_vl_moe_smoke():
         quantize_linear_action=QuantizeLinearAction.DISABLED,
         enable_dispatch_ffn_combine=False,
     )
-    runner = ModelRunner(user_input)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user_input)
     assert runner.model.is_vl_model
     result = runner.run_inference(generate_inputs_func=generate_inputs)
     assert result is not None
@@ -101,7 +104,8 @@ def test_gmm_fusion_ep_smoke():
         tp_size=1,
         enable_dispatch_ffn_combine=False,
     )
-    result = ModelRunner(user_input).run_inference(generate_inputs_func=generate_inputs)
+    with isolated_l1_executor() as executor:
+        result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
     assert result is not None
     if isinstance(result, ModelRunnerMetrics):
         result = asdict(result)
@@ -133,7 +137,12 @@ def test_dfc_dispatch_ffn_combine_smoke():
             quantize_linear_action=QuantizeLinearAction.W8A8_STATIC,
             enable_dispatch_ffn_combine=True,
         )
-        result = ModelRunner(user_input).run_inference(generate_inputs_func=generate_inputs)
+        with isolated_l1_executor() as executor:
+            result = executor.run(
+                user_input,
+                generate_inputs_func=generate_inputs,
+                compilation_config=["enable_dispatch_ffn_combine"],
+            ).metrics
         assert result is not None
         if isinstance(result, ModelRunnerMetrics):
             result = asdict(result)
@@ -163,7 +172,8 @@ def test_vl_moe_tp_ep_compile_smoke():
         moe_dp_size=1,
         moe_tp_size=1,
     )
-    runner = ModelRunner(user_input)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user_input)
     assert runner.model.is_vl_model
     input_kwargs = generate_inputs(
         runner.model,
