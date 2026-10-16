@@ -29,7 +29,8 @@ import torch
 from parameterized import parameterized
 from tensor_cast.core.compilation_config import apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import (
     QuantizeAttentionAction,
     QuantizeLinearAction,
@@ -256,9 +257,13 @@ def _run_case_simulation(case: BasePerfRegressionCase) -> tuple[str, float]:
         # Apply case-level compilation_config so the model is built under the
         # same flags the baseline was recorded under. An empty list explicitly
         # resets all four flags to False (the new unified default).
-        apply_compilation_config(case.compilation_config)
-        model_runner = ModelRunner(case.user_input)
-        result = model_runner.run_inference(generate_inputs_func=generate_inputs)
+        compilation_config = case.compilation_config or ()
+        with isolated_l1_executor() as executor:
+            result = executor.run(
+                case.user_input,
+                generate_inputs_func=generate_inputs,
+                compilation_config=compilation_config,
+            ).metrics
 
         if isinstance(result, ModelRunnerMetrics):
             table_result = result.table_result

@@ -42,7 +42,8 @@ test_vl_compile_glm45v           -> TestVLCompilePrefillNightly
 
 from tensor_cast.core.input_generator import generate_inputs
 from tensor_cast.core.model_builder import build_model
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
@@ -98,7 +99,8 @@ def test_vl_compile_glm45v():
         image_width=224,
         quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    runner = ModelRunner(user_config)
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user_config)
     assert runner.model.is_vl_model
     result = runner.run_inference(generate_inputs_func=generate_inputs)
     assert result is not None

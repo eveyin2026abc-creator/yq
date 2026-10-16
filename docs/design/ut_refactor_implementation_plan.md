@@ -67,6 +67,8 @@ Until both are approved, later pull requests must not move node ids. The next co
 
 ## Code already on this branch
 
+Smoke guards in `tests/smoke/test_inference_smoke.py`, `test_fusion_passes_smoke.py`, `test_model_runner_compile_smoke.py`, and `test_compile_remote_models_smoke.py` use the same entry, as do the text benchmark cases in `tests/benchmark/models/test_model_regression.py` and the agg/disagg optimizer setups. Node ids are unchanged.
+
 `isolated_l1_executor()` is the one-case entry. `test_text_generate.py`, the Kimi K2.5 / K3 cases, GLM5-Next compile cases, the VL compile case, the matmul-allreduce and sequence-parallel pass cases, the DFC model runs, the DFlash varlen run, and the serving optimizer factory now build through it. Pass flags that the executor would otherwise clear are passed back in `compilation_config`. Node ids are unchanged.
 
 `tests/regression/tensor_cast/test_text_generate.py` now runs its cases through `L1ScenarioExecutor`. Metric-only cases and model inspections use the class executor (`_run_shared`, `_shared_runner`). Compile cases and the expected-failure device case use `_isolated_executor`, so a compiled runner is not kept across `torch.compiler.reset()`. Node ids are unchanged.

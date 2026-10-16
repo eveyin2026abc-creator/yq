@@ -31,7 +31,8 @@ test_model_runner_compile_quant_deepseek -> TestTextGenerateNightly (test_qwen2_
 """
 
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
@@ -49,8 +50,8 @@ def test_model_runner_compile_deepseek():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    runner = ModelRunner(user_config)
-    result = runner.run_inference(generate_inputs_func=generate_inputs)
+    with isolated_l1_executor() as executor:
+        result = executor.run(user_config, generate_inputs_func=generate_inputs).metrics
     assert result is not None
     if isinstance(result, ModelRunnerMetrics):
         assert result.table_result is not None
@@ -67,8 +68,8 @@ def test_model_runner_compile_quant_deepseek():
         num_hidden_layers_override=1,
         quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
     )
-    runner = ModelRunner(user_config)
-    result = runner.run_inference(generate_inputs_func=generate_inputs)
+    with isolated_l1_executor() as executor:
+        result = executor.run(user_config, generate_inputs_func=generate_inputs).metrics
     assert result is not None
     if isinstance(result, ModelRunnerMetrics):
         assert result.table_result is not None
