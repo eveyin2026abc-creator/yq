@@ -78,21 +78,25 @@ def _remap_registered_hub_ids_session():
     """Rewrite Hub ids before module fixtures build models.
 
     The function-scoped hook below runs too late for module-scoped fixtures and
-    ``unittest`` class setup. Those paths were still passing ``Qwen/Qwen3-32B``
-    to Hugging Face.
+    ``unittest`` class setup. ``TransformerModel`` also passes the raw Hub id to
+    ``AutoModelConfigLoader.load_config``, which never builds a ``UserInputConfig``.
     """
     from tensor_cast.core.user_config import UserInputConfig
-    from tests.helpers.model_assets import resolve_offline_model_id
+    from tensor_cast.transformers.utils import AutoModelConfigLoader
+    from tests.helpers.model_assets import resolve_offline_model_id, wrap_load_config
 
     original = UserInputConfig.__post_init__
+    original_load_config = AutoModelConfigLoader.load_config
 
     def _post_init(self):
         self.model_id = resolve_offline_model_id(self.model_id)
         original(self)
 
     UserInputConfig.__post_init__ = _post_init
+    AutoModelConfigLoader.load_config = wrap_load_config(original_load_config)
     yield
     UserInputConfig.__post_init__ = original
+    AutoModelConfigLoader.load_config = original_load_config
 
 
 @pytest.fixture(autouse=True)

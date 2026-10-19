@@ -77,6 +77,15 @@ def resolve_offline_model_id(model_id: str) -> str:
     return model_id
 
 
+def wrap_load_config(load_config):
+    """Rewrite registered Hub ids before ``AutoModelConfigLoader.load_config``."""
+
+    def _load_config(self, model_id, *args, **kwargs):
+        return load_config(self, resolve_offline_model_id(model_id), *args, **kwargs)
+
+    return _load_config
+
+
 def vendored_model_config_path(model_id: str) -> str:
     """Return a local config directory for a model used by an offline test."""
     try:

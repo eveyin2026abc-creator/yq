@@ -20,8 +20,10 @@ import pytest
 
 from tests.helpers.model_assets import (
     resolve_offline_model_id,
+    set_offline_hub_remap,
     vendored_model_config_path,
     vendored_preprocessor_config_path,
+    wrap_load_config,
 )
 
 
@@ -87,6 +89,27 @@ def test_resolve_offline_model_id_rewrites_registered_hub_id() -> None:
     resolved = resolve_offline_model_id("Qwen/Qwen3-32B")
     assert resolved == vendored_model_config_path("Qwen/Qwen3-32B")
     assert resolve_offline_model_id("unknown/Model") == "unknown/Model"
+
+
+def test_wrap_load_config_rewrites_registered_hub_id_before_hub_access() -> None:
+    seen: dict[str, str] = {}
+
+    def _load_config(_self, model_id, remote_source="huggingface"):
+        seen["model_id"] = model_id
+        seen["remote_source"] = remote_source
+        return "config"
+
+    wrapped = wrap_load_config(_load_config)
+    assert wrapped(object(), "Qwen/Qwen3-32B", remote_source="huggingface") == "config"
+    assert seen["model_id"] == vendored_model_config_path("Qwen/Qwen3-32B")
+    assert seen["remote_source"] == "huggingface"
+
+    set_offline_hub_remap(False)
+    try:
+        wrapped(object(), "Qwen/Qwen3-32B")
+    finally:
+        set_offline_hub_remap(True)
+    assert seen["model_id"] == "Qwen/Qwen3-32B"
 
 
 def test_get_hf_config_loads_vendored_directory_for_registered_hub_id(monkeypatch) -> None:
