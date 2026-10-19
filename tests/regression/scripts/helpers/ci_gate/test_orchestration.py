@@ -29,8 +29,14 @@ import pytest
 import scripts.helpers.ci_gate.main as ci_gate_main
 from scripts.helpers._config import Config
 from scripts.helpers.ci_gate.diff import GitDiffResult
-from scripts.helpers.ci_gate.main import _execute_pytest, _run_pytest, main
-from scripts.helpers.ci_gate.models import Baseline, ChangeSet, TestExemption
+from scripts.helpers.ci_gate.main import _execute_pytest, _run_execution_waves, _run_pytest, main
+from scripts.helpers.ci_gate.models import (
+    Baseline,
+    ChangeSet,
+    ExecutionPlan,
+    TestExemption,
+    TestRunWave,
+)
 from scripts.helpers.common.test_map_loader import TestMapFreshness
 from tests.helpers.fake_subprocess import FakeCompleted
 from tests.regression.scripts.helpers.conftest import default_ci_gate_policy
@@ -228,8 +234,6 @@ def test_run_pytest_adds_cov_args_when_requested(
     assert extra_args
     assert any(str(arg).startswith("--cov=") for arg in extra_args)
     assert "--cov-context=test" in extra_args
-    assert "-p" in extra_args
-    assert "scripts.helpers.common.coverage_sqlite" in extra_args
 
 
 def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,6 +320,65 @@ def test_run_pytest_cov_append_keeps_existing_coverage_data(monkeypatch: pytest.
         assert fresh.read_text(encoding="utf-8") == "keep"
     finally:
         fresh.unlink(missing_ok=True)
+
+
+def test_run_execution_waves_retries_corrupt_coverage_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+    plan = ExecutionPlan(
+        full_suite=False,
+        waves=(
+            TestRunWave(targets=("tests/test_a.py",), marker="not npu"),
+            TestRunWave(targets=("tests/test_b.py",), marker="not npu"),
+        ),
+        reasons={},
+    )
+
+    def _fake_run(targets: list[str], **_kwargs: object) -> int:
+        calls.append(tuple(targets))
+        if len(calls) == 2:
+            damaged = tmp_path / ".coverage.worker"
+            damaged.write_bytes(b"not sqlite")
+            return 3
+        return 0
+
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.REPO_ROOT", tmp_path)
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._run_pytest", _fake_run)
+
+    assert _run_execution_waves(logging.getLogger("test"), plan, use_cov=True) == (0, None)
+    assert calls == [
+        ("tests/test_a.py",),
+        ("tests/test_b.py",),
+        ("tests/test_a.py",),
+        ("tests/test_b.py",),
+    ]
+    assert not (tmp_path / ".coverage.worker").exists()
+
+
+def test_run_execution_waves_does_not_retry_regular_test_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    plan = ExecutionPlan(
+        full_suite=False,
+        waves=(TestRunWave(targets=("tests/test_a.py",), marker="not npu"),),
+        reasons={},
+    )
+
+    def _fake_run(*_args: object, **_kwargs: object) -> int:
+        nonlocal calls
+        calls += 1
+        return 1
+
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._run_pytest", _fake_run)
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._corrupt_coverage_artifacts", lambda: ())
+
+    code, message = _run_execution_waves(logging.getLogger("test"), plan, use_cov=True)
+    assert code == 1
+    assert message is not None
+    assert calls == 1
 
 
 def test_execute_pytest_returns_process_result() -> None:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import sqlite3
 import subprocess
 import sys
 from collections import Counter
@@ -92,6 +93,9 @@ _CHANGED_TEST_MARKER: str | None = None
 _REGRESSION_MARKER = "not npu and not nightly and not network"
 _FULL_SUITE_MARKER = _REGRESSION_MARKER
 _COVERAGE_DATA_PATH = REPO_ROOT / ".coverage"
+_COVERAGE_SCHEMA_TABLES = frozenset(
+    {"coverage_schema", "meta", "file", "context", "line_bits", "arc", "tracer"}
+)
 _SAMPLE_NODE_LIMIT = 3
 _MISSING_LINE_LIMIT = 20
 
@@ -393,6 +397,25 @@ def _clear_coverage_artifacts() -> None:
         logger.info("Removed stale coverage data file: %s", path.name)
 
 
+def _corrupt_coverage_artifacts() -> tuple[Path, ...]:
+    """Return coverage SQLite files whose schema is missing or unreadable."""
+    damaged: list[Path] = []
+    paths = [REPO_ROOT / ".coverage", *sorted(REPO_ROOT.glob(".coverage.*"))]
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+                rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+                tables = {str(row[0]) for row in rows}
+        except sqlite3.Error:
+            damaged.append(path)
+            continue
+        if not _COVERAGE_SCHEMA_TABLES.issubset(tables):
+            damaged.append(path)
+    return tuple(damaged)
+
+
 def _execute_pytest(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     """Execute one planned pytest command without exposing shared subprocess state to tests."""
     return subprocess.run(cmd, cwd=REPO_ROOT, check=False, text=True)
@@ -548,21 +571,33 @@ def _run_execution_waves(
     *,
     use_cov: bool,
 ) -> tuple[int, str | None]:
-    for wave_index, wave in enumerate(execution.waves):
-        pytest_code = _run_pytest(
-            list(wave.targets),
-            marker=wave.marker,
-            use_cov=use_cov,
-            cov_append=use_cov and wave_index > 0,
-        )
-        if pytest_code != 0:
+    for attempt in range(2):
+        for wave_index, wave in enumerate(execution.waves):
+            pytest_code = _run_pytest(
+                list(wave.targets),
+                marker=wave.marker,
+                use_cov=use_cov,
+                cov_append=use_cov and wave_index > 0,
+            )
+            if pytest_code == 0:
+                continue
+            damaged = _corrupt_coverage_artifacts() if use_cov else ()
+            if attempt == 0 and damaged:
+                logger.warning(
+                    "Coverage data is corrupt (%s); restarting coverage waves once",
+                    ", ".join(path.name for path in damaged),
+                )
+                _clear_coverage_artifacts()
+                break
             failed_nodes = wave.targets if not execution.full_suite else ()
             _log_pytest_failure(logger, full_suite=execution.full_suite, failed_nodes=failed_nodes)
             return pytest_code, _pytest_failure_user_message(
                 full_suite=execution.full_suite,
                 failed_nodes=failed_nodes,
             )
-    return 0, None
+        else:
+            return 0, None
+    raise AssertionError("coverage retry loop exhausted")
 
 
 def _soft_mapping_exit_code(

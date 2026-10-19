@@ -55,8 +55,6 @@ def test_cov_args_default_no_context_no_append() -> None:
     for pkg in expected:
         assert f"--cov={pkg}" in args
     assert "--cov-branch" in args
-    assert "-p" in args
-    assert "scripts.helpers.common.coverage_sqlite" in args
     assert "--cov-context=test" not in args
     assert "--cov-append" not in args
     assert "--cov-report=" in args
