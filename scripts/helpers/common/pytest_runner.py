@@ -187,8 +187,14 @@ def build_pytest_cmd(
     marker: str | None,
     collected_count: int,
     extra_args: Sequence[str] = (),
+    use_xdist: bool = True,
 ) -> list[str]:
-    """Assemble a pytest command with optional marker and collect-first xdist sizing."""
+    """Assemble a pytest command with optional marker and collect-first xdist sizing.
+
+    Coverage collection must stay single-process. pytest-xdist workers each write a
+    SQLite data file with ``journal_mode=off``, which can leave the ``context`` table
+    missing and abort the worker during ``coverage.save()``.
+    """
     cmd = [
         python,
         "-m",
@@ -198,5 +204,6 @@ def build_pytest_cmd(
     ]
     if marker is not None:
         cmd.extend(["-m", marker])
-    cmd.extend([*xdist_worker_args(collected_count), *_DEFAULT_RUN_ARGS, *extra_args])
+    xdist_args = xdist_worker_args(collected_count) if use_xdist else []
+    cmd.extend([*xdist_args, *_DEFAULT_RUN_ARGS, *extra_args])
     return cmd

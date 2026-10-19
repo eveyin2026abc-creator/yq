@@ -364,6 +364,8 @@ def _run_pytest(
         run_targets = targets
         collected = _collected_count_for_targets(targets, marker=marker)
 
+    if use_cov and not cov_append:
+        _clear_coverage_artifacts()
     extra_args = cov_pytest_args(cov_context=True, append=cov_append) if use_cov else ()
     cmd = build_pytest_cmd(
         sys.executable,
@@ -371,9 +373,25 @@ def _run_pytest(
         marker=marker,
         collected_count=collected,
         extra_args=extra_args,
+        use_xdist=not use_cov,
     )
     logger.info("Running pytest: %s", shlex.join(cmd))
     return _execute_pytest(cmd).returncode
+
+
+def _clear_coverage_artifacts() -> None:
+    """Drop coverage data files before a new collection.
+
+    A later wave passes ``cov_append=True`` and must keep the file written by the
+    first coverage wave.
+    """
+    logger = logging.getLogger("ci_gate")
+    stale = [REPO_ROOT / ".coverage", *sorted(REPO_ROOT.glob(".coverage.*"))]
+    for path in stale:
+        if not path.is_file():
+            continue
+        path.unlink()
+        logger.info("Removed stale coverage data file: %s", path.name)
 
 
 def _execute_pytest(cmd: list[str]) -> subprocess.CompletedProcess[str]:

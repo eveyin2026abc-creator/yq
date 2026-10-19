@@ -382,6 +382,20 @@ def test_build_pytest_cmd_assembles_expected_flags(
     assert "--junit-xml=out.xml" in cmd
 
 
+def test_build_pytest_cmd_use_xdist_false_omits_xdist() -> None:
+    cmd = build_pytest_cmd(
+        "python",
+        ["tests/smoke"],
+        marker="not npu",
+        collected_count=4,
+        extra_args=["--cov=cli"],
+        use_xdist=False,
+    )
+    assert "-n" not in cmd
+    assert "--dist" not in cmd
+    assert "--cov=cli" in cmd
+
+
 def test_build_pytest_cmd_zero_collected_omits_xdist() -> None:
     cmd = build_pytest_cmd(
         "python",

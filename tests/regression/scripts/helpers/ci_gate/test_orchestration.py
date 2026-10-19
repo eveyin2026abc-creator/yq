@@ -204,9 +204,11 @@ def test_run_pytest_adds_cov_args_when_requested(
     def _fake_build(
         *_args: object,
         extra_args: tuple[str, ...] = (),
+        use_xdist: bool = True,
         **_kwargs: object,
     ) -> list[str]:
         captured["extra_args"] = extra_args
+        captured["use_xdist"] = use_xdist
         return ["pytest"]
 
     monkeypatch.setattr("scripts.helpers.ci_gate.main.build_pytest_cmd", _fake_build)
@@ -218,12 +220,17 @@ def test_run_pytest_adds_cov_args_when_requested(
         "scripts.helpers.ci_gate.main._collected_count_for_targets",
         lambda *_args, **_kwargs: 1,
     )
+    monkeypatch.setattr(
+        "scripts.helpers.common.coverage_config.product_roots",
+        lambda *_args, **_kwargs: ("cli",),
+    )
 
     _run_pytest(["tests"], marker="not npu", use_cov=True)
     extra_args = captured["extra_args"]
     assert extra_args
     assert any(str(arg).startswith("--cov=") for arg in extra_args)
     assert "--cov-context=test" in extra_args
+    assert captured["use_xdist"] is False
 
 
 def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,9 +253,70 @@ def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> N
         "scripts.helpers.ci_gate.main._collected_count_for_targets",
         lambda *_args, **_kwargs: 1,
     )
+    monkeypatch.setattr(
+        "scripts.helpers.common.coverage_config.product_roots",
+        lambda *_args, **_kwargs: ("cli",),
+    )
 
     _run_pytest(["tests"], marker="not npu", use_cov=True, cov_append=True)
     assert "--cov-append" in captured[-1]
+
+
+def test_run_pytest_clears_stale_coverage_before_first_cov_wave(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main.build_pytest_cmd",
+        lambda *_args, **_kwargs: ["pytest"],
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main._execute_pytest",
+        lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main._collected_count_for_targets",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.common.coverage_config.product_roots",
+        lambda *_args, **_kwargs: ("cli",),
+    )
+    root = ci_gate_main.REPO_ROOT
+    fresh = root / ".coverage"
+    parallel = root / ".coverage.pid1.abc"
+    fresh.write_text("stale", encoding="utf-8")
+    parallel.write_text("stale", encoding="utf-8")
+    try:
+        _run_pytest(["tests"], marker="not npu", use_cov=True)
+        assert not fresh.exists()
+        assert not parallel.exists()
+    finally:
+        fresh.unlink(missing_ok=True)
+        parallel.unlink(missing_ok=True)
+
+
+def test_run_pytest_cov_append_keeps_existing_coverage_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main.build_pytest_cmd",
+        lambda *_args, **_kwargs: ["pytest"],
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main._execute_pytest",
+        lambda *_args, **_kwargs: FakeCompleted(0, "", ""),
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.ci_gate.main._collected_count_for_targets",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "scripts.helpers.common.coverage_config.product_roots",
+        lambda *_args, **_kwargs: ("cli",),
+    )
+    fresh = ci_gate_main.REPO_ROOT / ".coverage"
+    fresh.write_text("keep", encoding="utf-8")
+    try:
+        _run_pytest(["tests"], marker="not npu", use_cov=True, cov_append=True)
+        assert fresh.read_text(encoding="utf-8") == "keep"
+    finally:
+        fresh.unlink(missing_ok=True)
 
 
 def test_execute_pytest_returns_process_result() -> None:
