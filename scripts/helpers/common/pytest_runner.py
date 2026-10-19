@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 _NOT_FOUND_RE = re.compile(r"^ERROR: not found: ([^\n\r]+)", re.MULTILINE)
 
 PYTEST_IGNORE_ADDOPTS: Final[list[str]] = ["-o", "addopts="]
+_COLLECT_IDS_PLUGIN: Final = "scripts.helpers.common.pytest_collect_ids"
+_COLLECT_ENV_KEYS: Final = frozenset(
+    {
+        "PYTEST_ADDOPTS",
+        "PYTEST_CURRENT_TEST",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "PYTEST_XDIST_TESTRUNUID",
+    }
+)
 
 _DEFAULT_RUN_ARGS: Final[tuple[str, ...]] = (
     "-vv",
@@ -64,72 +74,102 @@ def _normalize_node_id(node_id: str) -> str:
 
 
 def _parse_not_found_node_ids(stderr: str) -> frozenset[str]:
-    return frozenset(_normalize_node_id(node_id) for node_id in _NOT_FOUND_RE.findall(stderr))
+    return frozenset(
+        _normalize_node_id(node_id) for node_id in _NOT_FOUND_RE.findall(stderr)
+    )
 
 
-def collect_test_node_ids(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:
+def collect_test_node_ids(
+    targets: Sequence[str], *, marker: str | None
+) -> tuple[str, ...]:
     """Collect pytest node ids matching *marker* from collect-only stdout."""
     return _collect_with_marker(targets, marker=marker)
 
 
 def collect_all_test_node_ids(targets: Sequence[str]) -> tuple[str, ...]:
-    """Collect pytest node ids from *targets* without applying a marker filter."""
+    """Collect pytest node ids from *targets*, including npu, nightly, and network."""
     return _collect_with_marker(targets, marker=None)
 
 
-def _collect_with_marker(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:
-    if not targets:
-        return ()
+def _collect_subprocess_env() -> dict[str, str]:
+    """Drop parent pytest, xdist, and coverage settings from a nested collect."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _COLLECT_ENV_KEYS and not key.startswith("COV_CORE_")
+    }
+    root = str(REPO_ROOT)
+    parts = [part for part in env.get("PYTHONPATH", "").split(os.pathsep) if part]
+    if root not in parts:
+        env["PYTHONPATH"] = os.pathsep.join([root, *parts])
+    return env
 
-    cmd = [
+
+def _collect_pytest_cmd(targets: Sequence[str], *, marker: str | None) -> list[str]:
+    """Build collect-only argv whose stdout contains one node id per line.
+
+    ``-qq`` makes pytest print ``path: count`` instead of node ids. The collect-ids
+    plugin prints the ids. The trailing ``-m`` wins over pyproject ``addopts`` and
+    any ``PYTEST_ADDOPTS`` marker, so an empty expression keeps npu tests.
+    """
+    return [
         sys.executable,
         "-m",
         "pytest",
         *targets,
         *PYTEST_IGNORE_ADDOPTS,
         "--collect-only",
-        "-q",
+        "-qq",
         "--no-header",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        _COLLECT_IDS_PLUGIN,
+        "-m",
+        "" if marker is None else marker,
     ]
-    if marker is not None:
-        cmd.extend(["-m", marker])
+
+
+def _collect_with_marker(
+    targets: Sequence[str], *, marker: str | None
+) -> tuple[str, ...]:
+    if not targets:
+        return ()
+
     proc = subprocess.run(
-        cmd,
+        _collect_pytest_cmd(targets, marker=marker),
         cwd=REPO_ROOT,
+        env=_collect_subprocess_env(),
         capture_output=True,
         text=True,
         check=False,
     )
     if proc.returncode not in (0, 5):
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise ConfigError(f"pytest collect-only failed (exit {proc.returncode})" + (f": {detail}" if detail else ""))
+        raise ConfigError(
+            f"pytest collect-only failed (exit {proc.returncode})"
+            + (f": {detail}" if detail else "")
+        )
 
     return _parse_collect_only_node_ids(proc.stdout)
 
 
-def _run_collect_only(targets: Sequence[str], *, marker: str | None) -> subprocess.CompletedProcess[str]:
-    cmd = [
-        sys.executable,
-        "-m",
-        "pytest",
-        *targets,
-        *PYTEST_IGNORE_ADDOPTS,
-        "--collect-only",
-        "-q",
-        "--no-header",
-    ]
-    if marker is not None:
-        cmd.extend(["-m", marker])
+def _run_collect_only(
+    targets: Sequence[str], *, marker: str | None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        cmd,
+        _collect_pytest_cmd(targets, marker=marker),
         cwd=REPO_ROOT,
+        env=_collect_subprocess_env(),
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:
+def filter_collectable_node_ids(
+    targets: Sequence[str], *, marker: str | None
+) -> tuple[str, ...]:
     """Return collectable node ids; drop stale ids instead of failing the batch."""
     if not targets:
         return ()
@@ -141,7 +181,10 @@ def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -
     proc = _run_collect_only(targets, marker=marker)
     if proc.returncode not in (0, 4, 5):
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise ConfigError(f"pytest collect-only failed (exit {proc.returncode})" + (f": {detail}" if detail else ""))
+        raise ConfigError(
+            f"pytest collect-only failed (exit {proc.returncode})"
+            + (f": {detail}" if detail else "")
+        )
 
     batch_ids = _parse_collect_only_node_ids(proc.stdout)
     if batch_ids:
@@ -150,11 +193,15 @@ def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -
 
     not_found = _parse_not_found_node_ids(proc.stderr or "")
     if not_found:
-        remaining = tuple(target for target in targets if _normalize_node_id(target) not in not_found)
+        remaining = tuple(
+            target for target in targets if _normalize_node_id(target) not in not_found
+        )
         dropped = len(targets) - len(remaining)
         if dropped:
             sample = ", ".join(sorted(not_found)[:3])
-            logger.info("Dropped %d stale pytest node id(s); sample: %s", dropped, sample)
+            logger.info(
+                "Dropped %d stale pytest node id(s); sample: %s", dropped, sample
+            )
             return remaining
 
     if proc.returncode == 0:
@@ -164,7 +211,10 @@ def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -
         return ()
 
     detail = (proc.stderr or proc.stdout or "").strip()
-    raise ConfigError("pytest collect-only exit 4 with unparseable stderr" + (f": {detail[:500]}" if detail else ""))
+    raise ConfigError(
+        "pytest collect-only exit 4 with unparseable stderr"
+        + (f": {detail[:500]}" if detail else "")
+    )
 
 
 def count_collected_tests(targets: Sequence[str], *, marker: str) -> int:
