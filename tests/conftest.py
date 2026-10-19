@@ -19,7 +19,7 @@ Pytest hooks for the test suite.
 
 Hub access: default online. Set ``MSMODELING_OFFLINE=1`` to enable
 ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE`` / ``HF_DATASETS_OFFLINE``.
-See tests/README.md and docs/design/ut_refactor.md.
+See tests/README.md.
 
 After the session ends, optionally remove hub weight shards under the repo-local
 ``.msmodeling_cache`` while keeping config and Python sources.
