@@ -204,6 +204,7 @@ def test_run_pytest_stale_node_targets_log_skipped(
 
 def test_run_pytest_adds_cov_args_when_requested(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     captured: dict[str, tuple[str, ...]] = {}
 
@@ -228,6 +229,7 @@ def test_run_pytest_adds_cov_args_when_requested(
         "scripts.helpers.common.coverage_config.product_roots",
         lambda *_args, **_kwargs: ("cli",),
     )
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.REPO_ROOT", tmp_path)
 
     _run_pytest(["tests"], marker="not npu", use_cov=True)
     extra_args = captured["extra_args"]
@@ -236,7 +238,10 @@ def test_run_pytest_adds_cov_args_when_requested(
     assert "--cov-context=test" in extra_args
 
 
-def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_pytest_cov_append_passes_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     captured: list[tuple[str, ...]] = []
 
     def _fake_build(
@@ -260,12 +265,16 @@ def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> N
         "scripts.helpers.common.coverage_config.product_roots",
         lambda *_args, **_kwargs: ("cli",),
     )
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.REPO_ROOT", tmp_path)
 
     _run_pytest(["tests"], marker="not npu", use_cov=True, cov_append=True)
     assert "--cov-append" in captured[-1]
 
 
-def test_run_pytest_clears_stale_coverage_before_first_cov_wave(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_pytest_clears_stale_coverage_before_first_cov_wave(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setattr(
         "scripts.helpers.ci_gate.main.build_pytest_cmd",
         lambda *_args, **_kwargs: ["pytest"],
@@ -282,7 +291,8 @@ def test_run_pytest_clears_stale_coverage_before_first_cov_wave(monkeypatch: pyt
         "scripts.helpers.common.coverage_config.product_roots",
         lambda *_args, **_kwargs: ("cli",),
     )
-    root = ci_gate_main.REPO_ROOT
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.REPO_ROOT", tmp_path)
+    root = tmp_path
     fresh = root / ".coverage"
     parallel = root / ".coverage.pid1.abc"
     fresh.write_text("stale", encoding="utf-8")
@@ -296,7 +306,10 @@ def test_run_pytest_clears_stale_coverage_before_first_cov_wave(monkeypatch: pyt
         parallel.unlink(missing_ok=True)
 
 
-def test_run_pytest_cov_append_keeps_existing_coverage_data(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_pytest_cov_append_keeps_existing_coverage_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setattr(
         "scripts.helpers.ci_gate.main.build_pytest_cmd",
         lambda *_args, **_kwargs: ["pytest"],
@@ -313,7 +326,8 @@ def test_run_pytest_cov_append_keeps_existing_coverage_data(monkeypatch: pytest.
         "scripts.helpers.common.coverage_config.product_roots",
         lambda *_args, **_kwargs: ("cli",),
     )
-    fresh = ci_gate_main.REPO_ROOT / ".coverage"
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.REPO_ROOT", tmp_path)
+    fresh = tmp_path / ".coverage"
     fresh.write_text("keep", encoding="utf-8")
     try:
         _run_pytest(["tests"], marker="not npu", use_cov=True, cov_append=True)
