@@ -204,11 +204,9 @@ def test_run_pytest_adds_cov_args_when_requested(
     def _fake_build(
         *_args: object,
         extra_args: tuple[str, ...] = (),
-        use_xdist: bool = True,
         **_kwargs: object,
     ) -> list[str]:
         captured["extra_args"] = extra_args
-        captured["use_xdist"] = use_xdist
         return ["pytest"]
 
     monkeypatch.setattr("scripts.helpers.ci_gate.main.build_pytest_cmd", _fake_build)
@@ -230,7 +228,8 @@ def test_run_pytest_adds_cov_args_when_requested(
     assert extra_args
     assert any(str(arg).startswith("--cov=") for arg in extra_args)
     assert "--cov-context=test" in extra_args
-    assert captured["use_xdist"] is False
+    assert "-p" in extra_args
+    assert "scripts.helpers.common.coverage_sqlite" in extra_args
 
 
 def test_run_pytest_cov_append_passes_flag(monkeypatch: pytest.MonkeyPatch) -> None:

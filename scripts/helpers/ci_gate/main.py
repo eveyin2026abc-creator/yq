@@ -373,7 +373,6 @@ def _run_pytest(
         marker=marker,
         collected_count=collected,
         extra_args=extra_args,
-        use_xdist=not use_cov,
     )
     logger.info("Running pytest: %s", shlex.join(cmd))
     return _execute_pytest(cmd).returncode

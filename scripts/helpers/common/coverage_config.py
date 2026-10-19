@@ -35,22 +35,30 @@ def product_roots(repo_root: Path | None = None) -> tuple[str, ...]:
 
 
 def pytest_xdist_args(*, collected_count: int | None = None) -> list[str]:
-    """pytest-xdist parallelism; safe with pytest-cov when ``[tool.coverage.run] parallel`` is set.
+    """pytest-xdist parallelism for coverage runs.
 
-    When *collected_count* is omitted, worker count defaults to ``os.cpu_count()`` (legacy callers).
+    ``[tool.coverage.run] parallel`` gives each worker its own data file. ``cov_pytest_args``
+    also loads ``coverage_sqlite``, which replaces coverage's ``journal_mode=off`` so those
+    files keep a rollback journal. When *collected_count* is omitted, worker count defaults
+    to ``os.cpu_count()`` (legacy callers).
     """
     if collected_count is None:
         collected_count = os.cpu_count() or 1
     return xdist_worker_args(collected_count)
 
 
+_COVERAGE_SQLITE_PLUGIN = "scripts.helpers.common.coverage_sqlite"
+
+
 def cov_pytest_args(*, cov_context: bool = False, append: bool = False) -> list[str]:
     """Build --cov flags for pytest. Always uses --cov-branch, no terminal report.
 
     Requires ``parallel = true`` under ``[tool.coverage.run]`` when used with ``pytest_xdist_args()``.
+    The sqlite plugin keeps xdist workers from tearing the coverage database.
     """
     cov_packages = tuple(p.rstrip("/") for p in product_roots())
-    args: list[str] = [f"--cov={pkg}" for pkg in cov_packages]
+    args: list[str] = ["-p", _COVERAGE_SQLITE_PLUGIN]
+    args.extend(f"--cov={pkg}" for pkg in cov_packages)
     args.append("--cov-branch")
     if cov_context:
         args.append("--cov-context=test")
