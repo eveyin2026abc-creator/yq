@@ -24,7 +24,9 @@ import pytest
 
 from scripts.helpers.common.pytest_runner import (
     PYTEST_IGNORE_ADDOPTS,
+    _parse_collect_only_node_ids,
     _parse_not_found_node_ids,
+    _parse_plugin_node_ids,
     _run_collect_only,
     build_pytest_cmd,
     collect_all_test_node_ids,
@@ -126,6 +128,28 @@ def test_collect_all_test_node_ids_skips_marker_filter(
     assert "PYTEST_ADDOPTS" not in envs[0]
     assert "PYTEST_XDIST_WORKER" not in envs[0]
     assert "COV_CORE_DATAFILE" not in envs[0]
+
+
+def test_collect_all_test_node_ids_keeps_parameter_ids_with_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node_id = "tests/regression/cli/test_demo.py::test_case[hello world]"
+
+    def _fake_run(_cmd: list[str], **kw: object) -> FakeCompleted:
+        env = kw.get("env")
+        assert isinstance(env, dict)
+        with open(env["MSMODELING_COLLECT_NODE_IDS"], "w", encoding="utf-8") as handle:
+            handle.write(f"/repo/{node_id}\n")
+        return FakeCompleted(0, "tests/regression/cli/test_demo.py: 1\n", "")
+
+    monkeypatch.setattr("scripts.helpers.common.pytest_runner.subprocess.run", _fake_run)
+    assert collect_all_test_node_ids(["tests/regression/cli/test_demo.py"]) == (node_id,)
+
+
+def test_parse_plugin_node_ids_keeps_spaces_and_stdout_fallback_uses_first_token() -> None:
+    node_id = "tests/a.py::test_case[hello world]"
+    assert _parse_plugin_node_ids(f"{node_id}\n") == (node_id,)
+    assert _parse_collect_only_node_ids(f"{node_id} extra\n") == ("tests/a.py::test_case[hello",)
 
 
 def test_run_collect_only_returns_completed_process(

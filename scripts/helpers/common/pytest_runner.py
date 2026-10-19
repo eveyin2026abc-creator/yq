@@ -58,7 +58,25 @@ _DEFAULT_RUN_ARGS: Final[tuple[str, ...]] = (
 )
 
 
+def _parse_plugin_node_ids(text: str) -> tuple[str, ...]:
+    """Parse collect-ids plugin output, one complete node id per line.
+
+    Parameter ids may contain spaces, so the line is kept whole.
+    """
+    node_ids: list[str] = []
+    for line in text.splitlines():
+        node_id = _normalize_node_id(line)
+        if "::" in node_id and node_id.startswith("tests/"):
+            node_ids.append(node_id)
+    return tuple(node_ids)
+
+
 def _parse_collect_only_node_ids(stdout: str) -> tuple[str, ...]:
+    """Parse pytest stdout when the collect-ids file is empty.
+
+    Reporter lines can carry trailing text, so only the first token is kept.
+    Node ids with spaces come from :func:`_parse_plugin_node_ids`.
+    """
     node_ids: list[str] = []
     for line in stdout.splitlines():
         stripped = line.strip()
@@ -68,6 +86,13 @@ def _parse_collect_only_node_ids(stdout: str) -> tuple[str, ...]:
         if "::" in node_id and node_id.startswith("tests/"):
             node_ids.append(node_id)
     return tuple(node_ids)
+
+
+def _node_ids_from_collect(proc: subprocess.CompletedProcess[str]) -> tuple[str, ...]:
+    plugin_ids = getattr(proc, "_plugin_node_ids", None)
+    if plugin_ids:
+        return plugin_ids
+    return _parse_collect_only_node_ids(proc.stdout or "")
 
 
 def _normalize_node_id(node_id: str) -> str:
@@ -159,8 +184,10 @@ def _run_collect_only(targets: Sequence[str], *, marker: str | None) -> subproce
             os.unlink(node_id_file)
         except OSError:
             pass
-    if _parse_collect_only_node_ids(recorded):
-        proc.stdout = recorded
+    recorded_ids = _parse_plugin_node_ids(recorded)
+    if recorded_ids:
+        proc.stdout = "".join(f"{node_id}\n" for node_id in recorded_ids)
+        setattr(proc, "_plugin_node_ids", recorded_ids)
     return proc
 
 
@@ -173,7 +200,7 @@ def _collect_with_marker(targets: Sequence[str], *, marker: str | None) -> tuple
         detail = (proc.stderr or proc.stdout or "").strip()
         raise ConfigError(f"pytest collect-only failed (exit {proc.returncode})" + (f": {detail}" if detail else ""))
 
-    return _parse_collect_only_node_ids(proc.stdout)
+    return _node_ids_from_collect(proc)
 
 
 def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:
@@ -190,7 +217,7 @@ def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -
         detail = (proc.stderr or proc.stdout or "").strip()
         raise ConfigError(f"pytest collect-only failed (exit {proc.returncode})" + (f": {detail}" if detail else ""))
 
-    batch_ids = _parse_collect_only_node_ids(proc.stdout)
+    batch_ids = _node_ids_from_collect(proc)
     if batch_ids:
         target_set = frozenset(targets)
         return tuple(node_id for node_id in batch_ids if node_id in target_set)
