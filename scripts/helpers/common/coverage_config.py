@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 from collections.abc import Sequence
@@ -41,7 +42,7 @@ def corrupt_coverage_files(paths: Sequence[Path]) -> tuple[Path, ...]:
         if not path.is_file():
             continue
         try:
-            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+            with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
                 rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
                 tables = {str(row[0]) for row in rows}
         except sqlite3.Error:

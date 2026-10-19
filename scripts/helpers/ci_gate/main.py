@@ -385,8 +385,7 @@ def _clear_coverage_artifacts() -> None:
     first coverage wave.
     """
     logger = logging.getLogger("ci_gate")
-    stale = [REPO_ROOT / ".coverage", *sorted(REPO_ROOT.glob(".coverage.*"))]
-    for path in stale:
+    for path in _coverage_artifact_paths():
         if not path.is_file():
             continue
         path.unlink()
