@@ -30,6 +30,10 @@ def test_coverage_sqlite_plugin_uses_delete_journal(tmp_path: Path) -> None:
     coverage_sqlite._enable_durable_coverage_sqlite()
     data_file = tmp_path / ".coverage"
     with SqliteDb(str(data_file), NoDebugging()) as database:
+        database.execute_void("create table sample (value integer)")
+        database.execute_void("insert into sample values (1)")
+        with database:
+            assert database.execute_one("select value from sample") == (1,)
         journal = database.execute_one("pragma journal_mode")
         synchronous = database.execute_one("pragma synchronous")
     assert journal == ("delete",)

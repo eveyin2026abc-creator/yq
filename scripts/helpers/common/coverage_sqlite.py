@@ -23,6 +23,7 @@ then dies in ``coverage.save()``. DELETE journaling keeps the parallel workers.
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 
@@ -33,22 +34,18 @@ def _enable_durable_coverage_sqlite() -> None:
     if getattr(original, "_msmodeling_durable_sqlite", False):
         return
 
+    @functools.wraps(original)
     def _connect(self: Any) -> None:
+        was_connected = self.con is not None
         original(self)
-        connection = self.con
-        if connection is None:
+        if was_connected or self.con is None:
             return
-        connection.execute("pragma journal_mode=DELETE")
-        connection.execute("pragma synchronous=NORMAL")
+        self.execute_void("pragma journal_mode=DELETE")
+        self.execute_void("pragma synchronous=NORMAL")
 
     _connect._msmodeling_durable_sqlite = True  # type: ignore[attr-defined]
     SqliteDb._connect = _connect  # type: ignore[method-assign]
 
 
-def pytest_configure(config: object) -> None:
-    """Apply the patch before pytest-cov opens a data file."""
-    del config
-    _enable_durable_coverage_sqlite()
-
-
+# Explicit ``-p`` imports this module before pytest-cov starts collection.
 _enable_durable_coverage_sqlite()
