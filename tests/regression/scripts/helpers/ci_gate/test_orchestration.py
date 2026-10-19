@@ -387,7 +387,7 @@ def test_run_execution_waves_does_not_retry_regular_test_failure(
         return 1
 
     monkeypatch.setattr("scripts.helpers.ci_gate.main._run_pytest", _fake_run)
-    monkeypatch.setattr("scripts.helpers.ci_gate.main._corrupt_coverage_artifacts", lambda: ())
+    monkeypatch.setattr("scripts.helpers.ci_gate.main.corrupt_coverage_files", lambda _paths: ())
 
     code, message = _run_execution_waves(logging.getLogger("test"), plan, use_cov=True)
     assert code == 1

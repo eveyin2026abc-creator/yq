@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import shlex
-import sqlite3
 import subprocess
 import sys
 from collections import Counter
@@ -73,7 +72,7 @@ from scripts.helpers.ci_gate.rules import (
 from scripts.helpers.ci_gate.test_map_query import prune_deleted_sources
 from scripts.helpers.common._logging import log_env_audit, setup_logger
 from scripts.helpers.common.ast_utils import ShadowWarning, collect_shadow_warnings
-from scripts.helpers.common.coverage_config import cov_pytest_args
+from scripts.helpers.common.coverage_config import corrupt_coverage_files, cov_pytest_args
 from scripts.helpers.common.coverage_symbol_check import load_coverage_data
 from scripts.helpers.common.pytest_runner import (
     build_pytest_cmd,
@@ -93,7 +92,6 @@ _CHANGED_TEST_MARKER: str | None = None
 _REGRESSION_MARKER = "not npu and not nightly and not network"
 _FULL_SUITE_MARKER = _REGRESSION_MARKER
 _COVERAGE_DATA_PATH = REPO_ROOT / ".coverage"
-_COVERAGE_SCHEMA_TABLES = frozenset({"coverage_schema", "meta", "file", "context", "line_bits", "arc", "tracer"})
 _SAMPLE_NODE_LIMIT = 3
 _MISSING_LINE_LIMIT = 20
 
@@ -395,23 +393,8 @@ def _clear_coverage_artifacts() -> None:
         logger.info("Removed stale coverage data file: %s", path.name)
 
 
-def _corrupt_coverage_artifacts() -> tuple[Path, ...]:
-    """Return coverage SQLite files whose schema is missing or unreadable."""
-    damaged: list[Path] = []
-    paths = [REPO_ROOT / ".coverage", *sorted(REPO_ROOT.glob(".coverage.*"))]
-    for path in paths:
-        if not path.is_file():
-            continue
-        try:
-            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
-                rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-                tables = {str(row[0]) for row in rows}
-        except sqlite3.Error:
-            damaged.append(path)
-            continue
-        if not _COVERAGE_SCHEMA_TABLES.issubset(tables):
-            damaged.append(path)
-    return tuple(damaged)
+def _coverage_artifact_paths() -> tuple[Path, ...]:
+    return (REPO_ROOT / ".coverage", *sorted(REPO_ROOT.glob(".coverage.*")))
 
 
 def _execute_pytest(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -563,39 +546,49 @@ def _log_change_summary(logger: logging.Logger, changes: ChangeSet, cfg: Config)
     )
 
 
+def _run_all_waves(
+    execution: ExecutionPlan,
+    *,
+    use_cov: bool,
+) -> tuple[int, tuple[str, ...], tuple[Path, ...]]:
+    """Run every wave once and report the first pytest failure."""
+    for wave_index, wave in enumerate(execution.waves):
+        pytest_code = _run_pytest(
+            list(wave.targets),
+            marker=wave.marker,
+            use_cov=use_cov,
+            cov_append=use_cov and wave_index > 0,
+        )
+        if pytest_code == 0:
+            continue
+        damaged = corrupt_coverage_files(_coverage_artifact_paths()) if use_cov else ()
+        failed_nodes = wave.targets if not execution.full_suite else ()
+        return pytest_code, failed_nodes, damaged
+    return 0, (), ()
+
+
 def _run_execution_waves(
     logger: logging.Logger,
     execution: ExecutionPlan,
     *,
     use_cov: bool,
 ) -> tuple[int, str | None]:
-    for attempt in range(2):
-        for wave_index, wave in enumerate(execution.waves):
-            pytest_code = _run_pytest(
-                list(wave.targets),
-                marker=wave.marker,
-                use_cov=use_cov,
-                cov_append=use_cov and wave_index > 0,
-            )
-            if pytest_code == 0:
-                continue
-            damaged = _corrupt_coverage_artifacts() if use_cov else ()
-            if attempt == 0 and damaged:
-                logger.warning(
-                    "Coverage data is corrupt (%s); restarting coverage waves once",
-                    ", ".join(path.name for path in damaged),
-                )
-                _clear_coverage_artifacts()
-                break
-            failed_nodes = wave.targets if not execution.full_suite else ()
-            _log_pytest_failure(logger, full_suite=execution.full_suite, failed_nodes=failed_nodes)
-            return pytest_code, _pytest_failure_user_message(
-                full_suite=execution.full_suite,
-                failed_nodes=failed_nodes,
-            )
-        else:
-            return 0, None
-    raise AssertionError("coverage retry loop exhausted")
+    """Run the plan, restarting once when coverage SQLite data is corrupt."""
+    pytest_code, failed_nodes, damaged = _run_all_waves(execution, use_cov=use_cov)
+    if pytest_code != 0 and damaged:
+        logger.warning(
+            "Coverage data is corrupt (%s); restarting coverage waves once",
+            ", ".join(path.name for path in damaged),
+        )
+        _clear_coverage_artifacts()
+        pytest_code, failed_nodes, _damaged = _run_all_waves(execution, use_cov=use_cov)
+    if pytest_code == 0:
+        return 0, None
+    _log_pytest_failure(logger, full_suite=execution.full_suite, failed_nodes=failed_nodes)
+    return pytest_code, _pytest_failure_user_message(
+        full_suite=execution.full_suite,
+        failed_nodes=failed_nodes,
+    )
 
 
 def _soft_mapping_exit_code(
