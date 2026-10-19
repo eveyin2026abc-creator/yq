@@ -93,9 +93,7 @@ _CHANGED_TEST_MARKER: str | None = None
 _REGRESSION_MARKER = "not npu and not nightly and not network"
 _FULL_SUITE_MARKER = _REGRESSION_MARKER
 _COVERAGE_DATA_PATH = REPO_ROOT / ".coverage"
-_COVERAGE_SCHEMA_TABLES = frozenset(
-    {"coverage_schema", "meta", "file", "context", "line_bits", "arc", "tracer"}
-)
+_COVERAGE_SCHEMA_TABLES = frozenset({"coverage_schema", "meta", "file", "context", "line_bits", "arc", "tracer"})
 _SAMPLE_NODE_LIMIT = 3
 _MISSING_LINE_LIMIT = 20
 
