@@ -14,10 +14,12 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-"""Pytest plugin that prints collected node ids, one per line."""
+"""Pytest plugin that records collected node ids, one per line."""
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Protocol
 
 
@@ -30,6 +32,14 @@ class _Session(Protocol):
 
 
 def pytest_collection_finish(session: _Session) -> None:
-    """Print each collected node id. ``-qq`` itself only prints ``path: count``."""
-    for item in session.items:
-        print(item.nodeid, flush=True)
+    """Record each collected node id.
+
+    ``-qq`` only prints ``path: count``. Node ids go to ``MSMODELING_COLLECT_NODE_IDS``
+    when that path is set, and also to stdout for callers that parse it.
+    """
+    node_ids = [item.nodeid for item in session.items]
+    path = os.environ.get("MSMODELING_COLLECT_NODE_IDS", "").strip()
+    if path:
+        Path(path).write_text("".join(f"{node_id}\n" for node_id in node_ids), encoding="utf-8")
+    for node_id in node_ids:
+        print(node_id, flush=True)

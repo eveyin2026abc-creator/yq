@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -37,6 +38,8 @@ _NOT_FOUND_RE = re.compile(r"^ERROR: not found: ([^\n\r]+)", re.MULTILINE)
 
 PYTEST_IGNORE_ADDOPTS: Final[list[str]] = ["-o", "addopts="]
 _COLLECT_IDS_PLUGIN: Final = "scripts.helpers.common.pytest_collect_ids"
+_COLLECT_ALL_MARKEXPR: Final = "npu or not npu"
+_COLLECT_NODE_IDS_ENV: Final = "MSMODELING_COLLECT_NODE_IDS"
 _COLLECT_ENV_KEYS: Final = frozenset(
     {
         "PYTEST_ADDOPTS",
@@ -59,8 +62,11 @@ def _parse_collect_only_node_ids(stdout: str) -> tuple[str, ...]:
     node_ids: list[str] = []
     for line in stdout.splitlines():
         stripped = line.strip()
-        if "::" in stripped and stripped.startswith("tests/"):
-            node_ids.append(stripped)
+        if "::" not in stripped or "tests/" not in stripped:
+            continue
+        node_id = _normalize_node_id(stripped).split()[0]
+        if "::" in node_id and node_id.startswith("tests/"):
+            node_ids.append(node_id)
     return tuple(node_ids)
 
 
@@ -87,7 +93,7 @@ def collect_all_test_node_ids(targets: Sequence[str]) -> tuple[str, ...]:
     return _collect_with_marker(targets, marker=None)
 
 
-def _collect_subprocess_env() -> dict[str, str]:
+def _collect_subprocess_env(node_id_file: str) -> dict[str, str]:
     """Drop parent pytest, xdist, and coverage settings from a nested collect."""
     env = {
         key: value
@@ -98,15 +104,17 @@ def _collect_subprocess_env() -> dict[str, str]:
     parts = [part for part in env.get("PYTHONPATH", "").split(os.pathsep) if part]
     if root not in parts:
         env["PYTHONPATH"] = os.pathsep.join([root, *parts])
+    env[_COLLECT_NODE_IDS_ENV] = node_id_file
     return env
 
 
 def _collect_pytest_cmd(targets: Sequence[str], *, marker: str | None) -> list[str]:
-    """Build collect-only argv whose stdout contains one node id per line.
+    """Build collect-only argv that records one node id per line.
 
     ``-qq`` makes pytest print ``path: count`` instead of node ids. The collect-ids
-    plugin prints the ids. The trailing ``-m`` wins over pyproject ``addopts`` and
-    any ``PYTEST_ADDOPTS`` marker, so an empty expression keeps npu tests.
+    plugin writes the ids. The trailing ``-m`` wins over pyproject ``addopts``.
+    ``npu or not npu`` keeps exempted npu tests when no marker was requested.
+    ``no:cov`` and ``no:xdist`` keep the nested collect off the parent session.
     """
     return [
         sys.executable,
@@ -120,40 +128,52 @@ def _collect_pytest_cmd(targets: Sequence[str], *, marker: str | None) -> list[s
         "-p",
         "no:cacheprovider",
         "-p",
+        "no:cov",
+        "-p",
+        "no:xdist",
+        "-p",
         _COLLECT_IDS_PLUGIN,
         "-m",
-        "" if marker is None else marker,
+        _COLLECT_ALL_MARKEXPR if marker is None else marker,
     ]
+
+
+def _run_collect_only(targets: Sequence[str], *, marker: str | None) -> subprocess.CompletedProcess[str]:
+    fd, node_id_file = tempfile.mkstemp(prefix="msmodeling-collect-", suffix=".txt")
+    os.close(fd)
+    try:
+        proc = subprocess.run(
+            _collect_pytest_cmd(targets, marker=marker),
+            cwd=REPO_ROOT,
+            env=_collect_subprocess_env(node_id_file),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        recorded = ""
+        if os.path.isfile(node_id_file):
+            with open(node_id_file, encoding="utf-8") as handle:
+                recorded = handle.read()
+    finally:
+        try:
+            os.unlink(node_id_file)
+        except OSError:
+            pass
+    if _parse_collect_only_node_ids(recorded):
+        proc.stdout = recorded
+    return proc
 
 
 def _collect_with_marker(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:
     if not targets:
         return ()
 
-    proc = subprocess.run(
-        _collect_pytest_cmd(targets, marker=marker),
-        cwd=REPO_ROOT,
-        env=_collect_subprocess_env(),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    proc = _run_collect_only(targets, marker=marker)
     if proc.returncode not in (0, 5):
         detail = (proc.stderr or proc.stdout or "").strip()
         raise ConfigError(f"pytest collect-only failed (exit {proc.returncode})" + (f": {detail}" if detail else ""))
 
     return _parse_collect_only_node_ids(proc.stdout)
-
-
-def _run_collect_only(targets: Sequence[str], *, marker: str | None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        _collect_pytest_cmd(targets, marker=marker),
-        cwd=REPO_ROOT,
-        env=_collect_subprocess_env(),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
 
 
 def filter_collectable_node_ids(targets: Sequence[str], *, marker: str | None) -> tuple[str, ...]:

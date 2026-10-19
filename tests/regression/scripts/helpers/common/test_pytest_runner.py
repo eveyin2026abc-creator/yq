@@ -115,12 +115,14 @@ def test_collect_all_test_node_ids_skips_marker_filter(
     )
     cmd = captured[0]
     pytest_idx = cmd.index("pytest")
-    assert "not npu" not in cmd[pytest_idx:]
     assert "-qq" in cmd
+    assert "no:cov" in cmd
+    assert "no:xdist" in cmd
     assert "scripts.helpers.common.pytest_collect_ids" in cmd
     marker_idx = cmd.index("-m", pytest_idx + 1)
-    assert cmd[marker_idx + 1] == ""
+    assert cmd[marker_idx + 1] == "npu or not npu"
     assert envs[0] is not None
+    assert envs[0].get("MSMODELING_COLLECT_NODE_IDS")
     assert "PYTEST_ADDOPTS" not in envs[0]
     assert "PYTEST_XDIST_WORKER" not in envs[0]
     assert "COV_CORE_DATAFILE" not in envs[0]
