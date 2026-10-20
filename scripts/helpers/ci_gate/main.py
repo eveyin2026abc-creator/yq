@@ -560,21 +560,15 @@ def _run_all_waves(
     """Run every wave once and report the first pytest failure."""
     coverage_wave_count = 0
     for wave in execution.waves:
-        wave_uses_cov = use_cov and wave.marker != _LARGE_MEMORY_MARKER
-        if wave.marker == _LARGE_MEMORY_MARKER:
-            pytest_code = _run_pytest(
-                list(wave.targets),
-                marker=wave.marker,
-                use_cov=False,
-                serial=True,
-            )
-        else:
-            pytest_code = _run_pytest(
-                list(wave.targets),
-                marker=wave.marker,
-                use_cov=wave_uses_cov,
-                cov_append=wave_uses_cov and coverage_wave_count > 0,
-            )
+        is_large_memory_wave = wave.marker == _LARGE_MEMORY_MARKER
+        wave_uses_cov = use_cov and not is_large_memory_wave
+        pytest_code = _run_pytest(
+            list(wave.targets),
+            marker=wave.marker,
+            use_cov=wave_uses_cov,
+            cov_append=wave_uses_cov and coverage_wave_count > 0,
+            serial=is_large_memory_wave,
+        )
         if wave_uses_cov:
             coverage_wave_count += 1
         if pytest_code == 0:

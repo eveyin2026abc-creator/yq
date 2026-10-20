@@ -421,6 +421,7 @@ def test_run_execution_waves_runs_large_memory_serially_without_coverage(
         {
             "marker": "large_memory and not npu and not network",
             "use_cov": False,
+            "cov_append": False,
             "serial": True,
         }
     ]

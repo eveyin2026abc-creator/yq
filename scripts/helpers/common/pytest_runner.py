@@ -247,7 +247,11 @@ def count_collected_tests(targets: Sequence[str], *, marker: str) -> int:
 
 
 def xdist_worker_args(collected_count: int, *, serial: bool = False) -> list[str]:
-    """Return pytest-xdist flags sized to the collected test count."""
+    """Return pytest-xdist flags sized to the collected test count.
+
+    If *serial* is True, force single-process pytest by returning no xdist flags.
+    ``collected_count`` is ignored in that case.
+    """
     if serial:
         return []
     if collected_count == 0:
@@ -265,7 +269,10 @@ def build_pytest_cmd(
     extra_args: Sequence[str] = (),
     serial: bool = False,
 ) -> list[str]:
-    """Assemble a pytest command with optional marker and collect-first xdist sizing."""
+    """Assemble a pytest command with optional marker and collect-first xdist sizing.
+
+    If *serial* is True, omit xdist flags and run pytest in one process.
+    """
     cmd = [
         python,
         "-m",
