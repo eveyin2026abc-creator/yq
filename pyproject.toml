@@ -64,6 +64,7 @@ pythonpath = ["."]
 norecursedirs = ["__pycache__"]
 markers = [
     "nightly: do_compile=True large model cases, only run in nightly",
+    "large_memory: tests that must run serially outside the coverage wave",
     "npu: requires NPU hardware",
     "network: requires live model Hub access (HuggingFace/ModelScope); excluded by default, run in nightly",
 ]

@@ -448,3 +448,15 @@ def test_build_pytest_cmd_zero_collected_omits_xdist() -> None:
     )
     assert "-n" not in cmd
     assert "--dist" not in cmd
+
+
+def test_build_pytest_cmd_serial_omits_xdist() -> None:
+    cmd = build_pytest_cmd(
+        "python",
+        ["tests/regression/tensor_cast/test_large.py::test_model"],
+        marker="large_memory",
+        collected_count=1,
+        serial=True,
+    )
+    assert "-n" not in cmd
+    assert "--dist" not in cmd

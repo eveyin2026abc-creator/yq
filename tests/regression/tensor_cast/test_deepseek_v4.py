@@ -1255,6 +1255,7 @@ class TestDeepseekV4Model(unittest.TestCase):
         assert hasattr(model, "rotary_emb")
 
 
+@pytest.mark.large_memory
 @pytest.mark.nightly
 class TestDeepseekV4ModelNightly(unittest.TestCase):
     """Full-size V4 model init (large hidden_size; too slow for default CI)."""

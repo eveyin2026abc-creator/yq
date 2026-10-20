@@ -87,9 +87,10 @@ from scripts.helpers.common.test_map_loader import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-_CHANGED_TEST_MARKER: str | None = None
+_CHANGED_TEST_MARKER = "not large_memory"
+_LARGE_MEMORY_MARKER = "large_memory and not npu and not network"
 # Mapped/guard regression wave and config-triggered full suite share this marker.
-_REGRESSION_MARKER = "not npu and not nightly and not network"
+_REGRESSION_MARKER = "not npu and not nightly and not network and not large_memory"
 _FULL_SUITE_MARKER = _REGRESSION_MARKER
 _COVERAGE_DATA_PATH = REPO_ROOT / ".coverage"
 _SAMPLE_NODE_LIMIT = 3
@@ -322,6 +323,10 @@ def compute_execution_plan(plan: CiGatePlan, test_exemptions: tuple[TestExemptio
         waves.append(TestRunWave(targets=changed_nodes, marker=_CHANGED_TEST_MARKER))
     if other_nodes:
         waves.append(TestRunWave(targets=other_nodes, marker=_REGRESSION_MARKER))
+    # Reuse the changed targets with a disjoint marker so large model tests run
+    # after coverage workers have exited and no longer compete for memory.
+    if changed_nodes:
+        waves.append(TestRunWave(targets=changed_nodes, marker=_LARGE_MEMORY_MARKER))
 
     return ExecutionPlan(full_suite=False, waves=tuple(waves), reasons=scheduled)
 
@@ -340,6 +345,7 @@ def _run_pytest(
     marker: str | None,
     use_cov: bool = False,
     cov_append: bool = False,
+    serial: bool = False,
 ) -> int:
     if not targets:
         return 0
@@ -373,6 +379,7 @@ def _run_pytest(
         marker=marker,
         collected_count=collected,
         extra_args=extra_args,
+        serial=serial,
     )
     logger.info("Running pytest: %s", shlex.join(cmd))
     return _execute_pytest(cmd).returncode
@@ -460,7 +467,7 @@ def _log_execution_plan(
     counts = Counter(execution.reasons.values())
     for reason, count in sorted(counts.items()):
         logger.info("Scheduling %d test node(s): %s", count, reason)
-    all_nodes = tuple(node for wave in execution.waves for node in wave.targets)
+    all_nodes = tuple(dict.fromkeys(node for wave in execution.waves for node in wave.targets))
     logger.info("Sample node(s): %s", _sample_nodes(all_nodes))
     logger.info("Execution uses %d pytest wave(s) after deduplication", len(execution.waves))
 
@@ -506,7 +513,7 @@ def _success_user_message(execution: ExecutionPlan, changes: ChangeSet) -> str:
         config_paths = ", ".join(changes.config) if changes.config else "tests/"
         return f"CI gate passed: full test suite ({config_paths})"
 
-    node_count = sum(len(wave.targets) for wave in execution.waves)
+    node_count = len({node for wave in execution.waves for node in wave.targets})
     counts = Counter(execution.reasons.values())
     reason_parts = ", ".join(f"{count} {reason}" for reason, count in sorted(counts.items()))
     if reason_parts:
@@ -551,16 +558,28 @@ def _run_all_waves(
     use_cov: bool,
 ) -> tuple[int, tuple[str, ...], tuple[Path, ...]]:
     """Run every wave once and report the first pytest failure."""
-    for wave_index, wave in enumerate(execution.waves):
-        pytest_code = _run_pytest(
-            list(wave.targets),
-            marker=wave.marker,
-            use_cov=use_cov,
-            cov_append=use_cov and wave_index > 0,
-        )
+    coverage_wave_count = 0
+    for wave in execution.waves:
+        wave_uses_cov = use_cov and wave.marker != _LARGE_MEMORY_MARKER
+        if wave.marker == _LARGE_MEMORY_MARKER:
+            pytest_code = _run_pytest(
+                list(wave.targets),
+                marker=wave.marker,
+                use_cov=False,
+                serial=True,
+            )
+        else:
+            pytest_code = _run_pytest(
+                list(wave.targets),
+                marker=wave.marker,
+                use_cov=wave_uses_cov,
+                cov_append=wave_uses_cov and coverage_wave_count > 0,
+            )
+        if wave_uses_cov:
+            coverage_wave_count += 1
         if pytest_code == 0:
             continue
-        damaged = corrupt_coverage_files(_coverage_artifact_paths()) if use_cov else ()
+        damaged = corrupt_coverage_files(_coverage_artifact_paths()) if wave_uses_cov else ()
         failed_nodes = wave.targets if not execution.full_suite else ()
         return pytest_code, failed_nodes, damaged
     return 0, (), ()

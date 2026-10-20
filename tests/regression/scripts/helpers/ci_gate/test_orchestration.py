@@ -395,6 +395,37 @@ def test_run_execution_waves_does_not_retry_regular_test_failure(
     assert calls == 1
 
 
+def test_run_execution_waves_runs_large_memory_serially_without_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    plan = ExecutionPlan(
+        full_suite=False,
+        waves=(
+            TestRunWave(
+                targets=("tests/test_large.py::test_model",),
+                marker="large_memory and not npu and not network",
+            ),
+        ),
+        reasons={},
+    )
+
+    def _fake_run(_targets: list[str], **kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("scripts.helpers.ci_gate.main._run_pytest", _fake_run)
+
+    assert _run_execution_waves(logging.getLogger("test"), plan, use_cov=True) == (0, None)
+    assert calls == [
+        {
+            "marker": "large_memory and not npu and not network",
+            "use_cov": False,
+            "serial": True,
+        }
+    ]
+
+
 def test_execute_pytest_returns_process_result() -> None:
     result = _execute_pytest([sys.executable, "-c", "raise SystemExit(0)"])
 

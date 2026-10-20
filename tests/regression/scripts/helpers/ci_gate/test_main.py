@@ -239,7 +239,7 @@ def test_compute_execution_plan_full_suite() -> None:
     execution = compute_execution_plan(plan, ())
     assert execution.full_suite is True
     assert execution.waves[0].targets == ("tests",)
-    assert execution.waves[0].marker == "not npu and not nightly and not network"
+    assert execution.waves[0].marker == "not npu and not nightly and not network and not large_memory"
 
 
 def test_plan_config_change_skips_changed_test_collection(baseline: Baseline) -> None:
@@ -252,7 +252,7 @@ def test_plan_config_change_skips_changed_test_collection(baseline: Baseline) ->
     assert plan.changed_test_nodes == frozenset()
 
 
-def test_compute_execution_plan_dedupes_changed_and_regression() -> None:
+def test_compute_execution_plan_splits_changed_large_memory_tests() -> None:
     from scripts.helpers.ci_gate.models import CiGatePlan
 
     shared = "tests/regression/cli/test_shared.py::test_x"
@@ -264,7 +264,9 @@ def test_compute_execution_plan_dedupes_changed_and_regression() -> None:
     )
     execution = compute_execution_plan(plan, ())
     all_nodes = [node for wave in execution.waves for node in wave.targets]
-    assert all_nodes.count(shared) == 1
-    assert len(execution.waves) == 2
-    assert execution.waves[0].marker is None
-    assert execution.waves[1].marker == "not npu and not nightly and not network"
+    assert all_nodes.count(shared) == 2
+    assert len(execution.waves) == 3
+    assert execution.waves[0].marker == "not large_memory"
+    assert execution.waves[1].marker == "not npu and not nightly and not network and not large_memory"
+    assert execution.waves[2].targets == (shared,)
+    assert execution.waves[2].marker == "large_memory and not npu and not network"

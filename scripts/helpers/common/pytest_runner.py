@@ -246,8 +246,10 @@ def count_collected_tests(targets: Sequence[str], *, marker: str) -> int:
     return len(collect_test_node_ids(targets, marker=marker))
 
 
-def xdist_worker_args(collected_count: int) -> list[str]:
+def xdist_worker_args(collected_count: int, *, serial: bool = False) -> list[str]:
     """Return pytest-xdist flags sized to the collected test count."""
+    if serial:
+        return []
     if collected_count == 0:
         return []
     worker_count = min(os.cpu_count() or 1, max(collected_count, 1))
@@ -261,6 +263,7 @@ def build_pytest_cmd(
     marker: str | None,
     collected_count: int,
     extra_args: Sequence[str] = (),
+    serial: bool = False,
 ) -> list[str]:
     """Assemble a pytest command with optional marker and collect-first xdist sizing."""
     cmd = [
@@ -272,5 +275,5 @@ def build_pytest_cmd(
     ]
     if marker is not None:
         cmd.extend(["-m", marker])
-    cmd.extend([*xdist_worker_args(collected_count), *_DEFAULT_RUN_ARGS, *extra_args])
+    cmd.extend([*xdist_worker_args(collected_count, serial=serial), *_DEFAULT_RUN_ARGS, *extra_args])
     return cmd
