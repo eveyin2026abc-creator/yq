@@ -88,11 +88,7 @@ def select_resync_targets(
 ) -> tuple[str, ...]:
     """Return existing changed test files and nodes watching changed sources."""
     index = build_test_map_index(test_map)
-    targets = {
-        path
-        for path in touched.tests
-        if (repo_root / path).is_file()
-    }
+    targets = {path for path in touched.tests if (repo_root / path).is_file()}
     for source_file in touched.sources:
         if (repo_root / source_file).is_file():
             targets.update(index.source_watchers(source_file))

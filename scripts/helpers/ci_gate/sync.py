@@ -195,9 +195,7 @@ def _collect_execution_node_ids(targets: tuple[str, ...]) -> tuple[str, ...]:
     wanted = {normalize_test_node_id(target) for target in node_targets}
     parent_files = tuple(
         dict.fromkeys(
-            target.split("::", 1)[0]
-            for target in node_targets
-            if (REPO_ROOT / target.split("::", 1)[0]).is_file()
+            target.split("::", 1)[0] for target in node_targets if (REPO_ROOT / target.split("::", 1)[0]).is_file()
         )
     )
     collected: list[str] = []
