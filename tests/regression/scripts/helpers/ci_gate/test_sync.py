@@ -221,6 +221,39 @@ def test_sync_test_map_once_up_to_date_skips_pytest(
     assert "up to date" in caplog.text
 
 
+def test_sync_test_map_once_irrelevant_diff_advances_without_pytest(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    map_path = tmp_path / "test_map.json"
+    existing = {"tests/regression/cli/test_run.py::test_run": {"cli/main.py": ["run"]}}
+    map_path.write_text(
+        json.dumps({"schema_version": 1, "built_from_commit": "old", "map": existing}),
+        encoding="utf-8",
+    )
+    cfg = _DEFAULT_CFG.model_copy(update={"test_map_path": str(map_path)})
+
+    class _FakeCheckout:
+        def __enter__(self) -> str:
+            return "new"
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(sync, "resolve_target_head", lambda *_a, **_k: "new")
+    monkeypatch.setattr(sync, "can_incremental_sync", lambda *_a, **_k: True)
+    monkeypatch.setattr(sync, "fetch_changed_paths", lambda *_a, **_k: frozenset({"README.md"}))
+    monkeypatch.setattr(sync, "ephemeral_target_checkout", lambda *_a, **_k: _FakeCheckout())
+    monkeypatch.setattr(
+        sync,
+        "_run_pytest_and_collect_fresh_map",
+        lambda *_a, **_k: pytest.fail("pytest must not run for an irrelevant diff"),
+    )
+
+    assert sync.sync_test_map_once(cfg, target_branch="master", logger=logging.getLogger("test")) == 0
+    assert json.loads(map_path.read_text(encoding="utf-8"))["built_from_commit"] == "new"
+
+
 def test_sync_test_map_watch_continues_after_sync_failure(
     monkeypatch: MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -302,10 +335,32 @@ def test_run_test_map_pytest_invokes_subprocess(monkeypatch: MonkeyPatch, tmp_pa
         recorded.append(cmd)
         return FakeCompleted(0, "", "")
 
+    # Gate-policy validation collects tests through subprocess. Cache it before
+    # replacing the shared subprocess.run, otherwise a cold xdist worker fails.
+    sync.build_test_map_pytest_cmd("python")
     monkeypatch.setattr("scripts.helpers.ci_gate.sync.subprocess.run", _fake_run)
     exit_code = sync.run_test_map_pytest(tmp_path, "python")
     assert exit_code == 0
     assert recorded[0][0] == "python"
+
+
+def test_collect_execution_node_ids_expands_parametrized_map_keys(monkeypatch: MonkeyPatch) -> None:
+    parent = "tests/regression/cli/test_main.py"
+
+    def _fake_collect(targets: tuple[str, ...], *, marker: str) -> tuple[str, ...]:
+        assert marker == sync.TEST_MAP_EXECUTION_MARKER
+        assert targets == (parent,)
+        return (
+            f"{parent}::test_handle[text]",
+            f"{parent}::test_handle[image]",
+            f"{parent}::test_other",
+        )
+
+    monkeypatch.setattr(sync, "collect_test_node_ids", _fake_collect)
+    assert sync._collect_execution_node_ids((f"{parent}::test_handle",)) == (
+        f"{parent}::test_handle[text]",
+        f"{parent}::test_handle[image]",
+    )
 
 
 def test_collect_fresh_map_returns_map(monkeypatch: MonkeyPatch) -> None:
@@ -314,28 +369,36 @@ def test_collect_fresh_map_returns_map(monkeypatch: MonkeyPatch) -> None:
         lambda _root: type("Policy", (), {"roots": ("cli/",)})(),
     )
     monkeypatch.setattr(
-        "scripts.helpers.ci_gate.sync.collect_allowed_node_ids",
-        lambda _marker: frozenset({"tests/smoke/test_a.py::test_a"}),
-    )
-    monkeypatch.setattr(
         "scripts.helpers.ci_gate.sync.collect_test_map",
         lambda **_kwargs: {"tests/smoke/test_a.py::test_a": {"cli/main.py": ["run"]}},
     )
-    result = sync._collect_fresh_map()
+    result = sync._collect_fresh_map(frozenset({"tests/smoke/test_a.py::test_a"}))
     assert result == {"tests/smoke/test_a.py::test_a": {"cli/main.py": ["run"]}}
 
 
 def test_run_pytest_and_collect_fresh_map_returns_none_on_pytest_failure(
     monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(sync, "_collect_execution_node_ids", lambda *_a, **_k: ("tests/a.py::test_x",))
     monkeypatch.setattr(sync, "run_test_map_pytest", lambda *_a, **_k: 1)
     assert sync._run_pytest_and_collect_fresh_map(tmp_path, "python") is None
 
 
 def test_run_pytest_and_collect_fresh_map_collects_on_success(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        sync,
+        "_collect_execution_node_ids",
+        lambda *_a, **_k: ("tests/a.py::test_x[param]",),
+    )
     monkeypatch.setattr(sync, "run_test_map_pytest", lambda *_a, **_k: 0)
-    monkeypatch.setattr(sync, "_collect_fresh_map", lambda: {"tests/a.py::test_x": {}})
+    allowed: list[frozenset[str]] = []
+    monkeypatch.setattr(
+        sync,
+        "_collect_fresh_map",
+        lambda node_ids: allowed.append(node_ids) or {"tests/a.py::test_x": {}},
+    )
     assert sync._run_pytest_and_collect_fresh_map(tmp_path, "python") == {"tests/a.py::test_x": {}}
+    assert allowed == [frozenset({"tests/a.py::test_x"})]
 
 
 def test_full_rebuild_test_map_writes_map(
