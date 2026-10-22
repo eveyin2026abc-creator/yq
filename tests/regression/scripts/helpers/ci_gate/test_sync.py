@@ -401,6 +401,40 @@ def test_run_pytest_and_collect_fresh_map_collects_on_success(monkeypatch: Monke
     assert allowed == [frozenset({"tests/a.py::test_x"})]
 
 
+def test_run_pytest_and_collect_fresh_map_rejects_empty_full_collection(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def _unexpected_pytest(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("pytest")
+
+    monkeypatch.setattr(sync, "_collect_execution_node_ids", lambda *_a, **_k: ())
+    monkeypatch.setattr(sync, "run_test_map_pytest", _unexpected_pytest)
+    with caplog.at_level(logging.ERROR):
+        assert sync._run_pytest_and_collect_fresh_map(tmp_path, "python") is None
+    assert "no node ids" in caplog.text
+
+
+def test_run_pytest_and_collect_fresh_map_allows_empty_incremental_collection(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def _unexpected_pytest(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("pytest")
+
+    monkeypatch.setattr(sync, "_collect_execution_node_ids", lambda *_a, **_k: ())
+    monkeypatch.setattr(sync, "run_test_map_pytest", _unexpected_pytest)
+    assert (
+        sync._run_pytest_and_collect_fresh_map(
+            tmp_path,
+            "python",
+            targets=("tests/regression/cli/test_main.py",),
+        )
+        == {}
+    )
+
+
 def test_full_rebuild_test_map_writes_map(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,

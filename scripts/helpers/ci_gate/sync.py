@@ -226,6 +226,9 @@ def _run_pytest_and_collect_fresh_map(
 ) -> TestMap | None:
     collected_node_ids = _collect_execution_node_ids(targets)
     if not collected_node_ids:
+        if targets == _FULL_TEST_TARGETS:
+            logging.getLogger(__name__).error("test_map collection produced no node ids for the full suite")
+            return None
         return {}
     _clear_coverage_artifacts(repo_root)
     run_targets = targets if targets == _FULL_TEST_TARGETS else collected_node_ids
