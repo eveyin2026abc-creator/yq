@@ -131,6 +131,10 @@ def _run(
     env.pop("PYTHON", None)
     env.pop("UV_NO_SYNC", None)
     env.pop("MSMODELING_TEST_MAP_TARGET_BRANCH", None)
+    # CI exports BASH_ENV, which sources profile scripts. Those scripts rewrite PATH
+    # with tr/sed and hide the dirname/readlink entries this test just installed.
+    env.pop("BASH_ENV", None)
+    env.pop("ENV", None)
     if isolated_path:
         tools = tmp_path / "coreutils"
         tools.mkdir()
@@ -152,7 +156,7 @@ def _run(
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
-        [_BASH, str(_SCRIPT), *args],
+        [_BASH, "--noprofile", "--norc", str(_SCRIPT), *args],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
