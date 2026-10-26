@@ -297,9 +297,7 @@ def test_sync_test_map_once_config_diff_falls_back_to_full_rebuild(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    cfg, rebuild_reasons = _prepare_incremental_once_fallback(
-        monkeypatch, tmp_path, frozenset({"uv.lock"})
-    )
+    cfg, rebuild_reasons = _prepare_incremental_once_fallback(monkeypatch, tmp_path, frozenset({"uv.lock"}))
     assert sync.sync_test_map_once(cfg, target_branch="master", logger=logging.getLogger("test")) == 0
     assert rebuild_reasons == ["test collection/configuration changed: uv.lock"]
 
