@@ -254,6 +254,69 @@ def test_sync_test_map_once_irrelevant_diff_advances_without_pytest(
     assert json.loads(map_path.read_text(encoding="utf-8"))["built_from_commit"] == "new"
 
 
+class _FakeTargetCheckout:
+    def __enter__(self) -> str:
+        return "new"
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+def _prepare_incremental_once_fallback(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+    changed_paths: frozenset[str],
+) -> tuple[Config, list[str]]:
+    map_path = tmp_path / "test_map.json"
+    existing = {"tests/regression/cli/test_run.py::test_run": {"cli/main.py": ["run"]}}
+    map_path.write_text(
+        json.dumps({"schema_version": 1, "built_from_commit": "old", "map": existing}),
+        encoding="utf-8",
+    )
+    cfg = _DEFAULT_CFG.model_copy(update={"test_map_path": str(map_path)})
+    rebuild_reasons: list[str] = []
+
+    def _record_full_rebuild(*_args: object, **kwargs: object) -> int:
+        rebuild_reasons.append(str(kwargs["reason"]))
+        return 0
+
+    monkeypatch.setattr(sync, "resolve_target_head", lambda *_a, **_k: "new")
+    monkeypatch.setattr(sync, "can_incremental_sync", lambda *_a, **_k: True)
+    monkeypatch.setattr(sync, "fetch_changed_paths", lambda *_a, **_k: changed_paths)
+    monkeypatch.setattr(sync, "ephemeral_target_checkout", lambda *_a, **_k: _FakeTargetCheckout())
+    monkeypatch.setattr(
+        sync,
+        "_run_pytest_and_collect_fresh_map",
+        lambda *_a, **_k: pytest.fail("incremental pytest must not run on full-rebuild fallback"),
+    )
+    monkeypatch.setattr(sync, "_full_rebuild_test_map", _record_full_rebuild)
+    return cfg, rebuild_reasons
+
+
+def test_sync_test_map_once_config_diff_falls_back_to_full_rebuild(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg, rebuild_reasons = _prepare_incremental_once_fallback(
+        monkeypatch, tmp_path, frozenset({"uv.lock"})
+    )
+    assert sync.sync_test_map_once(cfg, target_branch="master", logger=logging.getLogger("test")) == 0
+    assert rebuild_reasons == ["test collection/configuration changed: uv.lock"]
+
+
+def test_sync_test_map_once_unmapped_source_falls_back_to_full_rebuild(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cfg, rebuild_reasons = _prepare_incremental_once_fallback(
+        monkeypatch,
+        tmp_path,
+        frozenset({"cli/inference/text_generate.py"}),
+    )
+    assert sync.sync_test_map_once(cfg, target_branch="master", logger=logging.getLogger("test")) == 0
+    assert rebuild_reasons == ["a changed source has no watcher in the existing test_map"]
+
+
 def test_sync_test_map_watch_continues_after_sync_failure(
     monkeypatch: MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
