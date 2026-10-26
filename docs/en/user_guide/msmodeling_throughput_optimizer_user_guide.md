@@ -23,7 +23,16 @@ Any of the above scenarios can be combined with `--speculative-method {dflash,ds
 
 Aggregation mode optimizes throughput for a combined prefill-decode serving architecture where both phases run on the same instance. The optimizer searches across all possible TP (Tensor Parallelism) and DP (Data Parallelism) configurations to find the best throughput under SLO (Service Level Objective) constraints.
 
-In PD aggregation, the reported TPOT is **amortized service time per output token**: the end-to-end time used to calculate candidate throughput divided by the output token count. It includes the TTFT cost and is the value checked by `--tpot-limit`; it is different from the interval between adjacent decoded tokens. PP=1, PP>1, and chunked prefill use this metric definition, while their scheduling models estimate the end-to-end time separately. For output length `O`, concurrency `C`, and end-to-end time `E` in milliseconds, `TPOT = E / O` and `QPS = C * 1000 / E = token/s / O`. Do not add TTFT again when converting the reported TPOT to QPS. The Decode TPOT in PD disaggregation is a separate decode-phase metric and does not use this service-amortized definition.
+PD aggregation computes the following metrics from a finite-batch timeline. Let `C` be the number of concurrent requests and `O` the output tokens per request. For request `i`, let `arrival_i`, `first_i`, and `finish_i` be its arrival, first-token, and completion times in milliseconds. The batch drain time is `M = max(finish_i) - min(arrival_i)`; in the current model, all requests arrive together at `arrival_i = 0`.
+
+| Metric | Formula | Unit |
+| --- | --- | --- |
+| TTFT | `mean(first_i - arrival_i)` | ms |
+| TPOT | `mean(finish_i - first_i) / (O - 1)`; `0` when `O = 1` | ms/token |
+| QPS | `1000 × C / M` | req/s |
+| Output throughput | `1000 × C × O / M = QPS × O` | token/s |
+
+`--ttft-limit` and `--tpot-limit` check TTFT and TPOT separately. TPOT measures the average generation interval after the first token and excludes TTFT. QPS and output throughput use the full batch drain time; they cannot generally be derived from `TTFT + TPOT × O`. PP=1, PP>1, chunked prefill, and variable-length inputs use these definitions, while their scheduling timelines determine `first_i`, `finish_i`, and `M`. Decode TPOT in PD disaggregation is a separate phase metric and does not use this request-level aggregation timeline.
 
 #### Example
 
@@ -716,11 +725,12 @@ PD ratio mode uses QPS (Queries Per Second) as the primary metric for matching p
 
   P QPS represents the request processing capacity of a single prefill instance.
 
-  `P QPS = p_concurrency / ttft * 1000` (req/s)
+  `P QPS = p_concurrency / prefill_phase_makespan_ms * 1000` (req/s)
 
   Where:
   - `p_concurrency`: The batch size (number of concurrent requests) in prefill phase
-  - `ttft`: Time-to-first-token in milliseconds
+  - `prefill_phase_makespan_ms`: The prefill phase drain time in milliseconds; legacy result rows without that column fall back to `ttft`
+  - PP>1 (pipeline parallel) rows: the throughput column is anchored on the steady wave interval, so P QPS is `token/s / input_length` (full-prompt token basis, matching the throughput numerator; under prefix cache the numerator still counts the complete prompt, so the divisor must NOT be the cache-miss length `effective_input_length`)
 
 - **Decode QPS (D QPS)**:
 
@@ -777,7 +787,7 @@ Capacity planning reuses the optimizer results: it runs the optimizer at candida
 
   - Per-instance request QPS:
     - Aggregation: `per_replica_qps = token/s ÷ output_length ÷ dp_size`
-    - PD disaggregation prefill: `per_replica_qps = concurrency ÷ prefill_phase_makespan_ms × 1000`
+    - PD disaggregation prefill: `per_replica_qps = concurrency ÷ prefill_phase_makespan_ms × 1000`; PP>1 rows use the steady-state `token/s ÷ input_length` (full-prompt token basis, matching the throughput numerator)
     - PD disaggregation decode: `per_replica_qps = concurrency ÷ (tpot × output_length) × 1000`
   - Instances required: `replicas_needed = ceil(target_qps ÷ per_replica_qps)`
   - Total devices: `total_gpus = replicas_needed × per_replica_gpus`

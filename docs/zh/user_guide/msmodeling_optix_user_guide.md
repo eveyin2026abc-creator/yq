@@ -112,6 +112,8 @@ uv pip uninstall msmodeling
 
 ### Agent 模式工作方式
 
+PD 分离 Agent 模式的安装与使用步骤见[从环境准备到 Agent 驱动的 PD 分离寻优](../quick_start/optix_agent_pd_disaggregation.md)。
+
 Agent 模式下，工具不在内部运行 PSO，而是从 `[agent_optimizer].run_dir` 对应的运行目录读取 AI agent 生成的候选文件 `candidates.round-N.json`，校验通过后逐个执行实测，并写回 `results.round-N.json` 与 `progress.round-N.json`；仅当下一轮候选文件尚未生成时，本轮执行完成即退出。收敛退出需同时满足趋势条件（连续 `convergence_rounds` 轮改善幅度低于 1%）与覆盖条件（已完成轮次不少于 `min_rounds`、已完成 trial 不少于 `min_trials`），并受 `max_rounds` 轮数上限约束，每轮 trial 执行受 `time_limit_minutes` 时长限制。
 
 `[agent_optimizer]` 配置节字段说明（均可选）：
@@ -423,12 +425,14 @@ dtype_param = "max_batch_size"
 
 ### 结果存储与精调
 
+仅启用 TTFT 惩罚（`ttft_penalty > 0`、`tpot_penalty = 0`）时，最终判优优先选择 TTFT 低于 SLO 的候选，再在其中选择生成吞吐最高者；如果所有候选均超出 TTFT SLO，则选择 TTFT 最低者。关闭 FineTune 时，工具在复测后停止自己管理的服务；`manage_simulator_lifecycle=false` 的外部服务由调用方管理。
+
 PSO 阶段结束后，工具会从结果中选出若干组候选进入精调（fine-tune）阶段，`pso_top_k` 控制选取数量，结果存储与精调配置位于 `config.toml` 中的 `[data_storage]`：
 
 |参数|可选/必选| 说明                                                                    |
 |---|---|-----------------------------------------------------------------------|
 |`store_dir`|可选| 结果 CSV 存储目录，默认 `store`。                                               |
-|`pso_top_k`|可选| 从 PSO 结果中选取的候选组数，默认为 0，功能不开启。选取逻辑：取 fitness 最小的 top-k；深度精调场景建议 `3~5`。 |
+|`pso_top_k`|可选| 从 PSO 结果中选取的候选组数，默认为 0，关闭 FineTune，但仍复测最佳 PSO 候选。选取逻辑：取 fitness 最小的 top-k；深度精调场景建议 `3~5`。 |
 
 ```toml
 [data_storage]
@@ -590,7 +594,7 @@ msmodeling optix -c my_config.toml
 
 OptiX 支持为 vLLM 的 PD（Prefill-Decode）分离部署搜索服务参数并推荐 P/D 实例配比：先通过 `--mode pd_disagg` 分别搜索 P/D 参数，再由用户部署完整 PD 服务，最后通过普通 `standard` 模式微调并发和请求速率。
 
-详细配置、操作步骤、配比解读和结果说明见[使用案例：OptiX PD 分离两步寻优](../use_cases/optix_pd_disaggregation.md)。其他 PD 分离或 PD 混部寻优可使用[插件支持](#3-插件支持)中列出的现有插件。
+首次使用可按[PD 分离寻优新手操作指南](../quick_start/optix_pso_pd_disaggregation.md)中的具体例子复制配置并运行。完整参数解释、配比解读和进阶配置见[使用案例：OptiX PD 分离两步寻优](../use_cases/optix_pso_pd_disaggregation.md)。其他 PD 分离或 PD 混部寻优可使用[插件支持](#3-插件支持)中列出的现有插件。
 
 ## 9. 结果文件说明
 
