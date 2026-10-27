@@ -151,6 +151,13 @@ def _render_coverage_markdown(report: FeishuReportInput) -> str | None:
         lines.append(
             f"- Branch: {report.coverage_branch_percent:.1f}%{threshold} **{_coverage_gate_word(branch_pass)}**"
         )
+    if report.coverage_core_line_percent is not None:
+        lines.append(f"- Core line: {report.coverage_core_line_percent:.1f}%")
+    if report.coverage_cov_helper_contribution is not None:
+        lines.append(
+            f"- cov_helper contribution: +{report.coverage_cov_helper_contribution:.1f}% "
+            f"({report.coverage_cov_helper_only_lines} helper-only lines)"
+        )
     if report.coverage_gate_passed is not None and (
         report.coverage_line_percent is not None and report.coverage_branch_percent is not None
     ):

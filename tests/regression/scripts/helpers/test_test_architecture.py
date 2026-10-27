@@ -21,7 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.helpers.test_architecture import GateError, check_assertions, check_scenarios, collect_inventory
+from scripts.helpers.test_architecture import (
+    GateError,
+    _classify_file,
+    check_assertions,
+    check_scenarios,
+    collect_inventory,
+)
 
 
 def _write_csv(path: Path, fields: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
@@ -40,9 +46,21 @@ def test_collect_inventory_uses_exact_node_ids(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     output = tmp_path / "inventory.csv"
-    collect_inventory(argparse.Namespace(collect_output=collected, output=output))
+    collect_inventory(argparse.Namespace(collect_output=collected, output=output, repo_root=tmp_path))
     assert "tests/a/test_x.py::test_one" in output.read_text(encoding="utf-8")
     assert "tests/a/test_x.py::test_param[value with spaces]" in output.read_text(encoding="utf-8")
+
+
+def test_classify_file_routes_model_and_pure_tests(tmp_path: Path) -> None:
+    model = tmp_path / "tests/regression/tensor_cast/test_model.py"
+    model.parent.mkdir(parents=True)
+    model.write_text("runner = ModelRunner(model_id=\"Qwen/Qwen3\")\n", encoding="utf-8")
+    unit = tmp_path / "tests/regression/cli/test_parser.py"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("def test_parse():\n    assert int('1') == 1\n", encoding="utf-8")
+
+    assert _classify_file(tmp_path, model.relative_to(tmp_path).as_posix()) == ("regression", "L1-model")
+    assert _classify_file(tmp_path, unit.relative_to(tmp_path).as_posix()) == ("regression", "L3-unit")
 
 
 def test_assertion_manifest_requires_all_three_groups(tmp_path: Path) -> None:

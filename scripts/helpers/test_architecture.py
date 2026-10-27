@@ -70,15 +70,54 @@ def _node_ids(path: Path) -> list[str]:
     return sorted(set(result))
 
 
+def _classify_file(repo_root: Path, current_file: str) -> tuple[str, str]:
+    """Return the physical baseline layer and target responsibility layer."""
+    parts = Path(current_file).parts
+    physical = next((name for name in ("smoke", "regression", "benchmark") if name in parts), "non-layered")
+    path = Path(current_file)
+    normalized = path.as_posix()
+    if normalized.startswith("tests/benchmark/models/"):
+        return physical, "L1-model"
+    if normalized.startswith("tests/benchmark/ops/"):
+        return physical, "L2-module"
+    in_refactor_scope = normalized.startswith(
+        ("tests/regression/tensor_cast/", "tests/regression/cli/", "tests/regression/model_diagnostics/")
+    )
+    if not in_refactor_scope:
+        return physical, "out-of-scope"
+    try:
+        source = (repo_root / path).read_text(encoding="utf-8")
+    except OSError:
+        return physical, "pending-review"
+    if any(token in source for token in ("ModelRunner", "L1ScenarioExecutor", "model_id=", 'model_id = "', "model_id = '")):
+        return physical, "L1-model"
+    l2_tokens = (
+        "microbench",
+        "op_replay",
+        "build_op_registry",
+        "RuntimeArtifactCapture",
+        "diagnostics",
+        "graph_extractor",
+        "quantization",
+    )
+    if any(token in source for token in l2_tokens):
+        return physical, "L2-module"
+    return physical, "L3-unit"
+
+
 def collect_inventory(args: argparse.Namespace) -> None:
     rows = []
+    classifications: dict[str, tuple[str, str]] = {}
     for node_id in _node_ids(args.collect_output):
         current_file = node_id.split("::", 1)[0]
+        current_layer, target_layer = classifications.setdefault(
+            current_file, _classify_file(args.repo_root, current_file)
+        )
         rows.append({
             "node_id": node_id,
             "current_file": current_file,
-            "current_layer": "unclassified",
-            "target_layer": "pending-review",
+            "current_layer": current_layer,
+            "target_layer": target_layer,
             "target_file": current_file,
             "status": "master-baseline",
         })
@@ -231,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect = sub.add_parser("collect-inventory")
     collect.add_argument("--collect-output", type=Path, required=True)
     collect.add_argument("--output", type=Path, required=True)
+    collect.add_argument("--repo-root", type=Path, default=Path.cwd())
     collect.set_defaults(func=collect_inventory)
     compare = sub.add_parser("compare-inventory")
     compare.add_argument("--inventory", type=Path, required=True)

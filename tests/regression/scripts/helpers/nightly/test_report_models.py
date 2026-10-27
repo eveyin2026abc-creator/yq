@@ -45,6 +45,7 @@ def test_coverage_summary() -> None:
     )
     assert c.line_percent == 85.5
     assert c.gate_passed is True
+    assert c.cov_helper_only_lines == 0
 
 
 def test_failure_blame_fields_and_conclusion_helpers() -> None:
