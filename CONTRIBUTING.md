@@ -549,6 +549,38 @@ CI 恢复等场景，也可以让工作流 Skill 编排完整交付。
 
 ---
 
+## 新增测试落位规则
+
+新增或迁移测试先回答三问；目录表达责任层，pytest marker 只表达运行约束。
+
+1. 是否使用真实 `model_id` 或执行 `ModelRunner`？是则为 **L1（model）**：登记
+   `tests/.ci/l1_families.json`，声明 `L1_FAMILY`，复用 `L1ScenarioExecutor`，不得按
+   断言组重复构建或前向。每个 family 的 numeric、structural、capability 断言逐条登记
+   到 `tests/.ci/assertion_manifest.csv`。
+2. 是否使用 canonical synthetic builder 验证运行时、量化、Replay、通信、诊断、图变换
+   等机制？是则为 **L2（module）**：放在目标 `module/` 目录并从 `tests/helpers/` 导入
+   builder；禁止从 L2 调用真实模型执行入口。多模态机制没有 canonical builder 时必须
+   归 L1（真实单 block）或 L3（纯规则），不得就地手搓 fixture。
+3. 是否只验证纯函数、解析、校验、异常或退出码？是则为 **L3（unit）**。仅为低成本覆盖
+   长尾分支的测试加 `@pytest.mark.cov_helper`；docstring 必须写
+   `COV_HELPER: product/path.py::symbol`。
+
+以上都不满足时，先提案新增 canonical builder。禁止在用例内复制产品构建逻辑。
+
+`cov_helper` 不是第四层：它与 L3 共用 unit 目录，单条目标耗时小于 50 ms，禁止 mock
+被测产品对象，安全、精度和性能路径不得以它作为唯一 watcher。夜间报告分别展示核心
+覆盖率与 `cov_helper` 贡献，总覆盖率口径不变。
+
+修改 `tests/` 的 PR 必须说明“新增用例属于哪层、使用哪个 builder/family”。临时复现
+用例等例外走 `tests/.ci/gate_policy.yaml` exemptions，填写 reason、applicant、approver、
+deadline。CI 会检查 family 注册、断言 manifest、180 秒 L1 场景预算和 cov_helper 约束。
+
+L1 增量预算以唯一 `(build_signature, run_signature)` 场景为单位，不以 pytest 用例数为
+单位。`tests/.ci/l1_scenarios.csv` 在实测并审批前保持 `pending-approval`，不得用占位用例数
+宣称满足 180 秒预算。
+
+---
+
 ## 社区角色与晋升机制
 
 ### 角色定义

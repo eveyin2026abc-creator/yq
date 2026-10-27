@@ -1,0 +1,4 @@
+family,group,assertion_id,source_node,product_symbol,status,reason,approver
+qwen,numeric,latency-baseline,tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_10_qwen3_30b_a3b_decode,tensor_cast.core.model_runner::ModelRunnerMetrics,active,,
+qwen,structural,model-load-shape,tests/regression/tensor_cast/test_model_load.py::ModelLoadTestCase::test_vanilla_transformer_model_0_Qwen_Qwen3_32B,tensor_cast.core.model_runner::ModelRunner,active,,
+qwen,capability,prefill-path,tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_basic_prefill,cli.inference.text_generate::main,active,,

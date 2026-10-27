@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "families": {
+    "qwen": {"batch": "qwen", "owner": "SIG-Test"},
+    "dense": {"batch": "dense", "owner": "SIG-Test"},
+    "moe": {"batch": "moe", "owner": "SIG-Test"},
+    "multimodal": {"batch": "multimodal", "owner": "SIG-Test"}
+  }
+}

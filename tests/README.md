@@ -34,6 +34,28 @@ Layering by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (lo
 | `nightly` | Full smoke/regression; excluded from mapped/guard wave, but **changed-test wave runs them** unless exempt. |
 | `npu` | Excluded everywhere. |
 | `network` | Only nightly Phase 2c. |
+| `cov_helper` | L3-only long-tail coverage helper; reported separately from core guardianship. |
+
+## L1 / L2 / L3 Responsibility Architecture
+
+- **L1/model** uses a real model identity or `ModelRunner`. It must use
+  `L1ScenarioExecutor`, declare a family from `tests/.ci/l1_families.json`, and keep its
+  numeric, structural, and capability assertions in `tests/.ci/assertion_manifest.csv`.
+- **L2/module** uses a canonical synthetic builder from `tests/helpers/`; real model
+  execution entry points are forbidden. A new artifact type requires a reviewed builder.
+- **L3/unit** covers pure rules, parsing, validation, exceptions, and exit codes.
+  `cov_helper` is only a transparent L3 subtype, not a fourth architecture layer.
+
+The assertion manifest is the rollback gate: a migration may not reduce active assertion
+IDs. An intentional removal is represented as `status=waived` with both `reason` and
+`approver`. L1 incremental scheduling is tracked in `tests/.ci/l1_scenarios.csv`; the
+180-second budget counts unique `(build_signature, run_signature)` pairs, not pytest node
+count. Unmeasured scenarios remain `pending-approval` and do not claim budget compliance.
+
+Every `cov_helper` test must map a real product symbol in its docstring, avoid mocking the
+product object under test, and target less than 50 ms. Security, precision, and performance
+paths must retain a non-`cov_helper` watcher. Nightly reporting keeps total line coverage
+unchanged while showing core coverage and the `cov_helper` contribution separately.
 
 ## Model Configs: Offline by Default
 

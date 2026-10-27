@@ -1,0 +1,5 @@
+family,scenario_id,build_signature,run_signature,expected_seconds,schedule
+qwen,qwen-pilot,qwen:pilot:pending,qwen:pilot:pending,0,pending-approval
+dense,dense-batch,dense:pending,dense:pending,0,pending-approval
+moe,moe-batch,moe:pending,moe:pending,0,pending-approval
+multimodal,multimodal-batch,multimodal:pending,multimodal:pending,0,pending-approval

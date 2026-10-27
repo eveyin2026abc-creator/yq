@@ -24,6 +24,8 @@ spec/
 │   ├── ai-execution-policy.md
 │   ├── audit-record-contract.md
 │   └── gitcode-cli-contract.md
+├── testing/
+│   └── test-architecture.md
 └── workflows/
     ├── issue-workflow.md
     ├── issue-review-workflow.md
@@ -43,6 +45,7 @@ spec/
 | PR 检视 | `review-workflow.md` | `sig-review` |
 | CI 失败闭环 | `ci-recovery-workflow.md` | `msmodeling-ci-recovery` |
 | 处理检视意见 | `review-workflow.md` | `msmodeling-review-feedback` |
+| 新增、迁移或分层测试 | `testing/test-architecture.md` | `tests/SKILL.md` |
 
 ## 基本规则
 
