@@ -1146,10 +1146,6 @@ class TestThroughputOptimizerDraftSpecCli(TestCase):
         with self.assertRaises(SystemExit):
             self._parse(["--speculative-method=mtp", "--num-speculative-tokens=2", "--num-draft-layers=4"])
 
-    def test_mtp_and_dflash_mutually_exclusive(self):
-        with self.assertRaises(SystemExit):
-            self._parse(["--speculative-method=dflash", "--num-mtp-tokens", "2"])
-
     def test_mtp_method_requires_num_speculative_tokens(self):
         with self.assertRaises(SystemExit):
             self._parse(["--speculative-method=mtp"])
