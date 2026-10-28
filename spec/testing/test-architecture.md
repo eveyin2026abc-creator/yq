@@ -26,8 +26,9 @@ structural、capability 三组断言及对应产品符号。迁移后 active ass
 ## 4. 增量预算
 
 L1 增量预算单位是唯一 `(build_signature, run_signature)` 场景，不是 pytest node 数。
-`tests/.ci/l1_scenarios.csv` 必须记录 family、场景、build/run 签名、预计秒数与调度范围。
-未实测场景保持 `pending-approval`；所有 incremental 场景预计总时长不得超过 180 秒。
+`tests/.ci/l1_scenarios.csv` 必须记录 family、场景、build/run 签名、实际 build/forward
+计数、实测秒数与调度范围。每个场景必须满足一次 build、一次 forward；所有 incremental
+场景实测总时长不得超过 180 秒。
 
 ## 5. 分批迁移与回滚
 
@@ -49,3 +50,17 @@ manifest 守恒、build/forward 计数、test_map watcher 不缩水，以及适�
 `scripts/helpers/test_architecture.py` 校验断言 manifest、场景预算、新增测试路由与清单对账。
 `scripts/run_ci_gate.sh` 在 pytest 前运行这些门禁。例外沿用 `tests/.ci/gate_policy.yaml`
 exemptions，必须填写 reason、applicant、approver、deadline。
+
+## 8. 已迁移范围与执行证据
+
+本轮把 tensor_cast、CLI 和 model_diagnostics 范围内的存量文件实际迁入 `model/`、
+`module/`、`unit/`。四个 L1 family 的离线真实场景位于
+`tests/regression/tensor_cast/model/test_l1_family_scenarios.py`，覆盖 Qwen2.5、Qwen3 Dense、
+Qwen3 MoE、DeepSeek V3/V3.2、Kimi K2、MiniMax M2、Qwen3-VL 与 GLM-4.5V。
+`tests/.ci/l1_test_map.json` 是这些场景用 `--cov-context=test` 生成的 watcher 证据；
+`l1_watchers.csv` 中的必要产品符号必须继续出现在对应 family 的映射中。
+
+不在本轮责任分层范围的 4758 条基线节点不表示“不重要”。其维护边界记录在
+`tests/.ci/out_of_scope_boundaries.csv`：web_ui、optix、serving_cast 保持各自子系统语义；
+scripts 与 helpers 由测试基础设施维护；smoke 继续作为跨层发布守卫；Operator-DB 继续作为
+ST 数据基线。它们不会因本轮重构被移动或降级，后续由对应维护者单独评审。

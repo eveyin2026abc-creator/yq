@@ -193,7 +193,7 @@ def check_assertions(args: argparse.Namespace) -> None:
 
 
 def check_scenarios(args: argparse.Namespace) -> None:
-    required = ("family", "scenario_id", "build_signature", "run_signature", "expected_seconds", "schedule")
+    required = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
     rows = _read_csv(args.matrix)
     _require_columns(args.matrix, rows, required)
     invalid = sorted({row["schedule"] for row in rows} - {"incremental", "nightly", "pending-approval"})
@@ -203,9 +203,13 @@ def check_scenarios(args: argparse.Namespace) -> None:
     builds = set()
     for line, row in enumerate((r for r in rows if r["schedule"] == "incremental"), 2):
         try:
-            seconds = float(row["expected_seconds"])
+            seconds = float(row["actual_seconds"])
+            builds_for_run = int(row["build_count"])
+            forwards_for_run = int(row["forward_count"])
         except ValueError as error:
-            raise GateError(f"{args.matrix}:{line}: expected_seconds is not numeric") from error
+            raise GateError(f"{args.matrix}:{line}: counts/actual_seconds must be numeric") from error
+        if builds_for_run != 1 or forwards_for_run != 1:
+            raise GateError(f"{args.matrix}:{line}: every measured scenario must build once and run once")
         key = (row["build_signature"], row["run_signature"])
         scenarios[key] = max(scenarios.get(key, 0.0), seconds)
         builds.add(row["build_signature"])
@@ -213,6 +217,29 @@ def check_scenarios(args: argparse.Namespace) -> None:
     print(json.dumps({"builds": len(builds), "runs": len(scenarios), "expected_seconds": round(total, 3), "budget_seconds": args.budget}))
     if total > args.budget:
         raise GateError(f"incremental L1 scenario budget exceeded: {total:.3f}s > {args.budget:.3f}s")
+
+
+def check_watchers(args: argparse.Namespace) -> None:
+    rows = _read_csv(args.watchers)
+    required = ("family", "source_node", "product_symbol", "required")
+    _require_columns(args.watchers, rows, required)
+    payload = json.loads(args.test_map.read_text(encoding="utf-8"))
+    mapping = payload.get("map", {})
+    covered_families = set()
+    missing = []
+    for row in rows:
+        if row["required"].lower() != "true":
+            continue
+        source_file, symbol = row["product_symbol"].split("::", 1)
+        symbols = mapping.get(row["source_node"], {}).get(source_file, [])
+        if symbol not in symbols:
+            missing.append(f"{row['family']}: {row['source_node']} -> {row['product_symbol']}")
+        covered_families.add(row["family"])
+    if covered_families != {"qwen", "dense", "moe", "multimodal"}:
+        raise GateError("watcher manifest must cover qwen/dense/moe/multimodal")
+    if missing:
+        raise GateError("required watcher paths disappeared:\n" + "\n".join(missing))
+    print(json.dumps({"families": len(covered_families), "required_watchers": len(rows)}))
 
 
 def _changed_test_files(base: str) -> list[Path]:
@@ -286,6 +313,10 @@ def build_parser() -> argparse.ArgumentParser:
     scenarios.add_argument("--matrix", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
     scenarios.add_argument("--budget", type=float, default=180.0)
     scenarios.set_defaults(func=check_scenarios)
+    watchers = sub.add_parser("check-watchers")
+    watchers.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    watchers.add_argument("--test-map", type=Path, default=Path("tests/.ci/l1_test_map.json"))
+    watchers.set_defaults(func=check_watchers)
     new_tests = sub.add_parser("check-new-tests")
     new_tests.add_argument("--base", default="origin/master")
     new_tests.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))

@@ -62,6 +62,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 architecture_status=0
 run_py "${HELPERS_DIR}/test_architecture.py" check-assertions || architecture_status=$?
 run_py "${HELPERS_DIR}/test_architecture.py" check-scenarios --budget 180 || architecture_status=$?
+run_py "${HELPERS_DIR}/test_architecture.py" check-watchers || architecture_status=$?
 run_py "${HELPERS_DIR}/test_architecture.py" check-new-tests \
   --base "origin/${MSMODELING_TEST_BASE_BRANCH}" || architecture_status=$?
 

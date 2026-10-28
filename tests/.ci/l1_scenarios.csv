@@ -1,5 +1,12 @@
-family,scenario_id,build_signature,run_signature,expected_seconds,schedule
-qwen,qwen-pilot,qwen:pilot:pending,qwen:pilot:pending,0,pending-approval
-dense,dense-batch,dense:pending,dense:pending,0,pending-approval
-moe,moe-batch,moe:pending,moe:pending,0,pending-approval
-multimodal,multimodal-batch,multimodal:pending,multimodal:pending,0,pending-approval
+family,scenario_id,build_signature,run_signature,build_count,forward_count,actual_seconds,schedule
+qwen,qwen25-offline,qwen:qwen2.5-7b:1-layer,qwen:prefill:q8:c8,1,1,0.435,incremental
+dense,qwen3-dense-offline,dense:qwen3-0.6b:1-layer,dense:prefill:q8:c8,1,1,0.068,incremental
+moe,qwen3-moe-offline,moe:qwen3-30b-a3b:1-layer,moe:prefill:q8:c8,1,1,1.524,incremental
+multimodal,qwen3-vl-offline,multimodal:qwen3-vl-8b:1-layer,multimodal:prefill:q8:c8:no-image,1,1,0.220,incremental
+dense,qwen3-dense-8b-nightly,dense:qwen3-8b:1-layer,dense:prefill:q8:c8,1,1,0.420,nightly
+moe,deepseek-v3-nightly,moe:deepseek-v3:1-layer,moe:prefill:q8:c8,1,1,0.066,nightly
+moe,deepseek-v32-nightly,moe:deepseek-v32:1-layer,moe:prefill:q8:c8,1,1,0.087,nightly
+moe,kimi-k2-nightly,moe:kimi-k2-thinking:1-layer,moe:prefill:q8:c8,1,1,0.077,nightly
+moe,minimax-m2-nightly,moe:minimax-m2:1-layer,moe:prefill:q8:c8,1,1,1.862,nightly
+multimodal,glm45v-nightly,multimodal:glm45v:1-layer,multimodal:prefill:q8:c8:no-image,1,1,0.181,nightly
+multimodal,qwen3vl-moe-nightly,multimodal:qwen3-vl-moe:1-layer,multimodal:prefill:q8:c8:no-image,1,1,1.476,nightly

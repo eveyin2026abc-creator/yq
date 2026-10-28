@@ -1,0 +1,8 @@
+area,baseline_nodes,maintenance_boundary,owner,future_round
+web_ui,1515,Independent UI/API contract suite; retain existing directory and latency markers,Web UI maintainers,Separate UI test architecture review
+optix,865,Independent optimizer and graph rewrite suite; retain its existing subsystem taxonomy,Optix maintainers,Separate optimizer review
+scripts,699,Repository tooling and CI self-tests; not product responsibility-layer tests,Build and CI maintainers,Remain tool-owned
+serving_cast,574,Serving subsystem with independent service boundaries and fixtures,Serving maintainers,Separate serving-layer review
+smoke,107,Release-blocking end-to-end guard; paths and scheduling remain unchanged,SIG-Test,Not migrated; remains a cross-layer guard
+operator_db,194,Operator database correctness baseline and ST input,Operator DB maintainers,Review with benchmark data governance
+helpers,4,Tests for shared test infrastructure rather than product behavior,SIG-Test,Remain helper-owned

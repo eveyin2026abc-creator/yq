@@ -26,6 +26,7 @@ from scripts.helpers.test_architecture import (
     _classify_file,
     check_assertions,
     check_scenarios,
+    check_watchers,
     collect_inventory,
 )
 
@@ -82,10 +83,10 @@ def test_assertion_manifest_requires_signed_waiver(tmp_path: Path) -> None:
 
 def test_scenario_budget_counts_unique_build_run_pairs(tmp_path: Path) -> None:
     matrix = tmp_path / "scenarios.csv"
-    fields = ("family", "scenario_id", "build_signature", "run_signature", "expected_seconds", "schedule")
+    fields = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
     rows = [
-        ("qwen", "numeric", "build-a", "run-a", "90", "incremental"),
-        ("qwen", "structural", "build-a", "run-a", "90", "incremental"),
+        ("qwen", "numeric", "build-a", "run-a", "1", "1", "90", "incremental"),
+        ("qwen", "structural", "build-a", "run-a", "1", "1", "90", "incremental"),
     ]
     _write_csv(matrix, fields, rows)
     check_scenarios(argparse.Namespace(matrix=matrix, budget=100.0))
@@ -93,11 +94,22 @@ def test_scenario_budget_counts_unique_build_run_pairs(tmp_path: Path) -> None:
 
 def test_scenario_budget_rejects_too_many_distinct_runs(tmp_path: Path) -> None:
     matrix = tmp_path / "scenarios.csv"
-    fields = ("family", "scenario_id", "build_signature", "run_signature", "expected_seconds", "schedule")
+    fields = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
     rows = [
-        ("qwen", "one", "build-a", "run-a", "100", "incremental"),
-        ("qwen", "two", "build-a", "run-b", "100", "incremental"),
+        ("qwen", "one", "build-a", "run-a", "1", "1", "100", "incremental"),
+        ("qwen", "two", "build-a", "run-b", "1", "1", "100", "incremental"),
     ]
     _write_csv(matrix, fields, rows)
     with pytest.raises(GateError, match="budget exceeded"):
         check_scenarios(argparse.Namespace(matrix=matrix, budget=180.0))
+
+
+def test_watcher_gate_requires_mapped_symbol(tmp_path: Path) -> None:
+    watchers = tmp_path / "watchers.csv"
+    fields = ("family", "source_node", "product_symbol", "required")
+    rows = [(family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true") for family in ("qwen", "dense", "moe", "multimodal")]
+    _write_csv(watchers, fields, rows)
+    test_map = tmp_path / "test_map.json"
+    import json
+    test_map.write_text(json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8")
+    check_watchers(argparse.Namespace(watchers=watchers, test_map=test_map))

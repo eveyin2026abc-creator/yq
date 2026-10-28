@@ -1,0 +1,1809 @@
+{
+  "schema_version": 1,
+  "built_from_commit": "refactor/test-framework-v4",
+  "map": {
+    "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_dense_scenarios": {
+      "tensor_cast/adapter/patch_report.py": [
+        "PatchReport::add_replacement",
+        "attach_patch_report"
+      ],
+      "tensor_cast/core/compilation_config.py": [
+        "apply_compilation_config"
+      ],
+      "tensor_cast/core/config_resolver.py": [
+        "ConfigResolver::__init__",
+        "ConfigResolver::resolve",
+        "ConfigResolver::update_hf_config",
+        "ConfigResolver::update_mla_config",
+        "ConfigResolver::update_moe_config",
+        "ConfigResolver::update_mtp_config",
+        "ConfigResolver::update_parallel_config",
+        "ConfigResolver::validate_moe_parallel_config",
+        "_resolve_model_dtype"
+      ],
+      "tensor_cast/core/input_generator.py": [
+        "_get_deepseek_v41_compressed_cache_info",
+        "_get_kv_cache_info",
+        "_is_deepseek_v41_config",
+        "_is_mimo_v2_flash_model",
+        "_is_v4_model",
+        "_layer_uses_sparse_attention_indexer",
+        "_resolve_decoder_attention_layer",
+        "_resolve_decoder_layers",
+        "_resolve_main_kv_cache_dtype",
+        "_shard_kv_heads",
+        "dcp_kv_token_capacity_factor",
+        "dcp_sharded_num_blocks",
+        "generate_inputs_varlen",
+        "get_kv_cache_info",
+        "get_sparse_attention_indexer_cache_info",
+        "kv_cache_excluded_layer_indices"
+      ],
+      "tensor_cast/core/model_builder.py": [
+        "build_model"
+      ],
+      "tensor_cast/core/model_runner.py": [
+        "ModelRunner::__init__",
+        "ModelRunner::_aggregate_runtime_events",
+        "ModelRunner::_apply_kv_offload_accounting",
+        "ModelRunner::_apply_prefill_kv_offload_accounting",
+        "ModelRunner::_calculate_single_card_tps",
+        "ModelRunner::_check_peak_memory_usage_gb",
+        "ModelRunner::_log_empirical_model_stats@staticmethod",
+        "ModelRunner::_new_empirical_records",
+        "ModelRunner::_resolve_offload_cache_layers@staticmethod",
+        "ModelRunner::_validate_kv_offload_model",
+        "ModelRunner::create_performance_models@staticmethod",
+        "ModelRunner::run_inference",
+        "_primary_model_output"
+      ],
+      "tensor_cast/core/model_source_security.py": [
+        "_decode_mount_field",
+        "_find_mount_type",
+        "_permission_bits_are_enforceable",
+        "_permission_bits_may_be_synthetic",
+        "_validate_local_entry",
+        "_validate_local_model_path",
+        "_validate_no_symlink_path_components",
+        "_validate_owner",
+        "normalize_model_source",
+        "validate_local_model_path"
+      ],
+      "tensor_cast/core/quantization/config.py": [
+        "_filter_action_kwargs",
+        "_set_linear_patterns",
+        "create_linear_quant_config",
+        "create_quant_config"
+      ],
+      "tensor_cast/core/user_config.py": [
+        "UserInputConfig::%",
+        "UserInputConfig::__post_init__",
+        "UserInputConfig::_normalize_draft_method",
+        "UserInputConfig::_normalize_model_source",
+        "UserInputConfig::_normalize_performance_model",
+        "UserInputConfig::_normalize_word_embedding_tp",
+        "UserInputConfig::_validate_device",
+        "UserInputConfig::_validate_pipeline_parallelism",
+        "UserInputConfig::_validate_vision_parallelism",
+        "UserInputConfig::draft_block_size",
+        "UserInputConfig::get_effective_prefix_cache_hit_rate",
+        "UserInputConfig::get_parallel_config",
+        "UserInputConfig::get_quant_config",
+        "UserInputConfig::get_request_info"
+      ],
+      "tensor_cast/layers/attention.py": [
+        "AttentionBase::__init__",
+        "AttentionMetadataBase::__post_init__",
+        "AttentionTensorCast::forward",
+        "flash_attention_forward",
+        "is_dcp_decode_batch"
+      ],
+      "tensor_cast/layers/glm5.py": [
+        "get_glm5_indexer_types",
+        "glm5_uses_indexshare"
+      ],
+      "tensor_cast/layers/internal.py": [
+        "RegionMarkerWrapper::__init__",
+        "RegionMarkerWrapper::forward"
+      ],
+      "tensor_cast/layers/mla.py": [
+        "tp_plan_module_path",
+        "tp_plan_nested_module_path"
+      ],
+      "tensor_cast/layers/parallel_linear.py": [
+        "ColumnParallelLinear::__init__",
+        "ColumnParallelLinear::create_weights",
+        "ColumnParallelLinear::forward",
+        "ParallelLinearBase::__init__",
+        "RowParallelLinear::__init__",
+        "RowParallelLinear::create_weights",
+        "RowParallelLinear::forward",
+        "replace_with_sharded_tensor"
+      ],
+      "tensor_cast/layers/quant_linear.py": [
+        "QuantLinearBase::__init__",
+        "QuantLinearBase::quantize_weight",
+        "TensorCastQuantLinear::__init__",
+        "TensorCastQuantLinear::forward"
+      ],
+      "tensor_cast/layers/rotary_embedding.py": [
+        "CachingRotaryEmb::__init__",
+        "CachingRotaryEmb::forward",
+        "_call_rotary_emb"
+      ],
+      "tensor_cast/layers/sampler.py": [
+        "SamplingMetadata::%",
+        "_has_explicit_selected_token_indices",
+        "_index_select_token_dim",
+        "select_lm_head_hidden_states"
+      ],
+      "tensor_cast/layers/utils.py": [
+        "ModelWrapperBase::__getattr__",
+        "ModelWrapperBase::__init__",
+        "ModelWrapperBase::unwrap",
+        "_get_partial_sharded_by_unit",
+        "_get_partial_sharded_padding",
+        "_get_sharded_shape",
+        "get_partial_sharded"
+      ],
+      "tensor_cast/model_config.py": [
+        "LinearQuantConfig::__post_init__",
+        "ModelConfig::__post_init__",
+        "ModelConfig::has_draft_spec",
+        "ParallelConfig::__post_init__",
+        "ParallelConfig::has_ep",
+        "QuantConfig::__post_init__",
+        "config_has_draft_spec"
+      ],
+      "tensor_cast/ops/attention.py": [
+        "_@register_tensor_cast_op(\"attention\")",
+        "_@register_tensor_cast_op(\"reshape_and_cache\", mutates_args=(\"kv_cache\",))"
+      ],
+      "tensor_cast/ops/internal.py": [
+        "_@register_tensor_cast_op(\"_internal_mark_region_begin\")",
+        "_@register_tensor_cast_op(\"_internal_mark_region_end\")"
+      ],
+      "tensor_cast/ops/linear.py": [
+        "_@register_tensor_cast_op(\"static_quant_linear\")@register_tensor_cast_op(\"static_quant_linear_int4\")"
+      ],
+      "tensor_cast/ops/quantization.py": [
+        "_@register_tensor_cast_op(\"dynamic_quantize_symmetric\")"
+      ],
+      "tensor_cast/parallel_group.py": [
+        "ParallelGroup::__init__",
+        "ParallelGroup::set_rank",
+        "ParallelGroupManager::__init__",
+        "ParallelGroupManager::initialize_model_parallel"
+      ],
+      "tensor_cast/patch_torch.py": [
+        "patch_dtype_abbrs@contextlib.contextmanager",
+        "patch_dtype_to_type@contextlib.contextmanager",
+        "patch_fallback_node_due_to_unsupported_type@contextlib.contextmanager",
+        "patch_masked_scatter@contextlib.contextmanager",
+        "patch_torch@contextlib.contextmanager",
+        "prepare_freezing@contextlib.contextmanager",
+        "specialize_float@contextlib.contextmanager",
+        "support_autocast_for_meta@contextlib.contextmanager"
+      ],
+      "tensor_cast/performance_model/__init__.py": [
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.embedding.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.index_select.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.mm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.reshape_and_cache.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.static_quant_linear.default)",
+        "_attention_properties_helper",
+        "_estimate_default",
+        "_estimate_default_without_static_cost",
+        "_estimate_static_cost",
+        "_get_device_ops_for_dtype",
+        "_mm_properties_helper",
+        "_normalize_query_lens_and_request_total_seq_lens",
+        "_static_quant_linear_properties_helper",
+        "_tensor_value_unavailable"
+      ],
+      "tensor_cast/performance_model/analytic.py": [
+        "AnalyticPerformanceModel::__init__",
+        "AnalyticPerformanceModel::get_classifiers",
+        "AnalyticPerformanceModel::process_op@override",
+        "OpBoundClassifier::_accumulate_dominant_components@staticmethod",
+        "OpBoundClassifier::classify",
+        "OpBoundClassifier::name@property"
+      ],
+      "tensor_cast/performance_model/base.py": [
+        "CachingPerformanceModel::__init__",
+        "CachingPerformanceModel::get_classifiers",
+        "CachingPerformanceModel::process_op",
+        "PerformanceModel::__init__",
+        "PerformanceModel::record_cache_hit"
+      ],
+      "tensor_cast/performance_model/bound_analyzer.py": [
+        "BoundAnalyzer::_collect_stat_by_suffix@classmethod",
+        "BoundAnalyzer::_numeric_value@classmethod",
+        "BoundAnalyzer::_resolved_stat@classmethod",
+        "BoundAnalyzer::_stat_value@classmethod",
+        "BoundAnalyzer::components@classmethod",
+        "BoundAnalyzer::dominant@classmethod"
+      ],
+      "tensor_cast/performance_model/empirical.py": [
+        "summarize_empirical_records"
+      ],
+      "tensor_cast/performance_model/memory_tracker.py": [
+        "MemoryTracker::__init__",
+        "MemoryTracker::_extract_tensors",
+        "MemoryTracker::_get_real_tensor_id",
+        "MemoryTracker::_handle_aliasing",
+        "MemoryTracker::_zero_storage_input_ids",
+        "MemoryTracker::analyze",
+        "MemoryTracker::get_profile",
+        "MemoryTracker::peak_mem_usage",
+        "MemoryTracker::record_single_op_invocation",
+        "MemoryTracker::restore_default_zero_storage_inputs@classmethod"
+      ],
+      "tensor_cast/performance_model/op_estimator_registry.py": [
+        "get_op_estimator"
+      ],
+      "tensor_cast/performance_model/op_invoke_info.py": [
+        "OpInvokeInfo::__init__",
+        "OpInvokeInfo::compute_cache_key",
+        "OpInvokeInfo::get_memory_access_properties",
+        "OpInvokeInfo::get_op_properties_functor@classmethod",
+        "OpInvokeInfo::get_perf_properties",
+        "Region::__init__",
+        "Region::_add_equivalent_info",
+        "Region::finalize",
+        "Region::get_tensor_id@classmethod",
+        "Region::input_tensor@property",
+        "Region::output_tensor@property"
+      ],
+      "tensor_cast/performance_model/utils.py": [
+        "bytes_of_elements",
+        "bytes_of_tensor",
+        "is_noop_self_copy_op",
+        "is_view_op",
+        "run_once"
+      ],
+      "tensor_cast/quantize_utils.py": [
+        "get_quant_config",
+        "quant_type_to_dynamic_quant_dtype",
+        "quant_type_to_weight_dtype",
+        "quantize_linear_modules",
+        "replace_module"
+      ],
+      "tensor_cast/runtime.py": [
+        "OpAverageGroupData::%",
+        "Runtime::__enter__",
+        "Runtime::__exit__",
+        "Runtime::__init__",
+        "Runtime::__torch_dispatch__",
+        "Runtime::_aggregate_average_table_data",
+        "Runtime::_average_table_col_widths@classmethod",
+        "Runtime::_average_table_headers@staticmethod",
+        "Runtime::_build_model_timelines",
+        "Runtime::_consume_pending_wait_context",
+        "Runtime::_extract_tensor_token_ids@staticmethod",
+        "Runtime::_format_time@staticmethod",
+        "Runtime::_is_multistream_anchor_op@classmethod",
+        "Runtime::_iter_flat_invocations",
+        "Runtime::_record_memory_invocations",
+        "Runtime::_record_single_memory_invocation",
+        "Runtime::_render_average_table@classmethod",
+        "Runtime::_replay_single_op",
+        "Runtime::_sort_average_table_items@staticmethod",
+        "Runtime::get_breakdowns",
+        "Runtime::is_infra_mode@classmethod",
+        "Runtime::repeat_op_invoke_infos",
+        "Runtime::replay_flat_op_invoke_infos",
+        "Runtime::replay_op_invoke_infos",
+        "Runtime::table_averages",
+        "Runtime::total_execution_time_s",
+        "_contains_meta_tensor",
+        "_default_bound_components_by_model",
+        "_move_cpu_tensors_to_meta",
+        "_normalize_meta_elementwise_args"
+      ],
+      "tensor_cast/transformers/custom_model_registry.py": [
+        "find_matching_key",
+        "get_custom_model",
+        "get_language_layers",
+        "get_mla_module_name",
+        "get_model_profile",
+        "get_moe_config",
+        "get_mtp_block_module_name",
+        "get_visual",
+        "get_visual_layers",
+        "get_visual_layers_path",
+        "get_vl_language_model",
+        "get_vl_model_module",
+        "get_vl_model_profile_attr"
+      ],
+      "tensor_cast/transformers/model.py": [
+        "CausalLmWrapper::__init__",
+        "CausalLmWrapper::forward",
+        "TransformerModel::__init__",
+        "TransformerModel::_replace_module",
+        "TransformerModel::forward",
+        "TransformerModel::get_represented_extra_weight_size@staticmethod",
+        "TransformerModel::get_weight_size_nested@staticmethod",
+        "TransformerModel::head_dim@property",
+        "TransformerModel::hidden_size@property",
+        "TransformerModel::load_weights",
+        "TransformerModel::num_hidden_layers@property",
+        "TransformerModel::set_default_dtype@contextlib.contextmanager",
+        "TransformerModel::weight_size@property"
+      ],
+      "tensor_cast/transformers/transformations.py": [
+        "_draft_attention_layer_indices",
+        "_ensure_draft_excluded_from_linear_quant",
+        "_find_dflash_wrapper",
+        "_quantize_deepseek_v41_native_dspark",
+        "_resync_dflash_shared_vocab",
+        "_shard_model_visual_by_tp_helper",
+        "_validate_gqa_dcp_kv_heads",
+        "maybe_enable_dflash",
+        "maybe_enable_dspark",
+        "maybe_enable_mtp",
+        "maybe_reuse_layers",
+        "patch_attention",
+        "patch_mla",
+        "patch_model",
+        "patch_moe",
+        "patch_rotary_emb",
+        "quantize_attention",
+        "quantize_linear",
+        "quantize_model",
+        "shard_model",
+        "shard_model_by_ep",
+        "shard_model_by_tp",
+        "wrap_model"
+      ],
+      "tensor_cast/transformers/utils.py": [
+        "AutoModelConfigLoader::__init__",
+        "AutoModelConfigLoader::_apply_hf_config_patches",
+        "AutoModelConfigLoader::_load_local_builtin_deepseek_v41_config@staticmethod",
+        "AutoModelConfigLoader::check_model_path@staticmethod",
+        "AutoModelConfigLoader::load_config",
+        "AutoModelConfigLoader::load_model",
+        "AutoModelConfigLoader::try_to_load_model@staticmethod",
+        "_get_attention_quant_config_from_model_config",
+        "_is_draft_attention_layer",
+        "_make_factory_use_device",
+        "_move_registered_parameter",
+        "get_attention_quant_config",
+        "init_on_device_without_buffers@contextlib.contextmanager",
+        "patch_find_packed_sequence_indices_for_meta@contextlib.contextmanager",
+        "strip_module_name"
+      ],
+      "tensor_cast/utils.py": [
+        "EquivalentKeyManager::_find",
+        "EquivalentKeyManager::_state",
+        "EquivalentKeyManager::add_equivalent_keys",
+        "EquivalentKeyManager::get_group_root_key",
+        "exact_division",
+        "is_fp8_dtype",
+        "pattern_match",
+        "performance_dtype"
+      ]
+    },
+    "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_moe_scenarios": {
+      "tensor_cast/adapter/patch_report.py": [
+        "PatchReport::add_replacement",
+        "PatchReport::replacement_count@property",
+        "PatchReport::validate",
+        "attach_patch_report"
+      ],
+      "tensor_cast/core/compilation_config.py": [
+        "apply_compilation_config"
+      ],
+      "tensor_cast/core/config_resolver.py": [
+        "ConfigResolver::__init__",
+        "ConfigResolver::resolve",
+        "ConfigResolver::update_hf_config",
+        "ConfigResolver::update_mla_config",
+        "ConfigResolver::update_moe_config",
+        "ConfigResolver::update_mtp_config",
+        "ConfigResolver::update_parallel_config",
+        "ConfigResolver::validate_moe_parallel_config",
+        "_resolve_model_dtype"
+      ],
+      "tensor_cast/core/input_generator.py": [
+        "_draft_layer_count",
+        "_get_deepseek_v41_compressed_cache_info",
+        "_get_glm5_indexshare_config",
+        "_get_glm5_indexshare_indexer_types",
+        "_get_kv_cache_info",
+        "_glm5_indexshare_layer_owns_indexer_cache",
+        "_is_deepseek_v41_config",
+        "_is_integral_non_bool",
+        "_is_mimo_v2_flash_model",
+        "_is_v4_model",
+        "_layer_uses_sparse_attention_indexer",
+        "_resolve_decoder_attention_layer",
+        "_resolve_decoder_layers",
+        "_resolve_indexer_cache_dtype",
+        "_resolve_main_kv_cache_dtype",
+        "_resolve_sparse_attention_indexer_cache_width",
+        "_resolve_sparse_attention_indexer_num_blocks",
+        "_resolve_sparse_attention_kv_cache_width",
+        "_shard_kv_heads",
+        "dcp_kv_token_capacity_factor",
+        "dcp_sharded_num_blocks",
+        "generate_inputs_varlen",
+        "get_kv_cache_info",
+        "get_sparse_attention_indexer_cache_info",
+        "kv_cache_excluded_layer_indices"
+      ],
+      "tensor_cast/core/model_builder.py": [
+        "build_model"
+      ],
+      "tensor_cast/core/model_runner.py": [
+        "ModelRunner::__init__",
+        "ModelRunner::_aggregate_runtime_events",
+        "ModelRunner::_apply_kv_offload_accounting",
+        "ModelRunner::_apply_prefill_kv_offload_accounting",
+        "ModelRunner::_calculate_single_card_tps",
+        "ModelRunner::_check_peak_memory_usage_gb",
+        "ModelRunner::_log_empirical_model_stats@staticmethod",
+        "ModelRunner::_new_empirical_records",
+        "ModelRunner::_resolve_offload_cache_layers@staticmethod",
+        "ModelRunner::_validate_kv_offload_model",
+        "ModelRunner::create_performance_models@staticmethod",
+        "ModelRunner::run_inference",
+        "_primary_model_output"
+      ],
+      "tensor_cast/core/model_source_security.py": [
+        "_decode_mount_field",
+        "_find_mount_type",
+        "_permission_bits_are_enforceable",
+        "_permission_bits_may_be_synthetic",
+        "_validate_local_entry",
+        "_validate_local_model_path",
+        "_validate_no_symlink_path_components",
+        "_validate_owner",
+        "normalize_model_source",
+        "validate_local_model_path"
+      ],
+      "tensor_cast/core/quantization/config.py": [
+        "_filter_action_kwargs",
+        "_set_linear_patterns",
+        "create_linear_quant_config",
+        "create_quant_config"
+      ],
+      "tensor_cast/core/user_config.py": [
+        "UserInputConfig::%",
+        "UserInputConfig::__post_init__",
+        "UserInputConfig::_normalize_draft_method",
+        "UserInputConfig::_normalize_model_source",
+        "UserInputConfig::_normalize_performance_model",
+        "UserInputConfig::_normalize_word_embedding_tp",
+        "UserInputConfig::_validate_device",
+        "UserInputConfig::_validate_pipeline_parallelism",
+        "UserInputConfig::_validate_vision_parallelism",
+        "UserInputConfig::draft_block_size",
+        "UserInputConfig::get_effective_prefix_cache_hit_rate",
+        "UserInputConfig::get_parallel_config",
+        "UserInputConfig::get_quant_config",
+        "UserInputConfig::get_request_info"
+      ],
+      "tensor_cast/layers/attention.py": [
+        "AttentionBase::__init__",
+        "AttentionMetadataBase::__post_init__",
+        "AttentionTensorCast::forward",
+        "flash_attention_forward",
+        "is_dcp_decode_batch"
+      ],
+      "tensor_cast/layers/glm5.py": [
+        "get_glm5_indexer_types",
+        "glm5_uses_indexshare"
+      ],
+      "tensor_cast/layers/internal.py": [
+        "RegionMarkerWrapper::__init__",
+        "RegionMarkerWrapper::forward"
+      ],
+      "tensor_cast/layers/mla.py": [
+        "DeepseekSparseAttention::__init__",
+        "DeepseekSparseAttention::_get_attention_op",
+        "DeepseekSparseAttention::_get_backend_kwargs",
+        "DeepseekSparseAttention::_pre_attention_forward",
+        "DeepseekSparseAttention::_run_sparse_attention_indexer",
+        "DeepseekSparseAttention::requires_indexer_cache@classmethod",
+        "DeepseekSparseAttentionIndexer::__init__",
+        "DeepseekSparseAttentionIndexer::_forward_expanded_indexer",
+        "DeepseekSparseAttentionIndexer::forward",
+        "DeepseekSparseAttentionIndexer::head_dim@property",
+        "DeepseekSparseAttentionIndexer::k_norm_bias@property",
+        "DeepseekSparseAttentionIndexer::k_norm_eps@property",
+        "DeepseekSparseAttentionIndexer::k_norm_weight@property",
+        "DeepseekSparseAttentionIndexer::num_heads@property",
+        "DeepseekSparseAttentionIndexer::topk_limit@property",
+        "MultiheadLatentAttentionBase::__getattr__",
+        "MultiheadLatentAttentionBase::__init__",
+        "MultiheadLatentAttentionTensorCast::__init__",
+        "MultiheadLatentAttentionTensorCast::_compute_mla_prolog@torch.no_grad()",
+        "MultiheadLatentAttentionTensorCast::_compute_unfused_mla_projections",
+        "MultiheadLatentAttentionTensorCast::_format_forward_output",
+        "MultiheadLatentAttentionTensorCast::_get_attention_op",
+        "MultiheadLatentAttentionTensorCast::_get_backend_kwargs",
+        "MultiheadLatentAttentionTensorCast::_get_backend_metadata_kwargs",
+        "MultiheadLatentAttentionTensorCast::_postprocess_attention_output",
+        "MultiheadLatentAttentionTensorCast::_pre_attention_forward",
+        "MultiheadLatentAttentionTensorCast::_setup_kv_b_decomposition",
+        "MultiheadLatentAttentionTensorCast::_use_mlapo_fusion",
+        "MultiheadLatentAttentionTensorCast::_write_unfused_mla_cache",
+        "MultiheadLatentAttentionTensorCast::build_o_proj_tp_plan_extras@classmethod",
+        "MultiheadLatentAttentionTensorCast::build_tp_plan_extras@classmethod",
+        "MultiheadLatentAttentionTensorCast::forward",
+        "MultiheadLatentAttentionTensorCast::requires_indexer_cache@classmethod",
+        "_get_mla_phase_token_counts",
+        "_get_request_phase_values",
+        "_get_request_query_lens",
+        "_get_request_query_lens_values",
+        "_resolve_sparse_topk_limit",
+        "tp_plan_module_path",
+        "tp_plan_nested_module_path"
+      ],
+      "tensor_cast/layers/moe_layer.py": [
+        "ExpertWrapper::__init__",
+        "ExpertWrapper::call_expert",
+        "ExpertWrapper::num_experts@property",
+        "ExpertWrapper::slice_experts",
+        "FusedMoEBase::__init__",
+        "FusedMoETensorCast::__init__",
+        "FusedMoETensorCast::combine_tokens",
+        "FusedMoETensorCast::dispatch_tokens",
+        "FusedMoETensorCast::forward",
+        "FusedMoETensorCast::get_split_sizes",
+        "FusedMoETensorCast::rearrange_token_by_device",
+        "FusedMoETensorCast::rearrange_token_by_expert",
+        "MoELayer::__init__",
+        "MoELayer::forward",
+        "MoELayer::get_attr",
+        "MoELayer::route",
+        "ParallelMoELayer::__init__",
+        "ParallelMoELayer::forward",
+        "_balanced_split",
+        "_expected_max_load",
+        "_expected_max_z@lru_cache(maxsize=None)",
+        "_expert_capacity_load",
+        "_soft_critical_load",
+        "assign_experts"
+      ],
+      "tensor_cast/layers/parallel_linear.py": [
+        "ColumnParallelLinear::__init__",
+        "ColumnParallelLinear::create_weights",
+        "ColumnParallelLinear::forward",
+        "ParallelLinearBase::__init__",
+        "RowParallelLinear::__init__",
+        "RowParallelLinear::create_weights",
+        "RowParallelLinear::forward",
+        "replace_with_sharded_tensor"
+      ],
+      "tensor_cast/layers/quant_linear.py": [
+        "QuantLinearBase::__init__",
+        "QuantLinearBase::quantize_weight",
+        "TensorCastQuantLinear::__init__",
+        "TensorCastQuantLinear::forward"
+      ],
+      "tensor_cast/layers/rotary_embedding.py": [
+        "CachingRotaryEmb::__init__",
+        "CachingRotaryEmb::forward",
+        "_call_rotary_emb"
+      ],
+      "tensor_cast/layers/sampler.py": [
+        "SamplingMetadata::%",
+        "_has_explicit_selected_token_indices",
+        "_index_select_token_dim",
+        "select_lm_head_hidden_states"
+      ],
+      "tensor_cast/layers/utils.py": [
+        "ModelWrapperBase::__getattr__",
+        "ModelWrapperBase::__init__",
+        "ModelWrapperBase::unwrap",
+        "_get_partial_sharded_by_unit",
+        "_get_partial_sharded_padding",
+        "_get_sharded_shape",
+        "get_partial_sharded"
+      ],
+      "tensor_cast/model_config.py": [
+        "LinearQuantConfig::__post_init__",
+        "MlaFieldNames::__post_init__",
+        "ModelConfig::__post_init__",
+        "ModelConfig::has_draft_spec",
+        "ParallelConfig::__post_init__",
+        "ParallelConfig::has_ep",
+        "QuantConfig::__post_init__",
+        "config_has_draft_spec"
+      ],
+      "tensor_cast/ops/attention.py": [
+        "_@register_tensor_cast_op(\"attention\")",
+        "_@register_tensor_cast_op(\"reshape_and_cache\", mutates_args=(\"kv_cache\",))",
+        "_@register_tensor_cast_op(\"siso_reshape_and_cache\", mutates_args=(\"kv_cache\",))"
+      ],
+      "tensor_cast/ops/fused_moe.py": [
+        "_@register_tensor_cast_op(\"init_routing_v2\")",
+        "_@register_tensor_cast_op(\"unpermute_tokens\")"
+      ],
+      "tensor_cast/ops/internal.py": [
+        "_@register_tensor_cast_op(\"_internal_mark_region_begin\")",
+        "_@register_tensor_cast_op(\"_internal_mark_region_end\")"
+      ],
+      "tensor_cast/ops/layernorm.py": [
+        "_@register_tensor_cast_op(\"layer_norm\")",
+        "_@register_tensor_cast_op(\"rms_norm\")"
+      ],
+      "tensor_cast/ops/linear.py": [
+        "_@register_tensor_cast_op(\"static_quant_linear\")@register_tensor_cast_op(\"static_quant_linear_int4\")"
+      ],
+      "tensor_cast/ops/mla.py": [
+        "_@register_tensor_cast_op(\"dsa_indexer\")",
+        "_@register_tensor_cast_op(\"mla_merge_phase_outputs\")",
+        "_@register_tensor_cast_op(\"mla_sparse_attention\")",
+        "_@register_tensor_cast_op(\"multihead_latent_attention\")",
+        "local_mla_phase_token_counts"
+      ],
+      "tensor_cast/ops/quantization.py": [
+        "_@register_tensor_cast_op(\"dynamic_quantize_symmetric\")"
+      ],
+      "tensor_cast/ops/rotary_embedding.py": [
+        "_@register_tensor_cast_op(\"apply_rope_single\")"
+      ],
+      "tensor_cast/parallel_group.py": [
+        "ParallelGroup::__init__",
+        "ParallelGroup::all_to_all",
+        "ParallelGroup::set_rank",
+        "ParallelGroupManager::__init__",
+        "ParallelGroupManager::initialize_model_parallel"
+      ],
+      "tensor_cast/patch_torch.py": [
+        "patch_dtype_abbrs@contextlib.contextmanager",
+        "patch_dtype_to_type@contextlib.contextmanager",
+        "patch_fallback_node_due_to_unsupported_type@contextlib.contextmanager",
+        "patch_masked_scatter@contextlib.contextmanager",
+        "patch_torch@contextlib.contextmanager",
+        "prepare_freezing@contextlib.contextmanager",
+        "specialize_float@contextlib.contextmanager",
+        "support_autocast_for_meta@contextlib.contextmanager"
+      ],
+      "tensor_cast/performance_model/__init__.py": [
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.embedding.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.index_select.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.mm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.apply_rope_single.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.layer_norm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.mla_merge_phase_outputs.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.mla_sparse_attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.multihead_latent_attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.reshape_and_cache.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.rms_norm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.siso_reshape_and_cache.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.static_quant_linear.default)",
+        "_attention_properties_helper",
+        "_dsa_indexer_properties@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.dsa_indexer.default)",
+        "_dsa_indexer_request_accounting",
+        "_estimate_default",
+        "_estimate_default_without_static_cost",
+        "_estimate_dsa_indexer_paged_cache_read_breakdown",
+        "_estimate_sparse_mla_paged_kv_read_breakdown",
+        "_estimate_sparse_mla_prefill_page_efficiency",
+        "_estimate_static_cost",
+        "_get_device_ops_for_dtype",
+        "_layernorm_ops",
+        "_mm_properties_helper",
+        "_multihead_latent_attention_properties_helper",
+        "_norm_rows_and_width",
+        "_normalize_query_lens_and_request_total_seq_lens",
+        "_sparse_mla_decode_mask",
+        "_static_quant_linear_properties_helper",
+        "_tensor_value_unavailable"
+      ],
+      "tensor_cast/performance_model/analytic.py": [
+        "AnalyticPerformanceModel::__init__",
+        "AnalyticPerformanceModel::get_classifiers",
+        "AnalyticPerformanceModel::process_op@override",
+        "OpBoundClassifier::_accumulate_dominant_components@staticmethod",
+        "OpBoundClassifier::classify",
+        "OpBoundClassifier::name@property"
+      ],
+      "tensor_cast/performance_model/base.py": [
+        "CachingPerformanceModel::__init__",
+        "CachingPerformanceModel::get_classifiers",
+        "CachingPerformanceModel::process_op",
+        "PerformanceModel::__init__",
+        "PerformanceModel::record_cache_hit"
+      ],
+      "tensor_cast/performance_model/bound_analyzer.py": [
+        "BoundAnalyzer::_collect_stat_by_suffix@classmethod",
+        "BoundAnalyzer::_numeric_value@classmethod",
+        "BoundAnalyzer::_resolved_stat@classmethod",
+        "BoundAnalyzer::_stat_value@classmethod",
+        "BoundAnalyzer::components@classmethod",
+        "BoundAnalyzer::dominant@classmethod"
+      ],
+      "tensor_cast/performance_model/cost_utils.py": [
+        "accumulate_compute_ops",
+        "rmsnorm_ops"
+      ],
+      "tensor_cast/performance_model/empirical.py": [
+        "summarize_empirical_records"
+      ],
+      "tensor_cast/performance_model/memory_tracker.py": [
+        "MemoryTracker::__init__",
+        "MemoryTracker::_extract_tensors",
+        "MemoryTracker::_get_real_tensor_id",
+        "MemoryTracker::_handle_aliasing",
+        "MemoryTracker::_zero_storage_input_ids",
+        "MemoryTracker::analyze",
+        "MemoryTracker::get_profile",
+        "MemoryTracker::peak_mem_usage",
+        "MemoryTracker::record_single_op_invocation",
+        "MemoryTracker::restore_default_zero_storage_inputs@classmethod"
+      ],
+      "tensor_cast/performance_model/op_estimator_registry.py": [
+        "get_op_estimator"
+      ],
+      "tensor_cast/performance_model/op_invoke_info.py": [
+        "OpInvokeInfo::%",
+        "OpInvokeInfo::__init__",
+        "OpInvokeInfo::compute_cache_key",
+        "OpInvokeInfo::get_memory_access_properties",
+        "OpInvokeInfo::get_op_properties_functor@classmethod",
+        "OpInvokeInfo::get_perf_properties",
+        "Region::__init__",
+        "Region::_add_equivalent_info",
+        "Region::finalize",
+        "Region::get_tensor_id@classmethod",
+        "Region::input_tensor@property",
+        "Region::output_tensor@property"
+      ],
+      "tensor_cast/performance_model/utils.py": [
+        "bytes_of_elements",
+        "bytes_of_tensor",
+        "is_noop_self_copy_op",
+        "is_view_op",
+        "run_once"
+      ],
+      "tensor_cast/quantize_utils.py": [
+        "get_quant_config",
+        "quant_type_to_dynamic_quant_dtype",
+        "quant_type_to_weight_dtype",
+        "quantize_linear_modules",
+        "replace_module"
+      ],
+      "tensor_cast/runtime.py": [
+        "OpAverageGroupData::%",
+        "Runtime::__enter__",
+        "Runtime::__exit__",
+        "Runtime::__init__",
+        "Runtime::__torch_dispatch__",
+        "Runtime::_aggregate_average_table_data",
+        "Runtime::_average_table_col_widths@classmethod",
+        "Runtime::_average_table_headers@staticmethod",
+        "Runtime::_build_model_timelines",
+        "Runtime::_consume_pending_wait_context",
+        "Runtime::_extract_tensor_token_ids@staticmethod",
+        "Runtime::_format_time@staticmethod",
+        "Runtime::_is_multistream_anchor_op@classmethod",
+        "Runtime::_iter_flat_invocations",
+        "Runtime::_record_memory_invocations",
+        "Runtime::_record_single_memory_invocation",
+        "Runtime::_render_average_table@classmethod",
+        "Runtime::_replay_single_op",
+        "Runtime::_sort_average_table_items@staticmethod",
+        "Runtime::get_breakdowns",
+        "Runtime::is_infra_mode@classmethod",
+        "Runtime::repeat_op_invoke_infos",
+        "Runtime::replay_flat_op_invoke_infos",
+        "Runtime::replay_op_invoke_infos",
+        "Runtime::table_averages",
+        "Runtime::total_execution_time_s",
+        "_contains_meta_tensor",
+        "_default_bound_components_by_model",
+        "_move_cpu_tensors_to_meta",
+        "_normalize_meta_elementwise_args"
+      ],
+      "tensor_cast/transformers/custom_model_registry.py": [
+        "ModelProfile::_build_field_names",
+        "ModelProfile::build_mla_config",
+        "ModelProfile::build_moe_config",
+        "MoeExpertMLP::__init__",
+        "MoeExpertMLP::forward",
+        "find_matching_key",
+        "get_custom_model",
+        "get_language_layers",
+        "get_mla_module",
+        "get_mla_module_name",
+        "get_model_profile",
+        "get_moe_config",
+        "get_mtp_block_module_name",
+        "get_visual",
+        "get_visual_layers",
+        "get_visual_layers_path",
+        "get_vl_language_model",
+        "get_vl_model_module",
+        "get_vl_model_profile_attr"
+      ],
+      "tensor_cast/transformers/model.py": [
+        "CausalLmWrapper::__init__",
+        "CausalLmWrapper::forward",
+        "TransformerModel::__init__",
+        "TransformerModel::_replace_module",
+        "TransformerModel::forward",
+        "TransformerModel::get_represented_extra_weight_size@staticmethod",
+        "TransformerModel::get_weight_size_nested@staticmethod",
+        "TransformerModel::head_dim@property",
+        "TransformerModel::hidden_size@property",
+        "TransformerModel::load_weights",
+        "TransformerModel::num_hidden_layers@property",
+        "TransformerModel::set_default_dtype@contextlib.contextmanager",
+        "TransformerModel::weight_size@property"
+      ],
+      "tensor_cast/transformers/transformations.py": [
+        "_draft_attention_layer_indices",
+        "_ensure_draft_excluded_from_linear_quant",
+        "_expected_replacements_from_layers",
+        "_find_dflash_wrapper",
+        "_is_3d_tensor_experts",
+        "_missing_required_fields",
+        "_patch_moe_expert_helper",
+        "_quantize_deepseek_v41_native_dspark",
+        "_resync_dflash_shared_vocab",
+        "_shard_model_visual_by_tp_helper",
+        "_validate_gqa_dcp_kv_heads",
+        "maybe_enable_dflash",
+        "maybe_enable_dspark",
+        "maybe_enable_mtp",
+        "maybe_reuse_layers",
+        "patch_attention",
+        "patch_mla",
+        "patch_model",
+        "patch_moe",
+        "patch_rotary_emb",
+        "quantize_attention",
+        "quantize_linear",
+        "quantize_model",
+        "shard_model",
+        "shard_model_by_ep",
+        "shard_model_by_tp",
+        "wrap_model"
+      ],
+      "tensor_cast/transformers/utils.py": [
+        "AutoModelConfigLoader::__init__",
+        "AutoModelConfigLoader::_apply_hf_config_patches",
+        "AutoModelConfigLoader::_load_builtin_deepseek_v41_from_config_dict@staticmethod",
+        "AutoModelConfigLoader::_load_local_builtin_deepseek_v41_config@staticmethod",
+        "AutoModelConfigLoader::check_model_path@staticmethod",
+        "AutoModelConfigLoader::is_model_type_different@staticmethod",
+        "AutoModelConfigLoader::load_config",
+        "AutoModelConfigLoader::load_model",
+        "AutoModelConfigLoader::try_to_load_model@staticmethod",
+        "_get_attention_quant_config_from_model_config",
+        "_is_draft_attention_layer",
+        "_make_factory_use_device",
+        "_move_registered_parameter",
+        "get_attention_quant_config",
+        "init_on_device_without_buffers@contextlib.contextmanager",
+        "patch_find_packed_sequence_indices_for_meta@contextlib.contextmanager",
+        "strip_module_name"
+      ],
+      "tensor_cast/utils.py": [
+        "EquivalentKeyManager::_find",
+        "EquivalentKeyManager::_state",
+        "EquivalentKeyManager::add_equivalent_keys",
+        "EquivalentKeyManager::get_group_root_key",
+        "exact_division",
+        "is_fp8_dtype",
+        "pattern_match",
+        "performance_dtype"
+      ]
+    },
+    "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_multimodal_scenarios": {
+      "tensor_cast/adapter/patch_report.py": [
+        "PatchReport::add_replacement",
+        "PatchReport::replacement_count@property",
+        "PatchReport::validate",
+        "attach_patch_report"
+      ],
+      "tensor_cast/core/compilation_config.py": [
+        "apply_compilation_config"
+      ],
+      "tensor_cast/core/config_resolver.py": [
+        "ConfigResolver::__init__",
+        "ConfigResolver::resolve",
+        "ConfigResolver::update_hf_config",
+        "ConfigResolver::update_mla_config",
+        "ConfigResolver::update_moe_config",
+        "ConfigResolver::update_mtp_config",
+        "ConfigResolver::update_parallel_config",
+        "ConfigResolver::validate_moe_parallel_config",
+        "_resolve_model_dtype"
+      ],
+      "tensor_cast/core/input_generator.py": [
+        "_get_deepseek_v41_compressed_cache_info",
+        "_get_kv_cache_info",
+        "_is_deepseek_v41_config",
+        "_is_mimo_v2_flash_model",
+        "_is_v4_model",
+        "_layer_uses_sparse_attention_indexer",
+        "_resolve_decoder_attention_layer",
+        "_resolve_decoder_layers",
+        "_resolve_main_kv_cache_dtype",
+        "_shard_kv_heads",
+        "dcp_kv_token_capacity_factor",
+        "dcp_sharded_num_blocks",
+        "generate_inputs_varlen",
+        "get_kv_cache_info",
+        "get_sparse_attention_indexer_cache_info",
+        "kv_cache_excluded_layer_indices"
+      ],
+      "tensor_cast/core/model_builder.py": [
+        "build_model"
+      ],
+      "tensor_cast/core/model_runner.py": [
+        "ModelRunner::__init__",
+        "ModelRunner::_aggregate_runtime_events",
+        "ModelRunner::_apply_kv_offload_accounting",
+        "ModelRunner::_apply_prefill_kv_offload_accounting",
+        "ModelRunner::_calculate_single_card_tps",
+        "ModelRunner::_check_peak_memory_usage_gb",
+        "ModelRunner::_log_empirical_model_stats@staticmethod",
+        "ModelRunner::_new_empirical_records",
+        "ModelRunner::_resolve_offload_cache_layers@staticmethod",
+        "ModelRunner::_validate_kv_offload_model",
+        "ModelRunner::create_performance_models@staticmethod",
+        "ModelRunner::run_inference",
+        "_primary_model_output"
+      ],
+      "tensor_cast/core/model_source_security.py": [
+        "_decode_mount_field",
+        "_find_mount_type",
+        "_permission_bits_are_enforceable",
+        "_permission_bits_may_be_synthetic",
+        "_validate_local_entry",
+        "_validate_local_model_path",
+        "_validate_no_symlink_path_components",
+        "_validate_owner",
+        "normalize_model_source",
+        "validate_local_model_path"
+      ],
+      "tensor_cast/core/quantization/config.py": [
+        "_filter_action_kwargs",
+        "_set_linear_patterns",
+        "create_linear_quant_config",
+        "create_quant_config"
+      ],
+      "tensor_cast/core/user_config.py": [
+        "UserInputConfig::%",
+        "UserInputConfig::__post_init__",
+        "UserInputConfig::_normalize_draft_method",
+        "UserInputConfig::_normalize_model_source",
+        "UserInputConfig::_normalize_performance_model",
+        "UserInputConfig::_normalize_word_embedding_tp",
+        "UserInputConfig::_validate_device",
+        "UserInputConfig::_validate_pipeline_parallelism",
+        "UserInputConfig::_validate_vision_parallelism",
+        "UserInputConfig::draft_block_size",
+        "UserInputConfig::get_effective_prefix_cache_hit_rate",
+        "UserInputConfig::get_parallel_config",
+        "UserInputConfig::get_quant_config",
+        "UserInputConfig::get_request_info"
+      ],
+      "tensor_cast/layers/attention.py": [
+        "AttentionBase::__init__",
+        "AttentionMetadataBase::__post_init__",
+        "AttentionTensorCast::forward",
+        "flash_attention_forward",
+        "is_dcp_decode_batch"
+      ],
+      "tensor_cast/layers/glm5.py": [
+        "get_glm5_indexer_types",
+        "glm5_uses_indexshare"
+      ],
+      "tensor_cast/layers/internal.py": [
+        "CopyLayerWrapper::__init__",
+        "RegionMarkerWrapper::__init__",
+        "RegionMarkerWrapper::forward"
+      ],
+      "tensor_cast/layers/mla.py": [
+        "tp_plan_module_path",
+        "tp_plan_nested_module_path"
+      ],
+      "tensor_cast/layers/moe_layer.py": [
+        "ExpertWrapper::__init__",
+        "ExpertWrapper::call_expert",
+        "ExpertWrapper::num_experts@property",
+        "ExpertWrapper::slice_experts",
+        "FusedMoEBase::__init__",
+        "FusedMoETensorCast::__init__",
+        "FusedMoETensorCast::combine_tokens",
+        "FusedMoETensorCast::dispatch_tokens",
+        "FusedMoETensorCast::forward",
+        "FusedMoETensorCast::get_split_sizes",
+        "FusedMoETensorCast::rearrange_token_by_device",
+        "FusedMoETensorCast::rearrange_token_by_expert",
+        "MoELayer::__init__",
+        "MoELayer::forward",
+        "MoELayer::get_attr",
+        "MoELayer::route",
+        "ParallelMoELayer::__init__",
+        "ParallelMoELayer::forward",
+        "_balanced_split",
+        "_expected_max_load",
+        "_expert_capacity_load",
+        "_soft_critical_load",
+        "assign_experts"
+      ],
+      "tensor_cast/layers/parallel_linear.py": [
+        "ColumnParallelLinear::__init__",
+        "ColumnParallelLinear::create_weights",
+        "ColumnParallelLinear::forward",
+        "ParallelLinearBase::__init__",
+        "RowParallelLinear::__init__",
+        "RowParallelLinear::create_weights",
+        "RowParallelLinear::forward",
+        "replace_with_sharded_tensor"
+      ],
+      "tensor_cast/layers/quant_linear.py": [
+        "QuantLinearBase::__init__",
+        "QuantLinearBase::quantize_weight",
+        "TensorCastQuantLinear::__init__",
+        "TensorCastQuantLinear::forward"
+      ],
+      "tensor_cast/layers/rotary_embedding.py": [
+        "CachingRotaryEmb::__init__",
+        "CachingRotaryEmb::forward",
+        "_call_rotary_emb"
+      ],
+      "tensor_cast/layers/sampler.py": [
+        "SamplingMetadata::%",
+        "_has_explicit_selected_token_indices",
+        "_index_select_token_dim",
+        "select_lm_head_hidden_states"
+      ],
+      "tensor_cast/layers/utils.py": [
+        "ModelWrapperBase::__getattr__",
+        "ModelWrapperBase::__init__",
+        "ModelWrapperBase::unwrap",
+        "_get_partial_sharded_by_unit",
+        "_get_partial_sharded_padding",
+        "_get_sharded_shape",
+        "get_partial_sharded"
+      ],
+      "tensor_cast/model_config.py": [
+        "LinearQuantConfig::__post_init__",
+        "ModelConfig::__post_init__",
+        "ModelConfig::has_draft_spec",
+        "ParallelConfig::__post_init__",
+        "ParallelConfig::has_ep",
+        "QuantConfig::__post_init__",
+        "config_has_draft_spec"
+      ],
+      "tensor_cast/ops/attention.py": [
+        "_@register_tensor_cast_op(\"attention\")",
+        "_@register_tensor_cast_op(\"reshape_and_cache\", mutates_args=(\"kv_cache\",))"
+      ],
+      "tensor_cast/ops/fused_moe.py": [
+        "_@register_tensor_cast_op(\"init_routing_v2\")",
+        "_@register_tensor_cast_op(\"unpermute_tokens\")"
+      ],
+      "tensor_cast/ops/internal.py": [
+        "_@register_tensor_cast_op(\"_internal_mark_region_begin\")",
+        "_@register_tensor_cast_op(\"_internal_mark_region_end\")"
+      ],
+      "tensor_cast/ops/linear.py": [
+        "_@register_tensor_cast_op(\"static_quant_linear\")@register_tensor_cast_op(\"static_quant_linear_int4\")"
+      ],
+      "tensor_cast/ops/quantization.py": [
+        "_@register_tensor_cast_op(\"dynamic_quantize_symmetric\")"
+      ],
+      "tensor_cast/parallel_group.py": [
+        "ParallelGroup::__init__",
+        "ParallelGroup::all_to_all",
+        "ParallelGroup::set_rank",
+        "ParallelGroupManager::__init__",
+        "ParallelGroupManager::initialize_model_parallel"
+      ],
+      "tensor_cast/patch_torch.py": [
+        "patch_dtype_abbrs@contextlib.contextmanager",
+        "patch_dtype_to_type@contextlib.contextmanager",
+        "patch_fallback_node_due_to_unsupported_type@contextlib.contextmanager",
+        "patch_masked_scatter@contextlib.contextmanager",
+        "patch_torch@contextlib.contextmanager",
+        "prepare_freezing@contextlib.contextmanager",
+        "specialize_float@contextlib.contextmanager",
+        "support_autocast_for_meta@contextlib.contextmanager"
+      ],
+      "tensor_cast/performance_model/__init__.py": [
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.embedding.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.index_select.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.mm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.reshape_and_cache.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.static_quant_linear.default)",
+        "_attention_properties_helper",
+        "_estimate_default",
+        "_estimate_default_without_static_cost",
+        "_estimate_static_cost",
+        "_get_device_ops_for_dtype",
+        "_mm_properties_helper",
+        "_normalize_query_lens_and_request_total_seq_lens",
+        "_static_quant_linear_properties_helper",
+        "_tensor_value_unavailable"
+      ],
+      "tensor_cast/performance_model/analytic.py": [
+        "AnalyticPerformanceModel::__init__",
+        "AnalyticPerformanceModel::get_classifiers",
+        "AnalyticPerformanceModel::process_op@override",
+        "OpBoundClassifier::_accumulate_dominant_components@staticmethod",
+        "OpBoundClassifier::classify",
+        "OpBoundClassifier::name@property"
+      ],
+      "tensor_cast/performance_model/base.py": [
+        "CachingPerformanceModel::__init__",
+        "CachingPerformanceModel::get_classifiers",
+        "CachingPerformanceModel::process_op",
+        "PerformanceModel::__init__",
+        "PerformanceModel::record_cache_hit"
+      ],
+      "tensor_cast/performance_model/bound_analyzer.py": [
+        "BoundAnalyzer::_collect_stat_by_suffix@classmethod",
+        "BoundAnalyzer::_numeric_value@classmethod",
+        "BoundAnalyzer::_resolved_stat@classmethod",
+        "BoundAnalyzer::_stat_value@classmethod",
+        "BoundAnalyzer::components@classmethod",
+        "BoundAnalyzer::dominant@classmethod"
+      ],
+      "tensor_cast/performance_model/empirical.py": [
+        "summarize_empirical_records"
+      ],
+      "tensor_cast/performance_model/memory_tracker.py": [
+        "MemoryTracker::__init__",
+        "MemoryTracker::_extract_tensors",
+        "MemoryTracker::_get_real_tensor_id",
+        "MemoryTracker::_handle_aliasing",
+        "MemoryTracker::_zero_storage_input_ids",
+        "MemoryTracker::analyze",
+        "MemoryTracker::get_profile",
+        "MemoryTracker::peak_mem_usage",
+        "MemoryTracker::record_single_op_invocation",
+        "MemoryTracker::restore_default_zero_storage_inputs@classmethod"
+      ],
+      "tensor_cast/performance_model/op_estimator_registry.py": [
+        "get_op_estimator"
+      ],
+      "tensor_cast/performance_model/op_invoke_info.py": [
+        "OpInvokeInfo::__init__",
+        "OpInvokeInfo::compute_cache_key",
+        "OpInvokeInfo::get_memory_access_properties",
+        "OpInvokeInfo::get_op_properties_functor@classmethod",
+        "OpInvokeInfo::get_perf_properties",
+        "Region::__init__",
+        "Region::_add_equivalent_info",
+        "Region::finalize",
+        "Region::get_tensor_id@classmethod",
+        "Region::input_tensor@property",
+        "Region::output_tensor@property"
+      ],
+      "tensor_cast/performance_model/utils.py": [
+        "bytes_of_elements",
+        "bytes_of_tensor",
+        "is_noop_self_copy_op",
+        "is_view_op",
+        "run_once"
+      ],
+      "tensor_cast/quantize_utils.py": [
+        "get_quant_config",
+        "quant_type_to_dynamic_quant_dtype",
+        "quant_type_to_weight_dtype",
+        "quantize_linear_modules",
+        "replace_module"
+      ],
+      "tensor_cast/runtime.py": [
+        "OpAverageGroupData::%",
+        "Runtime::__enter__",
+        "Runtime::__exit__",
+        "Runtime::__init__",
+        "Runtime::__torch_dispatch__",
+        "Runtime::_aggregate_average_table_data",
+        "Runtime::_average_table_col_widths@classmethod",
+        "Runtime::_average_table_headers@staticmethod",
+        "Runtime::_build_model_timelines",
+        "Runtime::_consume_pending_wait_context",
+        "Runtime::_extract_tensor_token_ids@staticmethod",
+        "Runtime::_format_time@staticmethod",
+        "Runtime::_is_multistream_anchor_op@classmethod",
+        "Runtime::_iter_flat_invocations",
+        "Runtime::_record_memory_invocations",
+        "Runtime::_record_single_memory_invocation",
+        "Runtime::_render_average_table@classmethod",
+        "Runtime::_replay_single_op",
+        "Runtime::_sort_average_table_items@staticmethod",
+        "Runtime::get_breakdowns",
+        "Runtime::is_infra_mode@classmethod",
+        "Runtime::repeat_op_invoke_infos",
+        "Runtime::replay_flat_op_invoke_infos",
+        "Runtime::replay_op_invoke_infos",
+        "Runtime::table_averages",
+        "Runtime::total_execution_time_s",
+        "_contains_meta_tensor",
+        "_default_bound_components_by_model",
+        "_move_cpu_tensors_to_meta",
+        "_normalize_meta_elementwise_args"
+      ],
+      "tensor_cast/transformers/custom_model_registry.py": [
+        "ModelProfile::_build_field_names",
+        "ModelProfile::build_moe_config",
+        "MoeExpertMLP::__init__",
+        "MoeExpertMLP::forward",
+        "find_matching_key",
+        "get_custom_model",
+        "get_language_layers",
+        "get_mla_module_name",
+        "get_model_profile",
+        "get_moe_config",
+        "get_mtp_block_module_name",
+        "get_visual",
+        "get_visual_layers",
+        "get_visual_layers_path",
+        "get_vl_language_model",
+        "get_vl_model_module",
+        "get_vl_model_profile_attr"
+      ],
+      "tensor_cast/transformers/model.py": [
+        "TransformerModel::__init__",
+        "TransformerModel::_replace_module",
+        "TransformerModel::forward",
+        "TransformerModel::get_represented_extra_weight_size@staticmethod",
+        "TransformerModel::get_weight_size_nested@staticmethod",
+        "TransformerModel::head_dim@property",
+        "TransformerModel::hidden_size@property",
+        "TransformerModel::load_weights",
+        "TransformerModel::num_hidden_layers@property",
+        "TransformerModel::set_default_dtype@contextlib.contextmanager",
+        "TransformerModel::weight_size@property",
+        "VLModelWrapper::__init__",
+        "VLModelWrapper::forward"
+      ],
+      "tensor_cast/transformers/transformations.py": [
+        "_draft_attention_layer_indices",
+        "_ensure_draft_excluded_from_linear_quant",
+        "_expected_replacements_from_layers",
+        "_find_dflash_wrapper",
+        "_is_3d_tensor_experts",
+        "_missing_required_fields",
+        "_patch_moe_expert_helper",
+        "_quantize_deepseek_v41_native_dspark",
+        "_resync_dflash_shared_vocab",
+        "_shard_model_visual_by_tp_helper",
+        "_validate_gqa_dcp_kv_heads",
+        "maybe_enable_dflash",
+        "maybe_enable_dspark",
+        "maybe_enable_mtp",
+        "maybe_reuse_layers",
+        "patch_attention",
+        "patch_mla",
+        "patch_model",
+        "patch_moe",
+        "patch_rotary_emb",
+        "quantize_attention",
+        "quantize_linear",
+        "quantize_model",
+        "shard_model",
+        "shard_model_by_ep",
+        "shard_model_by_tp",
+        "wrap_model"
+      ],
+      "tensor_cast/transformers/utils.py": [
+        "AutoModelConfigLoader::__init__",
+        "AutoModelConfigLoader::_apply_hf_config_patches",
+        "AutoModelConfigLoader::_load_local_builtin_deepseek_v41_config@staticmethod",
+        "AutoModelConfigLoader::check_model_path@staticmethod",
+        "AutoModelConfigLoader::load_config",
+        "AutoModelConfigLoader::load_model",
+        "AutoModelConfigLoader::try_to_load_model@staticmethod",
+        "_get_attention_quant_config_from_model_config",
+        "_is_draft_attention_layer",
+        "_make_factory_use_device",
+        "_move_registered_parameter",
+        "get_attention_quant_config",
+        "init_on_device_without_buffers@contextlib.contextmanager",
+        "patch_find_packed_sequence_indices_for_meta@contextlib.contextmanager",
+        "strip_module_name"
+      ],
+      "tensor_cast/utils.py": [
+        "EquivalentKeyManager::_find",
+        "EquivalentKeyManager::_state",
+        "EquivalentKeyManager::add_equivalent_keys",
+        "EquivalentKeyManager::get_group_root_key",
+        "exact_division",
+        "is_fp8_dtype",
+        "pattern_match",
+        "performance_dtype"
+      ]
+    },
+    "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_qwen_scenarios": {
+      "tensor_cast/adapter/patch_report.py": [
+        "PatchReport::add_replacement",
+        "attach_patch_report"
+      ],
+      "tensor_cast/core/compilation_config.py": [
+        "apply_compilation_config"
+      ],
+      "tensor_cast/core/config_resolver.py": [
+        "ConfigResolver::__init__",
+        "ConfigResolver::resolve",
+        "ConfigResolver::update_hf_config",
+        "ConfigResolver::update_mla_config",
+        "ConfigResolver::update_moe_config",
+        "ConfigResolver::update_mtp_config",
+        "ConfigResolver::update_parallel_config",
+        "ConfigResolver::validate_moe_parallel_config",
+        "_resolve_model_dtype"
+      ],
+      "tensor_cast/core/input_generator.py": [
+        "_get_deepseek_v41_compressed_cache_info",
+        "_get_kv_cache_info",
+        "_is_deepseek_v41_config",
+        "_is_mimo_v2_flash_model",
+        "_is_v4_model",
+        "_layer_uses_sparse_attention_indexer",
+        "_resolve_decoder_attention_layer",
+        "_resolve_decoder_layers",
+        "_resolve_main_kv_cache_dtype",
+        "_shard_kv_heads",
+        "dcp_kv_token_capacity_factor",
+        "dcp_sharded_num_blocks",
+        "generate_inputs_varlen",
+        "get_kv_cache_info",
+        "get_sparse_attention_indexer_cache_info",
+        "kv_cache_excluded_layer_indices"
+      ],
+      "tensor_cast/core/model_builder.py": [
+        "build_model"
+      ],
+      "tensor_cast/core/model_runner.py": [
+        "ModelRunner::__init__",
+        "ModelRunner::_aggregate_runtime_events",
+        "ModelRunner::_apply_kv_offload_accounting",
+        "ModelRunner::_apply_prefill_kv_offload_accounting",
+        "ModelRunner::_calculate_single_card_tps",
+        "ModelRunner::_check_peak_memory_usage_gb",
+        "ModelRunner::_log_empirical_model_stats@staticmethod",
+        "ModelRunner::_new_empirical_records",
+        "ModelRunner::_resolve_offload_cache_layers@staticmethod",
+        "ModelRunner::_validate_kv_offload_model",
+        "ModelRunner::create_performance_models@staticmethod",
+        "ModelRunner::run_inference",
+        "_primary_model_output"
+      ],
+      "tensor_cast/core/model_source_security.py": [
+        "_decode_mount_field",
+        "_find_mount_type",
+        "_permission_bits_are_enforceable",
+        "_permission_bits_may_be_synthetic",
+        "_validate_local_entry",
+        "_validate_local_model_path",
+        "_validate_no_symlink_path_components",
+        "_validate_owner",
+        "normalize_model_source",
+        "validate_local_model_path"
+      ],
+      "tensor_cast/core/quantization/config.py": [
+        "_filter_action_kwargs",
+        "_set_linear_patterns",
+        "create_linear_quant_config",
+        "create_quant_config"
+      ],
+      "tensor_cast/core/user_config.py": [
+        "UserInputConfig::%",
+        "UserInputConfig::__post_init__",
+        "UserInputConfig::_normalize_draft_method",
+        "UserInputConfig::_normalize_model_source",
+        "UserInputConfig::_normalize_performance_model",
+        "UserInputConfig::_normalize_word_embedding_tp",
+        "UserInputConfig::_validate_device",
+        "UserInputConfig::_validate_pipeline_parallelism",
+        "UserInputConfig::_validate_vision_parallelism",
+        "UserInputConfig::draft_block_size",
+        "UserInputConfig::get_effective_prefix_cache_hit_rate",
+        "UserInputConfig::get_parallel_config",
+        "UserInputConfig::get_quant_config",
+        "UserInputConfig::get_request_info"
+      ],
+      "tensor_cast/custom_model/__init__.py": [
+        "%"
+      ],
+      "tensor_cast/diffusers/cache_agent/__init__.py": [
+        "%"
+      ],
+      "tensor_cast/diffusers/cache_agent/cache.py": [
+        "%",
+        "CacheConfig::%",
+        "CacheState::%"
+      ],
+      "tensor_cast/diffusers/cache_agent/dit_block_cache.py": [
+        "%",
+        "DiTBlockCache::%",
+        "DiTBlockCache::__getattr__",
+        "DiTBlockCache::__init__",
+        "DiTBlockCache::_reuse",
+        "DiTBlockCache::_update_cache",
+        "DiTBlockCache::apply"
+      ],
+      "tensor_cast/diffusers/diffusers_attention.py": [
+        "%",
+        "_attention@_AttentionBackendRegistry.register(AttentionBackendName.TENSOR_CAST)",
+        "_get_attention_stats",
+        "_get_block_sparse_attention_fallback_reason",
+        "_has_supported_attention_mask",
+        "_record_attention_call",
+        "_run_attention",
+        "get_attention_quant_config",
+        "get_attention_route_plan",
+        "get_sp_group",
+        "set_sp_group",
+        "use_custom_sdpa@contextmanager"
+      ],
+      "tensor_cast/diffusers/diffusers_model.py": [
+        "%",
+        "DiffusersTransformerModel::%",
+        "DiffusersTransformerModel::__init__",
+        "DiffusersTransformerModel::enable_dit_block_cache",
+        "DiffusersTransformerModel::forward",
+        "_normalize_diffusers_transformer_config",
+        "build_diffusers_transformer_model",
+        "get_sp_group",
+        "load_config_from_file"
+      ],
+      "tensor_cast/diffusers/diffusers_utils.py": [
+        "%",
+        "SafeMetaTensor::%",
+        "SafeMetaTensor::__bool__",
+        "SafeMetaTensor::__getitem__",
+        "SafeMetaTensor::__new__@staticmethod",
+        "_HunyuanVideo15T2VTorchProxy::%",
+        "_HunyuanVideo15T2VTorchProxy::__getattr__",
+        "_HunyuanVideo15T2VTorchProxy::all@torch.compiler.assume_constant_result",
+        "_HunyuanVideo15T2VTorchProxy::zeros",
+        "generate_hunyuanvideo15_input",
+        "generate_hunyuanvideo_input",
+        "get_diffusers_transformer_module",
+        "get_ulysses_split_dim",
+        "model_class_to_input",
+        "model_class_to_vae_stride",
+        "use_hunyuanvideo15_t2v_static_branch@contextmanager"
+      ],
+      "tensor_cast/diffusers/dit_cache_registry.py": [
+        "%",
+        "DiTBlockCacheSpec::%",
+        "_get_hunyuanvideo15_blocks_with_setters",
+        "_get_hunyuanvideo_blocks_with_setters",
+        "_get_wan_blocks_with_setters",
+        "_hunyuanvideo15_make_wrapped_forward",
+        "_hunyuanvideo_make_wrapped_forward",
+        "_make_block_setter",
+        "_module_list_blocks_with_setters",
+        "_wan_make_wrapped_forward",
+        "get_dit_block_cache_spec",
+        "register_dit_block_cache_spec",
+        "replace_blocks_in_range"
+      ],
+      "tensor_cast/diffusers/model_resolver.py": [
+        "%",
+        "DiffusersModelSelection::%",
+        "DiffusersPipelineManifest::%",
+        "_load_repository_root_json",
+        "_looks_like_local_path",
+        "_normalize_remote_source",
+        "_resolve_snapshot_subfolder",
+        "_split_remote_model_id",
+        "_validate_hunyuanvideo15_repository",
+        "_validate_local_hunyuanvideo15_variant",
+        "resolve_diffusers_model_config",
+        "resolve_diffusers_model_path",
+        "resolve_diffusers_model_selection",
+        "resolve_diffusers_pipeline_manifest",
+        "try_resolve_diffusers_pipeline_manifest"
+      ],
+      "tensor_cast/diffusers/pipeline_metadata.py": [
+        "%",
+        "adapt_tencent_hunyuanvideo15_t2v_config",
+        "resolve_hunyuanvideo15_pipeline_metadata"
+      ],
+      "tensor_cast/layers/attention.py": [
+        "AttentionBase::__init__",
+        "AttentionMetadataBase::__post_init__",
+        "AttentionTensorCast::forward",
+        "flash_attention_forward",
+        "is_dcp_decode_batch"
+      ],
+      "tensor_cast/layers/glm5.py": [
+        "get_glm5_indexer_types",
+        "glm5_uses_indexshare"
+      ],
+      "tensor_cast/layers/internal.py": [
+        "RegionMarkerWrapper::__init__",
+        "RegionMarkerWrapper::forward"
+      ],
+      "tensor_cast/layers/mla.py": [
+        "tp_plan_module_path",
+        "tp_plan_nested_module_path"
+      ],
+      "tensor_cast/layers/parallel_linear.py": [
+        "ColumnParallelLinear::__init__",
+        "ColumnParallelLinear::create_weights",
+        "ColumnParallelLinear::forward",
+        "ParallelLinearBase::__init__",
+        "RowParallelLinear::__init__",
+        "RowParallelLinear::create_weights",
+        "RowParallelLinear::forward",
+        "replace_with_sharded_tensor"
+      ],
+      "tensor_cast/layers/quant_linear.py": [
+        "QuantLinearBase::__init__",
+        "QuantLinearBase::quantize_weight",
+        "TensorCastQuantLinear::__init__",
+        "TensorCastQuantLinear::forward"
+      ],
+      "tensor_cast/layers/rotary_embedding.py": [
+        "CachingRotaryEmb::__init__",
+        "CachingRotaryEmb::forward",
+        "_call_rotary_emb"
+      ],
+      "tensor_cast/layers/sampler.py": [
+        "SamplingMetadata::%",
+        "_has_explicit_selected_token_indices",
+        "_index_select_token_dim",
+        "select_lm_head_hidden_states"
+      ],
+      "tensor_cast/layers/utils.py": [
+        "ModelWrapperBase::__getattr__",
+        "ModelWrapperBase::__init__",
+        "ModelWrapperBase::unwrap",
+        "_get_partial_sharded_by_unit",
+        "_get_partial_sharded_padding",
+        "_get_sharded_shape",
+        "get_partial_sharded"
+      ],
+      "tensor_cast/model_config.py": [
+        "LinearQuantConfig::__post_init__",
+        "ModelConfig::__post_init__",
+        "ModelConfig::has_draft_spec",
+        "ParallelConfig::__post_init__",
+        "ParallelConfig::has_ep",
+        "QuantConfig::__post_init__",
+        "config_has_draft_spec"
+      ],
+      "tensor_cast/ops/attention.py": [
+        "_@register_tensor_cast_op(\"attention\")",
+        "_@register_tensor_cast_op(\"reshape_and_cache\", mutates_args=(\"kv_cache\",))"
+      ],
+      "tensor_cast/ops/internal.py": [
+        "_@register_tensor_cast_op(\"_internal_mark_region_begin\")",
+        "_@register_tensor_cast_op(\"_internal_mark_region_end\")"
+      ],
+      "tensor_cast/ops/linear.py": [
+        "_@register_tensor_cast_op(\"static_quant_linear\")@register_tensor_cast_op(\"static_quant_linear_int4\")"
+      ],
+      "tensor_cast/ops/quantization.py": [
+        "_@register_tensor_cast_op(\"dynamic_quantize_symmetric\")"
+      ],
+      "tensor_cast/parallel_group.py": [
+        "ParallelGroup::__init__",
+        "ParallelGroup::set_rank",
+        "ParallelGroupManager::__init__",
+        "ParallelGroupManager::initialize_model_parallel"
+      ],
+      "tensor_cast/patch_torch.py": [
+        "patch_dtype_abbrs@contextlib.contextmanager",
+        "patch_dtype_to_type@contextlib.contextmanager",
+        "patch_fallback_node_due_to_unsupported_type@contextlib.contextmanager",
+        "patch_masked_scatter@contextlib.contextmanager",
+        "patch_torch@contextlib.contextmanager",
+        "prepare_freezing@contextlib.contextmanager",
+        "specialize_float@contextlib.contextmanager",
+        "support_autocast_for_meta@contextlib.contextmanager"
+      ],
+      "tensor_cast/performance_model/__init__.py": [
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.embedding.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.index_select.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.aten.mm.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.attention.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.reshape_and_cache.default)",
+        "_@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.static_quant_linear.default)",
+        "_attention_properties_helper",
+        "_estimate_default",
+        "_estimate_default_without_static_cost",
+        "_estimate_static_cost",
+        "_get_device_ops_for_dtype",
+        "_mm_properties_helper",
+        "_normalize_query_lens_and_request_total_seq_lens",
+        "_static_quant_linear_properties_helper",
+        "_tensor_value_unavailable"
+      ],
+      "tensor_cast/performance_model/analytic.py": [
+        "AnalyticPerformanceModel::__init__",
+        "AnalyticPerformanceModel::get_classifiers",
+        "AnalyticPerformanceModel::process_op@override",
+        "OpBoundClassifier::_accumulate_dominant_components@staticmethod",
+        "OpBoundClassifier::classify",
+        "OpBoundClassifier::name@property"
+      ],
+      "tensor_cast/performance_model/base.py": [
+        "CachingPerformanceModel::__init__",
+        "CachingPerformanceModel::get_classifiers",
+        "CachingPerformanceModel::process_op",
+        "PerformanceModel::__init__",
+        "PerformanceModel::record_cache_hit"
+      ],
+      "tensor_cast/performance_model/bound_analyzer.py": [
+        "BoundAnalyzer::_collect_stat_by_suffix@classmethod",
+        "BoundAnalyzer::_numeric_value@classmethod",
+        "BoundAnalyzer::_resolved_stat@classmethod",
+        "BoundAnalyzer::_stat_value@classmethod",
+        "BoundAnalyzer::components@classmethod",
+        "BoundAnalyzer::dominant@classmethod"
+      ],
+      "tensor_cast/performance_model/empirical.py": [
+        "summarize_empirical_records"
+      ],
+      "tensor_cast/performance_model/memory_tracker.py": [
+        "MemoryTracker::__init__",
+        "MemoryTracker::_extract_tensors",
+        "MemoryTracker::_get_real_tensor_id",
+        "MemoryTracker::_handle_aliasing",
+        "MemoryTracker::_zero_storage_input_ids",
+        "MemoryTracker::analyze",
+        "MemoryTracker::get_profile",
+        "MemoryTracker::peak_mem_usage",
+        "MemoryTracker::record_single_op_invocation",
+        "MemoryTracker::restore_default_zero_storage_inputs@classmethod"
+      ],
+      "tensor_cast/performance_model/op_estimator_registry.py": [
+        "get_op_estimator"
+      ],
+      "tensor_cast/performance_model/op_invoke_info.py": [
+        "OpInvokeInfo::__init__",
+        "OpInvokeInfo::compute_cache_key",
+        "OpInvokeInfo::get_memory_access_properties",
+        "OpInvokeInfo::get_op_properties_functor@classmethod",
+        "OpInvokeInfo::get_perf_properties",
+        "Region::__init__",
+        "Region::_add_equivalent_info",
+        "Region::finalize",
+        "Region::get_tensor_id@classmethod",
+        "Region::input_tensor@property",
+        "Region::output_tensor@property"
+      ],
+      "tensor_cast/performance_model/utils.py": [
+        "bytes_of_elements",
+        "bytes_of_tensor",
+        "is_noop_self_copy_op",
+        "is_view_op",
+        "run_once"
+      ],
+      "tensor_cast/quantize_utils.py": [
+        "get_quant_config",
+        "quant_type_to_dynamic_quant_dtype",
+        "quant_type_to_weight_dtype",
+        "quantize_linear_modules",
+        "replace_module"
+      ],
+      "tensor_cast/runtime.py": [
+        "OpAverageGroupData::%",
+        "Runtime::__enter__",
+        "Runtime::__exit__",
+        "Runtime::__init__",
+        "Runtime::__torch_dispatch__",
+        "Runtime::_aggregate_average_table_data",
+        "Runtime::_average_table_col_widths@classmethod",
+        "Runtime::_average_table_headers@staticmethod",
+        "Runtime::_build_model_timelines",
+        "Runtime::_consume_pending_wait_context",
+        "Runtime::_extract_tensor_token_ids@staticmethod",
+        "Runtime::_format_time@staticmethod",
+        "Runtime::_is_multistream_anchor_op@classmethod",
+        "Runtime::_iter_flat_invocations",
+        "Runtime::_record_memory_invocations",
+        "Runtime::_record_single_memory_invocation",
+        "Runtime::_render_average_table@classmethod",
+        "Runtime::_replay_single_op",
+        "Runtime::_sort_average_table_items@staticmethod",
+        "Runtime::get_breakdowns",
+        "Runtime::is_infra_mode@classmethod",
+        "Runtime::repeat_op_invoke_infos",
+        "Runtime::replay_flat_op_invoke_infos",
+        "Runtime::replay_op_invoke_infos",
+        "Runtime::table_averages",
+        "Runtime::total_execution_time_s",
+        "_contains_meta_tensor",
+        "_default_bound_components_by_model",
+        "_move_cpu_tensors_to_meta",
+        "_normalize_meta_elementwise_args"
+      ],
+      "tensor_cast/transformers/custom_model_registry.py": [
+        "find_matching_key",
+        "get_custom_model",
+        "get_language_layers",
+        "get_mla_module_name",
+        "get_model_profile",
+        "get_moe_config",
+        "get_mtp_block_module_name",
+        "get_visual",
+        "get_visual_layers",
+        "get_visual_layers_path",
+        "get_vl_language_model",
+        "get_vl_model_module",
+        "get_vl_model_profile_attr",
+        "import_custom_model_modules"
+      ],
+      "tensor_cast/transformers/model.py": [
+        "CausalLmWrapper::__init__",
+        "CausalLmWrapper::forward",
+        "TransformerModel::__init__",
+        "TransformerModel::_replace_module",
+        "TransformerModel::forward",
+        "TransformerModel::get_represented_extra_weight_size@staticmethod",
+        "TransformerModel::get_weight_size_nested@staticmethod",
+        "TransformerModel::head_dim@property",
+        "TransformerModel::hidden_size@property",
+        "TransformerModel::load_weights",
+        "TransformerModel::num_hidden_layers@property",
+        "TransformerModel::set_default_dtype@contextlib.contextmanager",
+        "TransformerModel::weight_size@property"
+      ],
+      "tensor_cast/transformers/transformations.py": [
+        "_draft_attention_layer_indices",
+        "_ensure_draft_excluded_from_linear_quant",
+        "_find_dflash_wrapper",
+        "_quantize_deepseek_v41_native_dspark",
+        "_resync_dflash_shared_vocab",
+        "_shard_model_visual_by_tp_helper",
+        "_validate_gqa_dcp_kv_heads",
+        "maybe_enable_dflash",
+        "maybe_enable_dspark",
+        "maybe_enable_mtp",
+        "maybe_reuse_layers",
+        "patch_attention",
+        "patch_mla",
+        "patch_model",
+        "patch_moe",
+        "patch_rotary_emb",
+        "quantize_attention",
+        "quantize_linear",
+        "quantize_model",
+        "shard_model",
+        "shard_model_by_ep",
+        "shard_model_by_tp",
+        "wrap_model"
+      ],
+      "tensor_cast/transformers/utils.py": [
+        "AutoModelConfigLoader::__init__",
+        "AutoModelConfigLoader::_apply_hf_config_patches",
+        "AutoModelConfigLoader::_load_local_builtin_deepseek_v41_config@staticmethod",
+        "AutoModelConfigLoader::check_model_path@staticmethod",
+        "AutoModelConfigLoader::load_config",
+        "AutoModelConfigLoader::load_model",
+        "AutoModelConfigLoader::try_to_load_model@staticmethod",
+        "_get_attention_quant_config_from_model_config",
+        "_is_draft_attention_layer",
+        "_make_factory_use_device",
+        "_move_registered_parameter",
+        "get_attention_quant_config",
+        "init_on_device_without_buffers@contextlib.contextmanager",
+        "patch_find_packed_sequence_indices_for_meta@contextlib.contextmanager",
+        "strip_module_name"
+      ],
+      "tensor_cast/utils.py": [
+        "EquivalentKeyManager::_find",
+        "EquivalentKeyManager::_state",
+        "EquivalentKeyManager::add_equivalent_keys",
+        "EquivalentKeyManager::get_group_root_key",
+        "exact_division",
+        "is_fp8_dtype",
+        "pattern_match",
+        "performance_dtype"
+      ]
+    }
+  }
+}
