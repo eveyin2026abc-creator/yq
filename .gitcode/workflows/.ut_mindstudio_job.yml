@@ -59,9 +59,4 @@ jobs:
           export MSMODELING_TEST_WEIGHTS_PRUNE=${{ inputs.MSMODELING_TEST_WEIGHTS_PRUNE }}
           export MSMODELING_TEST_MAP_PATH=${{ inputs.MSMODELING_TEST_MAP_PATH }}
           export MSMODELING_TEST_BASE_BRANCH=${{ inputs.TARGET_BRANCH }}
-          # Content-addressed uv downloads and model configs are safe to reuse;
-          # the self-hosted runner decides whether this workspace survives jobs.
-          export UV_CACHE_DIR="${ATOMGIT_WORKSPACE}/.ci-cache/uv"
-          export MSMODELING_CACHE="${ATOMGIT_WORKSPACE}/.ci-cache/msmodeling"
-          mkdir -p "${UV_CACHE_DIR}" "${MSMODELING_CACHE}"
           cd MindStudio-CI && bash build.sh msmodeling

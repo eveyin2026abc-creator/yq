@@ -116,8 +116,7 @@ stages:
           - name: checkout
             uses: checkout
             with:
-              ref: refs/merge-requests/${{ env.PR_ID }}/merge
-              fetch-depth: 0
+              ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
           - name: gitleaks install
             run: |
               wget -q --no-host-directories -c --no-check-certificate https://pytorch-package.obs.cn-north-4.myhuaweicloud.com/pta-codecheck/gitleaks

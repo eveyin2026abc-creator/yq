@@ -139,14 +139,6 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
 - Pid-scoped temp branch `msmodeling-sync/<pid>`; restored & deleted on exit, SIGINT/SIGTERM, `--watch`, and `atexit`.
 - **OBS upload/download external**: sync writes local file only. CI wrapper upload after success; compile jobs download before `run_ci_gate.sh`. Freshness via `built_from_commit`.
 
-### CI cache paths
-
-The GitCode UT workflow exports workspace-local `UV_CACHE_DIR=.ci-cache/uv` and
-`MSMODELING_CACHE=.ci-cache/msmodeling`. `uv sync --frozen` still runs, so
-`uv.lock` remains authoritative while downloaded wheels can be reused. Cross-job
-reuse requires the self-hosted runner or MindStudio-CI wrapper to preserve or
-mount `.ci-cache`; the repository workflow cannot provide a persistent volume.
-
 ## nightly (`run_nightly.sh`)
 
 **Not recommended locally.** Nightly targets CI: parallel `tests/` waves, shared self-timeout, failure attribution, and optional Feishu. For local runs use `build.py test` / smoke / regression.
