@@ -18,6 +18,8 @@
 
 import unittest
 
+from parameterized import parameterized
+
 from tools.perf_data_collection.grid_generator.model_configs import (
     ModelConfig,
     _normalize_name,
@@ -28,20 +30,17 @@ from tools.perf_data_collection.grid_generator.model_configs import (
 
 
 class TestNormalizeName(unittest.TestCase):
-    def test_lowercase(self):
-        self.assertEqual(_normalize_name("Qwen3-32B"), "qwen332b")
-
-    def test_remove_dashes(self):
-        self.assertEqual(_normalize_name("DeepSeek-V3"), "deepseekv3")
-
-    def test_remove_underscores(self):
-        self.assertEqual(_normalize_name("llama_70b"), "llama70b")
-
-    def test_remove_spaces(self):
-        self.assertEqual(_normalize_name("Qwen3 32B"), "qwen332b")
-
-    def test_remove_dots_and_slashes(self):
-        self.assertEqual(_normalize_name("meta-llama/Meta-Llama-3-70B"), "metallamametallama370b")
+    @parameterized.expand(
+        [
+            ("lowercase", "Qwen3-32B", "qwen332b"),
+            ("dashes", "DeepSeek-V3", "deepseekv3"),
+            ("underscores", "llama_70b", "llama70b"),
+            ("spaces", "Qwen3 32B", "qwen332b"),
+            ("dots_and_slashes", "meta-llama/Meta-Llama-3-70B", "metallamametallama370b"),
+        ]
+    )
+    def test_normalize_name(self, _case, raw, expected):
+        self.assertEqual(_normalize_name(raw), expected)
 
 
 class TestModelConfig(unittest.TestCase):
