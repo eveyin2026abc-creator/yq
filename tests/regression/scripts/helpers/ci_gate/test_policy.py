@@ -124,7 +124,7 @@ def test_is_product_source_uses_policy_roots(tmp_path: Path) -> None:
     policy = load_gate_policy(repo)
     assert is_product_source("cli/main.py", policy.roots) is True
     assert is_product_source("web_ui/app.py", policy.roots) is True
-    assert is_product_source("tests/regression/cli/test_main.py", policy.roots) is False
+    assert is_product_source("tests/regression/cli/unit/test_main.py", policy.roots) is False
 
 
 def test_is_policy_config_path_uses_policy_configs(tmp_path: Path) -> None:

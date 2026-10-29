@@ -1,7 +1,9 @@
 ---
 name: msmodeling-test-case-generator
 description: Generate test cases for msmodeling under tests/smoke/, tests/regression/, or tests/benchmark/ from a feature description, model ID, or source symbol.
-version: 1.0.0
+metadata:
+  version: 2.0.0
+  source: repository
 ---
 
 # msmodeling Test Case Generator
@@ -56,7 +58,25 @@ Exactly one of:
 
 Only two markers: `@pytest.mark.nightly` (>300s compile), `@pytest.mark.npu` (NPU hardware). Never add layer markers.
 
-### Decision Tree
+### Responsibility Decision Tree (required first)
+
+1. Real `model_id` or `ModelRunner` execution? → **L1/model**. Declare
+   `L1_FAMILY: <registered family>`, use `L1ScenarioExecutor`, register the family in
+   `tests/.ci/l1_families.json`, and register numeric/structural/capability assertions in
+   `tests/.ci/assertion_manifest.csv`. Never rebuild per assertion group.
+2. One canonical synthetic builder? → **L2/module**. Import it from `tests/helpers/`;
+   never call a real model execution entry. If a new artifact type has no builder, propose
+   that builder first. Multimodal mechanisms without a canonical builder belong in L1
+   (real single block) or L3 (pure rule), not an improvised L2 fixture.
+3. Pure function, parser, validation, exception, or exit code? → **L3/unit**. If the test
+   exists only for cheap long-tail line coverage, add `@pytest.mark.cov_helper` and a
+   `COV_HELPER: product/path.py::symbol` docstring.
+
+`cov_helper` is an L3 label, not a fourth layer. It must stay below 50 ms, must not mock
+the product object under test, and cannot be the sole watcher for security, precision, or
+performance paths.
+
+### Execution Decision Tree
 
 1. Quick path check? → `tests/smoke/`. Use local tiny configs from `tests/assets/model_config/`, `num_hidden_layers_override=1`, `do_compile=False`. Assert basic reachability. Under 10s. VL image resize: vendor `preprocessor_config.json` and register Hub id in `tests/helpers/model_assets.py`; run `scripts/prefetch_model_configs.py` to warm Hub cache.
 2. Functional/integration? → `tests/regression/` under correct subdirectory. Use `get_session_model`/`get_session_hf_config`. If >300s with `do_compile=True` → `@pytest.mark.nightly` + smoke guard.
@@ -175,6 +195,8 @@ class Test<Feature>Nightly(unittest.TestCase):
 - Do not skip the smoke guard when generating a nightly test
 - Do not generate conftest code that mutates `sys.modules` for product packages
 - Do not suggest `pytest_plugins` in subdirectory conftest files
+- Do not use `cov_helper` to justify deleting L1/L2 guardianship
+- Do not add an L1 case without family registration and assertion-manifest coverage
 
 ## CI Gate Policy (Summary)
 
@@ -208,4 +230,7 @@ exemptions:
 - [ ] If `@pytest.mark.nightly`, smoke guard co-generated
 - [ ] No `sys.modules` mocks in conftest
 - [ ] New product symbols covered or in `exemptions.sources`/`exemptions.tests`
+- [ ] L1 additions declare a registered family and update the assertion manifest
+- [ ] Incremental L1 scheduling is budgeted by unique build/run scenarios, not test count
+- [ ] `cov_helper` has a real product-symbol mapping, runs under 50 ms, and does not mock the product object
 - [ ] Local smoke + regression pass before push

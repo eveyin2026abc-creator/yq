@@ -87,6 +87,7 @@ from scripts.helpers.nightly.report_models import (
     FailureBlame,
     FeishuReportInput,
 )
+from scripts.helpers.nightly.coverage_split import build_coverage_breakdown
 from tensor_cast.core.model_source_security import warn_remote_code_risk
 
 _PYTEST_MARKER_WAVE_A = WAVE_A_MARKER
@@ -512,6 +513,16 @@ def _coverage_summary(cfg: Config) -> CoverageSummary | None:
         if passed
         else "Coverage gate failed: " + "; ".join(failures)
     )
+    try:
+        breakdown = build_coverage_breakdown(REPO_ROOT, sys.executable)
+    except (FileNotFoundError, RuntimeError):
+        breakdown = None
+    if breakdown is not None:
+        message += (
+            f"; core={breakdown.core_line_percent:.1f}% "
+            f"cov_helper=+{breakdown.cov_helper_line_contribution:.1f}% "
+            f"({breakdown.cov_helper_only_lines} helper-only lines)"
+        )
     return CoverageSummary(
         line_percent=totals.line_percent,
         branch_percent=totals.branch_percent,
@@ -519,6 +530,9 @@ def _coverage_summary(cfg: Config) -> CoverageSummary | None:
         branch_threshold=gate_cfg.branch_threshold,
         gate_passed=passed,
         message=message,
+        core_line_percent=breakdown.core_line_percent if breakdown else totals.line_percent,
+        cov_helper_line_contribution=breakdown.cov_helper_line_contribution if breakdown else 0.0,
+        cov_helper_only_lines=breakdown.cov_helper_only_lines if breakdown else 0,
     )
 
 
@@ -569,6 +583,9 @@ def emit_report(
         coverage_line_threshold=coverage.line_threshold if coverage else None,
         coverage_branch_threshold=coverage.branch_threshold if coverage else None,
         coverage_gate_passed=coverage.gate_passed if coverage else None,
+        coverage_core_line_percent=coverage.core_line_percent if coverage else None,
+        coverage_cov_helper_contribution=coverage.cov_helper_line_contribution if coverage else None,
+        coverage_cov_helper_only_lines=coverage.cov_helper_only_lines if coverage else 0,
         failure_blames=resolved_blames,
         drift_warnings=drift_warnings,
         pipeline_log_url=pipeline_log_url,
@@ -609,6 +626,9 @@ def emit_init_failure_report(
         coverage_line_threshold=None,
         coverage_branch_threshold=None,
         coverage_gate_passed=None,
+        coverage_core_line_percent=None,
+        coverage_cov_helper_contribution=None,
+        coverage_cov_helper_only_lines=0,
         pipeline_log_url=pipeline_log_url,
         status_note=note,
     )

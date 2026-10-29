@@ -53,7 +53,7 @@ def test_new_source_exactly_eighty_percent_is_measured(tmp_path: Path) -> None:
     source = _write_source(tmp_path)
     data = _FakeCoverageData(
         source,
-        {line: ["tests/regression/cli/test_main.py::test_main"] for line in range(2, 6)},
+        {line: ["tests/regression/cli/unit/test_main.py::test_main"] for line in range(2, 6)},
     )
 
     result = measure_incremental_coverage(
@@ -99,7 +99,7 @@ def test_exception_branches_stay_in_denominator(tmp_path: Path) -> None:
         "    return parsed\n",
         encoding="utf-8",
     )
-    data = _FakeCoverageData(source, {3: ["tests/regression/cli/test_main.py::test_main"]})
+    data = _FakeCoverageData(source, {3: ["tests/regression/cli/unit/test_main.py::test_main"]})
 
     result = measure_incremental_coverage(
         tmp_path,
