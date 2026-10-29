@@ -1,0 +1,5 @@
+family,source_node,product_symbol,required
+qwen,tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_qwen_scenarios,tensor_cast/core/model_runner.py::ModelRunner::run_inference,true
+dense,tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_dense_scenarios,tensor_cast/layers/attention.py::AttentionTensorCast::forward,true
+moe,tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_moe_scenarios,tensor_cast/layers/mla.py::MultiheadLatentAttentionTensorCast::forward,true
+multimodal,tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_multimodal_scenarios,tensor_cast/transformers/model.py::TransformerModel::forward,true

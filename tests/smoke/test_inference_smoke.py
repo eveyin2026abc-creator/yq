@@ -43,7 +43,7 @@ from tensor_cast.device import TEST_DEVICE
 from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.runtime import Runtime
-from tests.regression.tensor_cast.test_common import (
+from tests.regression.tensor_cast.unit.test_common import (
     create_attn_metadata_and_kv_cache,
     create_mla_metadata_and_kv_cache,
     has_submodule_with_cls_name,

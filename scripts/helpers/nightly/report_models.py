@@ -52,6 +52,9 @@ class CoverageSummary:
     branch_threshold: float
     gate_passed: bool
     message: str
+    core_line_percent: float | None = None
+    cov_helper_line_contribution: float | None = None
+    cov_helper_only_lines: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,9 @@ class FeishuReportInput:
     coverage_line_threshold: float | None
     coverage_branch_threshold: float | None
     coverage_gate_passed: bool | None
+    coverage_core_line_percent: float | None = None
+    coverage_cov_helper_contribution: float | None = None
+    coverage_cov_helper_only_lines: int = 0
     failure_blames: tuple[FailureBlame, ...] = ()
     drift_warnings: tuple[str, ...] = ()
     pipeline_log_url: str = ""

@@ -406,7 +406,7 @@ def test_run_test_map_pytest_invokes_subprocess(monkeypatch: MonkeyPatch, tmp_pa
 
 
 def test_collect_execution_node_ids_expands_parametrized_map_keys(monkeypatch: MonkeyPatch) -> None:
-    parent = "tests/regression/cli/test_main.py"
+    parent = "tests/regression/cli/unit/test_main.py"
 
     def _fake_collect(targets: tuple[str, ...], *, marker: str) -> tuple[str, ...]:
         assert marker == sync.TEST_MAP_EXECUTION_MARKER
@@ -490,7 +490,7 @@ def test_run_pytest_and_collect_fresh_map_allows_empty_incremental_collection(
         sync._run_pytest_and_collect_fresh_map(
             tmp_path,
             "python",
-            targets=("tests/regression/cli/test_main.py",),
+            targets=("tests/regression/cli/unit/test_main.py",),
         )
         == {}
     )

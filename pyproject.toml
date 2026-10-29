@@ -66,6 +66,7 @@ markers = [
     "nightly: do_compile=True large model cases, only run in nightly",
     "npu: requires NPU hardware",
     "network: requires live model Hub access (HuggingFace/ModelScope); excluded by default, run in nightly",
+    "cov_helper: fast L3 test whose only role is transparent long-tail line coverage",
 ]
 addopts = "-m 'not npu and not nightly and not network'"
 testpaths = ["tests"]

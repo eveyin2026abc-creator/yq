@@ -51,6 +51,7 @@ GitCode 配置：
 | 查看、分析或修复 PR 流水线 | `msmodeling-ci-recovery` |
 | 处理 PR 检视意见 | `msmodeling-review-feedback` |
 | 请求检视或启动合入流程 | `sig-review` |
+| 新增或修改测试用例 | 先读 `tests/SKILL.md`，按 L1/L2/L3 判定树落位并通过 test architecture gate |
 | 执行实测算子数据库从密度规则、采集、审计到发布的完整流程 | `profiling-database-lifecycle` |
 | 从自然语言或现有 case 完整串联、或独立执行模型适配、算子 Shape/dtype 看护、NPU 实测分层对账 | `model-adaptation-validation-workflow` |
 | 人工审查算子映射并修正模型适配直到复验通过 | `model-adaptation-calibration-loop` |
