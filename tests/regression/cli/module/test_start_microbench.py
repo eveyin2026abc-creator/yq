@@ -2563,7 +2563,7 @@ class TestEndToEndWithNPU:
     """End-to-end tests requiring NPU hardware.
 
     These tests run the actual profiling pipeline with msprof.
-    Run with: pytest -m npu tests/regression/cli/test_start_microbench.py::TestEndToEndWithNPU
+    Run with: pytest -m npu tests/regression/cli/module/test_start_microbench.py::TestEndToEndWithNPU
 
     Prerequisites:
     - NPU device available (torch_npu installed and device accessible)
