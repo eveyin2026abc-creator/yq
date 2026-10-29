@@ -16,18 +16,26 @@
 """Regression tests for the test architecture mechanical gates."""
 
 import argparse
+import ast
 import csv
+import json
 from pathlib import Path
 
 import pytest
 
 from scripts.helpers.test_architecture import (
     GateError,
+    _changed_test_files,
     _classify_file,
+    _name,
+    build_parser,
     check_assertions,
+    check_new_tests,
     check_scenarios,
     check_watchers,
+    compare_inventory,
     collect_inventory,
+    main,
 )
 
 
@@ -110,6 +118,78 @@ def test_watcher_gate_requires_mapped_symbol(tmp_path: Path) -> None:
     rows = [(family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true") for family in ("qwen", "dense", "moe", "multimodal")]
     _write_csv(watchers, fields, rows)
     test_map = tmp_path / "test_map.json"
-    import json
     test_map.write_text(json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8")
     check_watchers(argparse.Namespace(watchers=watchers, test_map=test_map))
+
+
+def test_compare_inventory_writes_empty_reports_for_matching_nodes(tmp_path: Path) -> None:
+    inventory = tmp_path / "inventory.csv"
+    fields = ("node_id", "current_file", "current_layer", "target_layer", "target_file", "status")
+    node = "tests/a.py::test_one"
+    _write_csv(inventory, fields, [(node, "tests/a.py", "regression", "L3-unit", "tests/a.py", "master-baseline")])
+    collected = tmp_path / "collected.txt"
+    collected.write_text(node + "\n", encoding="utf-8")
+
+    compare_inventory(argparse.Namespace(inventory=inventory, collect_output=collected, output_dir=tmp_path / "reports"))
+
+    assert (tmp_path / "reports/inventory_missing.csv").read_text(encoding="utf-8") == "node_id\n"
+    assert (tmp_path / "reports/inventory_extra.csv").read_text(encoding="utf-8") == "node_id\n"
+
+
+def test_changed_test_files_keeps_only_added_existing_python_tests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_file = tmp_path / "tests/new/test_case.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "scripts.helpers.test_architecture.subprocess.run",
+        lambda *_args, **_kwargs: argparse.Namespace(stdout="tests/new/test_case.py\ntests/new/readme.md\ntests/missing.py\n"),
+    )
+
+    assert _changed_test_files("origin/master") == [Path("tests/new/test_case.py")]
+
+
+def test_name_formats_nested_ast_names() -> None:
+    assert _name(ast.parse("pkg.Factory().run").body[0].value) == "pkg.Factory.run"
+    assert _name(ast.Constant(value=1)) == ""
+
+
+def test_check_new_tests_accepts_registered_executor_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_file = tmp_path / "tests/regression/tensor_cast/model/test_new.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "# L1_FAMILY: qwen\n"
+        "from tests.helpers.l1_scenario import L1ScenarioExecutor\n"
+        "def test_new():\n    assert L1ScenarioExecutor\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "families.json"
+    registry.write_text(json.dumps({"families": {"qwen": {}}}), encoding="utf-8")
+    monkeypatch.setattr("scripts.helpers.test_architecture._changed_test_files", lambda _base: [test_file])
+
+    check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
+
+
+def test_build_parser_exposes_all_architecture_commands() -> None:
+    parser = build_parser()
+    choices = next(action for action in parser._actions if action.dest == "command").choices
+    assert set(choices) == {
+        "collect-inventory",
+        "compare-inventory",
+        "check-assertions",
+        "check-scenarios",
+        "check-watchers",
+        "check-new-tests",
+    }
+
+
+def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    parser = argparse.Namespace(
+        parse_args=lambda: argparse.Namespace(
+            func=lambda _args: (_ for _ in ()).throw(GateError("boom"))
+        )
+    )
+    monkeypatch.setattr("scripts.helpers.test_architecture.build_parser", lambda: parser)
+
+    assert main() == 1
+    assert "test architecture gate: boom" in capsys.readouterr().err
