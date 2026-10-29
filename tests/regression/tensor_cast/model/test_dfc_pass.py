@@ -14,7 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
-# tests/regression/tensor_cast/test_dfc_pass.py
+# tests/regression/tensor_cast/model/test_dfc_pass.py
 import operator
 import unittest
 from dataclasses import asdict

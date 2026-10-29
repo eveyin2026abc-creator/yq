@@ -342,6 +342,6 @@ class SequenceParallelPassRegressionTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     # PYTHONPATH=/pathto/msmodeling:$PYTHONPATH pytest -v \
-    #   tests/regression/tensor_cast/test_sequence_parallel_pass.py \
+    #   tests/regression/tensor_cast/model/test_sequence_parallel_pass.py \
     #   --log-cli-level=DEBUG > test.log
     unittest.main()

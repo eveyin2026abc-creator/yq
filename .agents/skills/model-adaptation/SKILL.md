@@ -201,7 +201,7 @@ Run focused checks before finishing:
 ```bash
 python -m cli.inference.model_adapter doctor --help
 python -m cli.inference.model_adapter verify --help
-pytest tests/regression/tensor_cast/test_adapter_automation.py -q
+pytest tests/regression/tensor_cast/model/test_adapter_automation.py -q
 ```
 
 If runtime behavior changed, also run the relevant smoke or regression tests.

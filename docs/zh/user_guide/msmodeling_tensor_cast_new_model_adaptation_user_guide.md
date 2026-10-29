@@ -355,7 +355,7 @@ Replay 约束：
 配套的 Qwen3-VL Blind Replay 测试使用仅配置 fixture（`tests/assets/model_config/qwen3_vl_tiny/config.json`），不需要下载权重：
 
 ```bash
-pytest tests/regression/tensor_cast/test_adapter_automation.py -k qwen3_vl -q
+pytest tests/regression/tensor_cast/model/test_adapter_automation.py -k qwen3_vl -q
 ```
 
 ## 14. 验证检查清单
@@ -363,7 +363,7 @@ pytest tests/regression/tensor_cast/test_adapter_automation.py -k qwen3_vl -q
 运行聚焦适配测试套：
 
 ```bash
-pytest tests/regression/tensor_cast/test_adapter_automation.py -q
+pytest tests/regression/tensor_cast/model/test_adapter_automation.py -q
 ```
 
 检查 CLI 入口：
@@ -376,7 +376,7 @@ python -m cli.inference.model_adapter verify --help
 如果运行时行为发生变化，运行相关 TensorCast 测试：
 
 ```bash
-pytest tests/regression/tensor_cast/test_runtime.py tests/regression/tensor_cast/test_text_generate.py
+pytest tests/regression/tensor_cast/model/test_runtime.py tests/regression/tensor_cast/model/test_text_generate.py
 ```
 
 如果适配涉及特定模型家族，请运行仓库中最接近的模型或 benchmark smoke 路径。

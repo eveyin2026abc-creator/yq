@@ -1538,7 +1538,7 @@ RuntimeError: aten.nonzero.default cannot infer output shape for meta tensor boo
             suspected_locations=[{"file": "modeling_qwen3_vl.py", "line": 123}],
             constraints=["preserve tensor shapes"],
             required_output=["patch diff"],
-            verification_commands=["pytest tests/regression/tensor_cast/test_adapter_automation.py -q"],
+            verification_commands=["pytest tests/regression/tensor_cast/model/test_adapter_automation.py -q"],
             prompt_text="Implement the patch.",
         )
 

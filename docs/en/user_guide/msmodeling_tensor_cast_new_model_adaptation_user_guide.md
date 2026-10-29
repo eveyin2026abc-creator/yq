@@ -355,7 +355,7 @@ Replay constraints:
 The accompanying Qwen3-VL blind replay test uses a config-only fixture (`tests/assets/model_config/qwen3_vl_tiny/config.json`) and does not require downloading weights:
 
 ```bash
-pytest tests/regression/tensor_cast/test_adapter_automation.py -k qwen3_vl -q
+pytest tests/regression/tensor_cast/model/test_adapter_automation.py -k qwen3_vl -q
 ```
 
 ## 14. Validation Checklist
@@ -363,7 +363,7 @@ pytest tests/regression/tensor_cast/test_adapter_automation.py -k qwen3_vl -q
 Run the focused adapter test suite:
 
 ```bash
-pytest tests/regression/tensor_cast/test_adapter_automation.py -q
+pytest tests/regression/tensor_cast/model/test_adapter_automation.py -q
 ```
 
 Check CLI entry points:
@@ -376,7 +376,7 @@ python -m cli.inference.model_adapter verify --help
 If runtime behavior changed, run relevant TensorCast tests:
 
 ```bash
-pytest tests/regression/tensor_cast/test_runtime.py tests/regression/tensor_cast/test_text_generate.py
+pytest tests/regression/tensor_cast/model/test_runtime.py tests/regression/tensor_cast/model/test_text_generate.py
 ```
 
 If the adaptation touches a specific model family, run the closest model or benchmark smoke path available in the repository.
