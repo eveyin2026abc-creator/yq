@@ -61,6 +61,7 @@ FIELD_NOTES: dict[str, str] = {
     "mtp_acceptance_rate": "Acceptance rates scale a run. They do not rebuild the MTP head.",
     "speculative_method": "The speculative method selects MTP, DFlash, or DSPark at build time.",
     "num_speculative_tokens": "The speculative width is bridged into the built MTP graph.",
+    "num_speculative_tokens_explicit": "An explicit speculative width changes the built MTP graph.",
     "acceptance_length": "Acceptance length is a property of the built speculative config.",
     "num_draft_layers": "Draft depth changes the built draft model.",
     "draft_model_config_path": "A different draft config is a different built model.",

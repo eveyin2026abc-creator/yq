@@ -23,13 +23,13 @@ def test_executor_and_direct_sites_are_both_visible():
     sites = iter_sites()
     smoke = sites_in("tests/smoke/test_inference_smoke.py", sites)
     assert any(site.callee == "isolated_l1_executor" for site in smoke)
-    runtime = sites_in("tests/regression/tensor_cast/test_runtime.py", sites)
+    runtime = sites_in("tests/regression/tensor_cast/model/test_runtime.py", sites)
     assert not any(site.callee == "build_model" for site in runtime)
-    pipeline = sites_in("tests/regression/tensor_cast/test_pipeline_parallel_model_builder.py", sites)
+    pipeline = sites_in("tests/regression/tensor_cast/model/test_pipeline_parallel_model_builder.py", sites)
     assert any(site.callee == "build_model" for site in pipeline)
     e2e = sites_in("tests/regression/model_diagnostics/e2e/conftest.py", sites)
     assert not any(site.callee == "capture_artifact_for_profile" for site in e2e)
-    integration = sites_in("tests/regression/model_diagnostics/sources/test_runtime_capture_integration.py", sites)
+    integration = sites_in("tests/regression/model_diagnostics/model/sources/test_runtime_capture_integration.py", sites)
     assert any(site.callee == "capture_artifact_for_profile" for site in integration)
 
 
@@ -37,7 +37,7 @@ def test_l2_builders_and_the_guard_fixture_are_not_model_calls():
     sites = iter_sites()
     l2 = sites_in("tests/helpers/l2_artifacts.py", sites)
     assert l2 == ()
-    guard = sites_in("tests/regression/tensor_cast/test_layer_guard.py", sites)
+    guard = sites_in("tests/regression/tensor_cast/unit/test_layer_guard.py", sites)
     assert guard == ()
 
 

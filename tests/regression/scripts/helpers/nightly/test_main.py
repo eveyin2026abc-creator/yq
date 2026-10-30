@@ -49,6 +49,7 @@ from scripts.helpers.nightly.main import (
     _run_nightly_pipeline,
     _run_pytest_waves,
     _stream_pytest,
+    _test_redundancy_warnings,
     _terminate_process_tree,
     emit_init_failure_report,
     emit_report,
@@ -75,6 +76,24 @@ FAILED tests/smoke/test_b.py::test_fail - AssertionError: boom
 
 ========================= 1 failed, 1 passed in 2.50s =========================
 """
+
+
+def test_redundancy_warnings_are_advisory_feishu_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("scripts.helpers.nightly.main.load_test_map", lambda _cfg: {"node": {}})
+    monkeypatch.setattr(
+        "scripts.helpers.nightly.main.detect_redundant_cases",
+        lambda _mapping: [
+            {"type": "redundant_pair", "jaccard": 0.9, "test_a": "tests/a.py::test_a", "test_b": "tests/b.py::test_b"},
+            {"type": "over_covered_symbol", "test_count": 6, "symbol": "pkg/mod.py::target"},
+        ],
+    )
+
+    warnings = _test_redundancy_warnings(_BASE_CFG)
+
+    assert warnings == (
+        "Redundancy candidate Jaccard=0.9: tests/a.py::test_a <> tests/b.py::test_b",
+        "Over-covered symbol (6 tests): pkg/mod.py::target",
+    )
 
 
 def test_pytest_cmd_wave_a_targets_non_benchmark_non_network_with_xdist_coverage_and_tb_line() -> None:

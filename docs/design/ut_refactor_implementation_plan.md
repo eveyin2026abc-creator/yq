@@ -1,27 +1,37 @@
-# L1 / L2 / L3 migration register
+# L1 / L2 / L3 migration implementation and acceptance record
 
-This document registers the current test suite. It does not move, merge, or delete any test, and it does not change a pytest node id.
+This document is the executable migration contract and final acceptance record. The inventory workbook is generated from the current checkout by `scripts/helpers/export_test_inventory.py`; it is routing evidence, while code, collect results, build/forward counters, assertion manifests and `test_map` watcher checks are completion evidence.
 
-The register was collected from commit `2522c830` with:
+The current register was collected on the refactor branch with:
 
 ```bash
 python -m pytest tests -o addopts= --collect-only -q
 ```
 
-Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The collection result is **9154** node ids across **395** files. The same rows are in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx). One row is one collected node id. Re-running collection on this commit must still report 9154; a different count means the workbook is stale.
+Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The 2026-10-29 refresh collected **10,279 node ids**. The same rows are in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx), one row per collected node id. Re-run the exporter whenever collection changes; a count mismatch means the workbook is stale. The historical 6,943/7,626/9,154 counts are not acceptance baselines.
+
+## Final implementation status
+
+- `L1BuildSignature`, `L1RunSignature`, `L1RunArtifact`, reset/rebind isolation and counted execution are implemented in `tests/helpers/l1_scenario.py`.
+- Qwen, dense, MoE and multimodal family scenarios execute real vendored one-layer configurations. The registry includes Qwen, DeepSeek V3/V3.2/V4, GLM, MiniMax, MiMo, Ling and Kimi families rather than treating Qwen/DeepSeek as the complete model set.
+- Numeric, structural and capability assertions are protected by `tests/.ci/assertion_manifest.csv`; active assertion loss requires a signed waiver. Scenario budgets count `(build, run)` scenarios, not pytest case count.
+- Canonical L2 artifacts and L3 pure contracts are implemented. The L2 AST guard scans every `tests/regression/*/module/**/*.py` file plus the canonical helper and runs from `run_ci_gate.sh`.
+- Old-path watcher conservation is enforced through `l1_watchers.csv` and the external `test_map`. Jaccard redundancy candidates are advisory in test-map sync and nightly/Feishu output; they never delete a test automatically.
+- Nightly reports the unchanged line/branch leadership gate plus core coverage and `cov_helper` contribution separately. `cov_helper` is an L3 label, not a fourth responsibility layer.
+- The physical hierarchy is component first (`cli`, `tensor_cast`, `model_diagnostics`, etc.), then responsibility (`model`, `module`, `unit`). Existing out-of-scope suites retain an explicit maintenance boundary in the workbook and `out_of_scope_boundaries.csv`.
 
 ## What a row means
 
 | Column | Meaning |
 |--------|---------|
 | `node_id` | Pytest node id. This is the primary key. |
-| `path` | Test module, the part of `node_id` before `::`. |
-| `target_layer` | Proposed responsibility layer. `待人工确认` means no rule below matched. |
+| `当前路径` | Test module, the part of `node_id` before `::`. |
+| `目标责任层` | Executable responsibility layer or registered maintenance boundary. |
 | `target_module` | First component directory under `tests/regression/`, or `smoke` / `benchmark/...` / `helpers`. |
 | `model_identity` | `model_id` literals found in that file, or `无模型`. This is file-level evidence, not a per-node parameter. |
 | `markers` | Markers attached to that node. |
 | `schedule` | Where this node runs today. |
-| `migration` | `保持` or the later migration step. No code in this change performs it. |
+| `迁移动作` | Keep, completed migration, or maintenance-boundary action. |
 | `evidence` | The rule that selected the layer. |
 | `build_signature` | Filled only for proposed L1 rows. |
 | `assertion_overlap` | `numeric`, `diagnostics`, or `未判定` for proposed L1 rows. |
@@ -56,14 +66,9 @@ Proposed L1 is **1796** rows: 39 already live under `tests/benchmark/models/`, a
 
 For every proposed L1 row, `build_signature` is the same pending contract already implemented in `tests/helpers/l1_scenario.py`: every `UserInputConfig` field except `RUN_FIELDS` and `OBSERVABILITY_FIELDS`, plus `compilation_config`. The workbook does not instantiate a signature for each node.
 
-## Approvals required before migration code
+## Approval and rollback rules
 
-Two decisions are still open. Neither is made by this register.
-
-1. Confirm the `L1BuildSignature` field split and the runner rebind contract in `tests/helpers/l1_scenario.py`.
-2. Approve the model-family matrix for numeric, structural, and capability assertions, and the incremental / regression / nightly time budget (about 180 / 300 / 3000 seconds).
-
-Until both are approved, later pull requests must not move node ids. The next code change, after that approval, is the Qwen L1 merge only.
+The build-signature split, runner rebind contract, family matrix and scenario budget are now encoded in executable tests and manifests. Future changes to those contracts require review of the affected manifest rows. Assertion loss, signature collision, state leakage, watcher loss or an unexplained budget regression blocks the gate and requires rollback or an explicit signed waiver.
 
 ## Code already on this branch
 
@@ -73,14 +78,14 @@ Smoke guards in `tests/smoke/test_inference_smoke.py`, `test_fusion_passes_smoke
 
 `isolated_l1_executor()` is the one-case entry. `test_text_generate.py`, the Kimi K2.5 / K3 cases, GLM5-Next compile cases, the VL compile case, the matmul-allreduce and sequence-parallel pass cases, the DFC model runs, the DFlash varlen run, and the serving optimizer factory now build through it. Pass flags that the executor would otherwise clear are passed back in `compilation_config`. Node ids are unchanged.
 
-`tests/regression/tensor_cast/test_text_generate.py` now runs its cases through `L1ScenarioExecutor`. Metric-only cases and model inspections use the class executor (`_run_shared`, `_shared_runner`). Compile cases and the expected-failure device case use `_isolated_executor`, so a compiled runner is not kept across `torch.compiler.reset()`. Node ids are unchanged.
+`tests/regression/tensor_cast/model/test_text_generate.py` now runs its cases through `L1ScenarioExecutor`. Metric-only cases and model inspections use the class executor (`_run_shared`, `_shared_runner`). Compile cases and the expected-failure device case use `_isolated_executor`, so a compiled runner is not kept across `torch.compiler.reset()`. Node ids are unchanged.
 
-`tests/helpers/l2_artifacts.py` adds the seven synthetic L2 builders: quant, parallel, FX, runtime event, diagnostics, replay, and microbench. They do not accept a model identity. `tests/helpers/l3_contracts.py` adds the pure exit-code, exception, and default contracts. `tests/helpers/layer_guard.py` scans an L2 module for `ModelRunner`, `build_model`, `TransformerModel`, and `model_id`. The scanner is covered by tests and is not wired into `run_ci_gate.sh`. Diagnostics e2e cases still build through `capture_artifact_for_profile`.
+`tests/helpers/l2_artifacts.py` adds the seven synthetic L2 builders: quant, parallel, FX, runtime event, diagnostics, replay, and microbench. They reject model identity. `tests/helpers/l3_contracts.py` adds pure exit-code, exception, and default contracts. `tests/helpers/layer_guard.py` scans L2 call sites for real model construction; `check-l2-layers` is wired into `run_ci_gate.sh` and currently covers 77 files with zero violations. Diagnostics e2e cases build through `capture_profile_with_executor`; product-entry integration tests retain direct `capture_artifact_for_profile` calls because that function is their subject under test.
 
-`tests/helpers/l1_qwen.py` and `tests/regression/tensor_cast/test_l1_qwen.py` cover the reuse contract on Qwen3-32B with `num_hidden_layers_override=1`:
+`tests/helpers/l1_qwen.py` and `tests/regression/tensor_cast/model/test_l1_qwen.py` cover the reuse contract on Qwen3-32B with `num_hidden_layers_override=1`:
 
 - the same scenario builds once and forwards once
 - a different `query_len` reuses that build
 - a different quantization is a second build
 
-`tests/helpers/l1_families.py` and `tests/regression/tensor_cast/test_l1_families.py` apply that same contract to the vendored one-layer configs for Qwen3 dense, Qwen3 MoE, Qwen3-VL, Qwen3-VL-MoE, Qwen3.5, Qwen3.5-MoE, Qwen3-Next, DeepSeek-V3, DeepSeek-V3.2, DeepSeek-V4-Flash, GLM-4.7, GLM-4.1V, GLM-4.5V, GLM-5.1, MiniMax-M2, MiMo-V2-Flash, Ling-flash-2.0, and Kimi-K2.5. Kimi-K2-Thinking stays on the network-marked diagnostics cases and is not in this offline set.
+`tests/helpers/l1_families.py` and `tests/regression/tensor_cast/model/test_l1_families.py` apply that same contract to the vendored one-layer configs for Qwen3 dense, Qwen3 MoE, Qwen3-VL, Qwen3-VL-MoE, Qwen3.5, Qwen3.5-MoE, Qwen3-Next, DeepSeek-V3, DeepSeek-V3.2, DeepSeek-V4-Flash, GLM-4.7, GLM-4.1V, GLM-4.5V, GLM-5.1, MiniMax-M2, MiMo-V2-Flash, Ling-flash-2.0, and Kimi-K2.5. Kimi-K2-Thinking stays on the network-marked diagnostics cases and is not in this offline set.

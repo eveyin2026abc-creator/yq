@@ -24,11 +24,11 @@ import pytest
 import torch
 from transformers import LlamaConfig
 
-from tensor_cast.core.model_runner import ModelRunner
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.utils import SimFormat
 from tensor_cast.performance_model.op_invoke_info import get_named_args
+from tests.helpers.l1_scenario import isolated_l1_executor
 
 
 @pytest.mark.parametrize("model_path", ["llama", "qwen3", "qwen3_moe", "deepseek_v3", "deepseek_v32"], indirect=True)
@@ -46,11 +46,14 @@ def test_mainstream_models_hif8_kv_bf16_compute(model_path, compiled, decode):
         do_compile=compiled,
         decode=decode,
     )
-    runner = ModelRunner(user)
-    scales = [buffer for name, buffer in runner.model.named_buffers() if name.endswith("hif8_kv_scale")]
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user)
+        scales = [buffer for name, buffer in artifact.model.named_buffers() if name.endswith("hif8_kv_scale")]
+        events = artifact.runtime.event_list
+        result = artifact.metrics
+        user.quantize_attention_action = QuantizeAttentionAction.DISABLED
+        baseline = executor.run(user).metrics
     assert scales and all(scale.dtype == torch.float32 and scale.numel() == 1 for scale in scales)
-    events = []
-    result = runner.run_inference(runtime_observer=lambda runtime: events.extend(runtime.event_list))
     assert result.execution_time_s["analytic"] > 0
     assert math.isfinite(result.execution_time_s["analytic"])
     core = [e.op_invoke_info for e in events if "attention_hif8_kv" in str(e.op_invoke_info.func)]
@@ -62,8 +65,6 @@ def test_mainstream_models_hif8_kv_bf16_compute(model_path, compiled, decode):
         assert SimFormat.HIF8 not in props.compute_ops and torch.uint8 not in props.compute_ops
     assert any("hif8_kv_cache_write" in str(e.op_invoke_info.func) for e in events)
     assert not any("mlapo" in str(e.op_invoke_info.func) for e in events)
-    user.quantize_attention_action = QuantizeAttentionAction.DISABLED
-    baseline = ModelRunner(user).run_inference()
     assert result.model_weight_size_gb == pytest.approx(
         baseline.model_weight_size_gb + 4 * len(scales) / 1024**3, rel=1e-12, abs=1e-15
     )
@@ -93,8 +94,10 @@ def test_hif8_kv_combines_with_linear_quantization_and_dcp(model_path, linear, d
         quantize_linear_action=linear,
         quantize_attention_action=QuantizeAttentionAction.HIF8,
     )
-    events = []
-    result = ModelRunner(user).run_inference(runtime_observer=lambda runtime: events.extend(runtime.event_list))
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user)
+    events = artifact.runtime.event_list
+    result = artifact.metrics
     assert result.execution_time_s["analytic"] > 0
     assert any("attention_hif8_kv" in str(e.op_invoke_info.func) for e in events)
     for event in events:
@@ -132,11 +135,14 @@ def test_deepseek_v4_hif8_shared_kv(model_path, compiled, decode, query_len, con
         quantize_linear_action=linear,
         quantize_attention_action=QuantizeAttentionAction.HIF8,
     )
-    events = []
-    runner = ModelRunner(user)
-    scales = [x for name, x in runner.model.named_buffers() if name.endswith("hif8_kv_scale")]
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user)
+        scales = [x for name, x in artifact.model.named_buffers() if name.endswith("hif8_kv_scale")]
+        events = artifact.runtime.event_list
+        result = artifact.metrics
+        user.quantize_attention_action = QuantizeAttentionAction.DISABLED
+        baseline = executor.run(user).metrics
     assert len(scales) == 3
-    result = runner.run_inference(runtime_observer=lambda runtime: events.extend(runtime.event_list))
     assert math.isfinite(result.execution_time_s["analytic"]) and result.execution_time_s["analytic"] > 0
     ops = [event.op_invoke_info for event in events]
     attention = [info for info in ops if info.func == torch.ops.tensor_cast.sparse_attn_sharedkv.default]
@@ -158,8 +164,6 @@ def test_deepseek_v4_hif8_shared_kv(model_path, compiled, decode, query_len, con
     assert indexer and all(info.args[2].dtype == torch.bfloat16 for info in indexer)
     assert sum(info.func == torch.ops.tensor_cast.quantize_hif8.default for info in ops) == 3
     assert sum(info.func == torch.ops.tensor_cast.scatter_nd_update_mla.default for info in ops) >= 3
-    user.quantize_attention_action = QuantizeAttentionAction.DISABLED
-    baseline = ModelRunner(user).run_inference()
     assert result.indexer_cache_size_gb == baseline.indexer_cache_size_gb
     assert result.kv_cache_size_gb - result.indexer_cache_size_gb == pytest.approx(
         (baseline.kv_cache_size_gb - baseline.indexer_cache_size_gb) / 2
@@ -248,9 +252,10 @@ def test_mainstream_models_hif8(model_path, compiled, decode):
         do_compile=compiled,
         decode=decode,
     )
-    runner = ModelRunner(user)
-    events = []
-    result = runner.run_inference(runtime_observer=lambda runtime: events.extend(runtime.event_list))
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user)
+    events = artifact.runtime.event_list
+    result = artifact.metrics
     assert result.execution_time_s["analytic"] > 0
     assert math.isfinite(result.execution_time_s["analytic"])
     assert result.model_weight_size_gb > 0
@@ -270,7 +275,7 @@ def test_mainstream_models_hif8(model_path, compiled, decode):
         assert sum(info.func == torch.ops.tensor_cast.grouped_matmul_hif8.default for info in hif8) == 2
     if compiled and model_path.name == "deepseek_v4":
         assert sum(info.func == torch.ops.tensor_cast.grouped_matmul_hif8.default for info in hif8) == 4
-    for name, module in runner.model.named_modules():
+    for name, module in artifact.model.named_modules():
         if hasattr(module, "quant_config") and hasattr(module, "qweight"):
             assert module.qweight.dtype == torch.uint8
             assert "lm_head" not in name
@@ -291,8 +296,10 @@ def test_hif8_tp_ep_and_nonexpert_override(model_path):
         quantize_non_expert_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
         do_compile=True,
     )
-    events = []
-    result = ModelRunner(user).run_inference(runtime_observer=lambda runtime: events.extend(runtime.event_list))
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user)
+    events = artifact.runtime.event_list
+    result = artifact.metrics
     assert result.execution_time_s["analytic"] > 0
     targets = {str(e.op_invoke_info.func) for e in events}
     assert "tensor_cast.grouped_matmul_hif8.default" in targets
@@ -305,9 +312,10 @@ def test_weight_memory_saving_does_not_change_kv_or_model_dtype(model_path):
     results = []
     for action in (QuantizeLinearAction.DISABLED, QuantizeLinearAction.HIF8):
         user = UserInputConfig(model_id=str(model_path), num_queries=2, query_len=8, quantize_linear_action=action)
-        runner = ModelRunner(user)
-        assert runner.model.model_config.dtype == torch.bfloat16
-        results.append(runner.run_inference())
+        with isolated_l1_executor() as executor:
+            artifact = executor.run(user)
+        assert artifact.model.model_config.dtype == torch.bfloat16
+        results.append(artifact.metrics)
     assert results[1].model_weight_size_gb < results[0].model_weight_size_gb
     assert results[1].kv_cache_size_gb == results[0].kv_cache_size_gb
 

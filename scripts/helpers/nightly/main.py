@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 if TYPE_CHECKING:
     from pathlib import Path
 
-from scripts.helpers._config import Config
+from scripts.helpers._config import Config, ConfigError
 from scripts.helpers._paths import REPO_ROOT
 from scripts.helpers.common._logging import log_env_audit, setup_logger
 from scripts.helpers.common.coverage_config import cov_pytest_args
@@ -88,6 +88,8 @@ from scripts.helpers.nightly.report_models import (
     FeishuReportInput,
 )
 from scripts.helpers.nightly.coverage_split import build_coverage_breakdown
+from scripts.helpers.common.build_test_map import detect_redundant_cases
+from scripts.helpers.common.test_map_loader import load_test_map
 from tensor_cast.core.model_source_security import warn_remote_code_risk
 
 _PYTEST_MARKER_WAVE_A = WAVE_A_MARKER
@@ -103,6 +105,30 @@ _TIMEOUT_ENV: Final = "MSMODELING_NIGHTLY_TIMEOUT_SECONDS"
 _COVERAGE_MERGED_FILE: Final = ".coverage"
 _COVERAGE_NON_BENCHMARK_FILE: Final = ".coverage.non_benchmark"
 _COVERAGE_BENCHMARK_FILE: Final = ".coverage.benchmark"
+_REDUNDANCY_WARNING_LIMIT: Final[int] = 50
+
+
+def _test_redundancy_warnings(cfg: Config) -> tuple[str, ...]:
+    """Return non-blocking Jaccard/over-coverage advisories for Feishu."""
+    try:
+        mapping = load_test_map(cfg)
+    except ConfigError:
+        return ()
+    findings = detect_redundant_cases(mapping)
+    messages: list[str] = []
+    for finding in findings[:_REDUNDANCY_WARNING_LIMIT]:
+        if finding["type"] == "redundant_pair":
+            messages.append(
+                "Redundancy candidate "
+                f"Jaccard={finding['jaccard']}: {finding['test_a']} <> {finding['test_b']}"
+            )
+        else:
+            messages.append(
+                f"Over-covered symbol ({finding['test_count']} tests): {finding['symbol']}"
+            )
+    if len(findings) > _REDUNDANCY_WARNING_LIMIT:
+        messages.append(f"... and {len(findings) - _REDUNDANCY_WARNING_LIMIT} more redundancy candidates")
+    return tuple(messages)
 
 # Vendored remote configs whose live Hub counterpart we watch for drift.
 _DRIFT_FIXTURE_MAP: Final[dict[str, str]] = {
@@ -724,7 +750,7 @@ def _run_nightly_pipeline(
         logger.info("Skipping Hub drift check after nightly timeout/budget exhausted")
     else:
         logger.info("Drift check: vendored remote configs vs live Hub (non-blocking)")
-        drift_warnings = _run_config_drift_check()
+        drift_warnings = _run_config_drift_check() + _test_redundancy_warnings(cfg)
         if drift_warnings:
             logger.warning(
                 "Config drift / baseline warnings (non-blocking, %d):",

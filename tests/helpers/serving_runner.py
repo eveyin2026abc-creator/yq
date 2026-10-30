@@ -16,6 +16,9 @@
 
 """Construct serving_cast's ModelRunner.
 
+L1_EXECUTION_EXEMPT: serving_cast's runner is the subject under test and cannot
+be executed by tensor_cast's L1ScenarioExecutor.
+
 This is not ``tensor_cast.core.model_runner.ModelRunner`` and it does not go
 through ``L1ScenarioExecutor``. The constructor takes a serving parallel config,
 a device, and a data-parallel rank.

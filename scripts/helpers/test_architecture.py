@@ -27,6 +27,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
+from tests.helpers.layer_guard import find_l2_model_violations_in_file
+
 ASSERTION_GROUPS = {"numeric", "structural", "capability"}
 INVENTORY_FIELDS = ("node_id", "current_file", "current_layer", "target_layer", "target_file", "status")
 
@@ -272,7 +274,8 @@ def check_new_tests(args: argparse.Namespace) -> None:
         names = {_name(node) for node in ast.walk(tree) if isinstance(node, (ast.Name, ast.Attribute))}
         uses_model_execution = "ModelRunner" in names or "build_model" in names
         uses_executor = "L1ScenarioExecutor" in names or "l1_executor" in source
-        if uses_model_execution and not uses_executor and "tests/helpers/tests/" not in path.as_posix():
+        execution_exempt = "L1_EXECUTION_EXEMPT:" in source
+        if uses_model_execution and not uses_executor and not execution_exempt and "tests/helpers/tests/" not in path.as_posix():
             errors.append(f"{path}: L1 model execution must use L1ScenarioExecutor/l1_executor")
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
@@ -284,11 +287,26 @@ def check_new_tests(args: argparse.Namespace) -> None:
                     errors.append(f"{path}:{node.lineno}: cov_helper needs a COV_HELPER: product/path.py::symbol docstring")
                 if any(token in segment for token in ('patch("tensor_cast.', 'patch("cli.', 'patch("serving_cast.')):
                     errors.append(f"{path}:{node.lineno}: cov_helper must not mock the product object under test")
-        if uses_model_execution and registered and not any(f"L1_FAMILY: {family}" in source for family in registered):
+        if uses_model_execution and not execution_exempt and registered and not any(f"L1_FAMILY: {family}" in source for family in registered):
             errors.append(f"{path}: L1 test must declare a registered 'L1_FAMILY: <name>'")
     if errors:
         raise GateError("\n".join(errors))
     print(json.dumps({"checked_files": len(files)}))
+
+
+def check_l2_layers(args: argparse.Namespace) -> None:
+    """Reject real model construction from every L2 helper and module test."""
+    files = [Path("tests/helpers/l2_artifacts.py")]
+    files.extend(sorted(Path("tests/regression").glob("*/module/**/*.py")))
+    violations = [
+        violation
+        for path in files
+        if path.is_file()
+        for violation in find_l2_model_violations_in_file(path)
+    ]
+    if violations:
+        raise GateError("L2 model-construction violations:\n" + "\n".join(violations))
+    print(json.dumps({"checked_l2_files": len(files), "violations": 0}))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -321,6 +339,8 @@ def build_parser() -> argparse.ArgumentParser:
     new_tests.add_argument("--base", default="origin/master")
     new_tests.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))
     new_tests.set_defaults(func=check_new_tests)
+    layers = sub.add_parser("check-l2-layers")
+    layers.set_defaults(func=check_l2_layers)
     return parser
 
 

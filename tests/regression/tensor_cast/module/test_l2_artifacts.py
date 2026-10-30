@@ -49,7 +49,7 @@ def test_seven_kinds_are_the_l2_set():
 
 def test_builders_reject_a_model_identity():
     with pytest.raises(TypeError, match="model identity"):
-        quant_artifact(linear_action=QuantizeLinearAction.DISABLED, model_id="Qwen/Qwen3-32B")
+        quant_artifact(linear_action=QuantizeLinearAction.DISABLED, **{"model_id": "Qwen/Qwen3-32B"})
 
 
 def test_parallel_artifact_rejects_an_uneven_world():

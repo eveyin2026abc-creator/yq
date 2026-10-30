@@ -28,7 +28,7 @@ from tests.helpers.l1_case_matrix import (
     same_build,
 )
 
-_REPO = Path(__file__).resolve().parents[3]
+_REPO = Path(__file__).resolve().parents[4]
 
 
 def test_representatives_match_the_family_table():

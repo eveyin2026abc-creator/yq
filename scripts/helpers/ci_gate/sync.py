@@ -55,6 +55,7 @@ from scripts.helpers.common._logging import log_env_audit, setup_logger
 from scripts.helpers.common.build_test_map import (
     TestMap,
     collect_test_map,
+    detect_redundant_cases,
     normalize_test_node_id,
     prune_missing_source_keys,
     write_test_map,
@@ -70,6 +71,19 @@ from scripts.helpers.common.test_map_loader import load_test_map_with_commit
 _DEFAULT_SYNC_INTERVAL_SECONDS: Final = 60.0
 
 _shutdown_flag: list[bool] = [False]
+
+
+def log_redundancy_advisories(mapping: TestMap, logger: logging.Logger) -> None:
+    """Log Jaccard candidates after sync; advisory only, never blocks or deletes."""
+    findings = detect_redundant_cases(mapping)
+    if not findings:
+        logger.info("test_map redundancy advisory: no candidates")
+        return
+    logger.warning("test_map redundancy advisory: %d candidate(s); review before deleting tests", len(findings))
+    for finding in findings[:20]:
+        logger.warning("  - %s", finding)
+    if len(findings) > 20:
+        logger.warning("  ... and %d more", len(findings) - 20)
 
 
 def _parse_sync_interval() -> float:
@@ -260,6 +274,7 @@ def _full_rebuild_test_map(
         logger.error("test_map full rebuild aborted: pytest failed")
         return 1
     write_test_map(map_path, fresh_map, built_from_commit=target_head)
+    log_redundancy_advisories(fresh_map, logger)
     logger.info(
         "test_map full rebuild wrote %s at built_from_commit=%s",
         map_path,
@@ -325,6 +340,7 @@ def sync_test_map_once(
             fallback_reason = "a changed source has no watcher in the existing test_map"
         elif not touched.tests and not touched.sources:
             write_test_map(map_path, existing_map, built_from_commit=target_head)
+            log_redundancy_advisories(existing_map, logger)
             logger.info("No map-relevant paths changed; advanced built_from_commit without pytest")
             return 0
         else:
@@ -344,6 +360,7 @@ def sync_test_map_once(
 
     updated_map = apply_incremental_test_map_update(existing_map, fresh_map, touched_paths)
     write_test_map(map_path, updated_map, built_from_commit=target_head)
+    log_redundancy_advisories(updated_map, logger)
     logger.info("test_map sync wrote %s at built_from_commit=%s", map_path, target_head[:12])
     return 0
 

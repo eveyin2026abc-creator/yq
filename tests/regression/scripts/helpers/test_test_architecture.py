@@ -30,6 +30,7 @@ from scripts.helpers.test_architecture import (
     _name,
     build_parser,
     check_assertions,
+    check_l2_layers,
     check_new_tests,
     check_scenarios,
     check_watchers,
@@ -170,6 +171,23 @@ def test_check_new_tests_accepts_registered_executor_test(tmp_path: Path, monkey
     check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
 
 
+def test_check_new_tests_accepts_documented_non_tensor_cast_runner_exemption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_file = tmp_path / "tests/helpers/serving_runner.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        '"""L1_EXECUTION_EXEMPT: serving runner is the subject under test."""\n'
+        "def build():\n    return ModelRunner(config)\n",
+        encoding="utf-8",
+    )
+    registry = tmp_path / "families.json"
+    registry.write_text(json.dumps({"families": {"qwen": {}}}), encoding="utf-8")
+    monkeypatch.setattr("scripts.helpers.test_architecture._changed_test_files", lambda _base: [test_file])
+
+    check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
+
+
 def test_build_parser_exposes_all_architecture_commands() -> None:
     parser = build_parser()
     choices = next(action for action in parser._actions if action.dest == "command").choices
@@ -180,7 +198,23 @@ def test_build_parser_exposes_all_architecture_commands() -> None:
         "check-scenarios",
         "check-watchers",
         "check-new-tests",
+        "check-l2-layers",
     }
+
+
+def test_check_l2_layers_scans_helpers_and_module_tests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    helper = tmp_path / "tests/helpers/l2_artifacts.py"
+    module = tmp_path / "tests/regression/demo/module/test_demo.py"
+    helper.parent.mkdir(parents=True)
+    module.parent.mkdir(parents=True)
+    helper.write_text("def artifact(): return object()\n", encoding="utf-8")
+    module.write_text("def test_demo(): assert True\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    check_l2_layers(argparse.Namespace())
+
+    module.write_text("def test_demo(): return ModelRunner(config)\n", encoding="utf-8")
+    with pytest.raises(GateError, match="ModelRunner"):
+        check_l2_layers(argparse.Namespace())
 
 
 def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

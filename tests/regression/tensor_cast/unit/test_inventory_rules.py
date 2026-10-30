@@ -57,7 +57,7 @@ def test_rules_apply_in_order_and_do_not_label_the_rest_l2():
     assert both.evidence == "file text contains ModelRunner and build_model"
     assert both.schedule == "excluded-npu"
 
-    unknown = classify(NodeRecord("tests/regression/tensor_cast/test_layer_guard.py"))
+    unknown = classify(NodeRecord("tests/regression/tensor_cast/unit/test_layer_guard.py"))
     assert unknown.target_layer == "待人工确认"
     assert unknown.migration == "待人工确认"
     assert unknown.build_signature == ""

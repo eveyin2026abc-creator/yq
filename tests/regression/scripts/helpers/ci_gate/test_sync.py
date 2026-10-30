@@ -75,6 +75,26 @@ def test_can_incremental_sync_allows_up_to_date() -> None:
     assert sync.can_incremental_sync(Path("/tmp"), "samecommit000", "samecommit000") is True
 
 
+def test_log_redundancy_advisories_is_non_blocking(monkeypatch: MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    monkeypatch.setattr(
+        sync,
+        "detect_redundant_cases",
+        lambda _mapping: [
+            {
+                "type": "redundant_pair",
+                "test_a": "tests/a.py::test_a",
+                "test_b": "tests/b.py::test_b",
+                "jaccard": 1.0,
+                "shared_symbols": ["pkg/mod.py::target"],
+            }
+        ],
+    )
+
+    sync.log_redundancy_advisories({}, logging.getLogger("test-sync"))
+
+    assert "review before deleting tests" in caplog.text
+
+
 def test_ephemeral_target_checkout_creates_and_cleans_branch(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
