@@ -8,7 +8,7 @@ The current register was collected on the refactor branch with:
 python -m pytest tests -o addopts= --collect-only -q
 ```
 
-Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The 2026-10-29 refresh collected **10,279 node ids**. The same rows are in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx), one row per collected node id. Re-run the exporter whenever collection changes; a count mismatch means the workbook is stale. The historical 6,943/7,626/9,154 counts are not acceptance baselines.
+Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The 2026-10-30 post-dedup refresh collected **10,277 node ids**. The same rows are in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx), one row per collected node id. Re-run the exporter whenever collection changes; a count mismatch means the workbook is stale. The historical 6,943/7,626/9,154 counts are not acceptance baselines.
 
 ## Final implementation status
 

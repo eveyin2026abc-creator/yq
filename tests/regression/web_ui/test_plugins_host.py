@@ -93,18 +93,6 @@ def _ep(name, factory, *, raises=False):
 
 
 class TestAllowedPlugins:
-    def test_unset_env(self, monkeypatch):
-        monkeypatch.delenv("MSMODELING_PLUGINS", raising=False)
-        assert get_allowed_plugins() == set()
-
-    def test_empty_env(self, monkeypatch):
-        monkeypatch.setenv("MSMODELING_PLUGINS", "")
-        assert get_allowed_plugins() == set()
-
-    def test_comma_separated(self, monkeypatch):
-        monkeypatch.setenv("MSMODELING_PLUGINS", "a,b,c")
-        assert get_allowed_plugins() == {"a", "b", "c"}
-
     def test_whitespace_and_empties(self, monkeypatch):
         monkeypatch.setenv("MSMODELING_PLUGINS", " a , ,b ")
         assert get_allowed_plugins() == {"a", "b"}

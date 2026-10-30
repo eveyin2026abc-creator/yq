@@ -42,13 +42,6 @@ class TestNewId:
         assert len(result) == 32  # UUID4 hex length
         int(result, 16)  # Should not raise
 
-    def test_new_id_unique(self):
-        """Each call returns a unique ID."""
-        id1 = _new_id()
-        id2 = _new_id()
-        assert id1 != id2
-
-
 class TestCapabilityModule:
     """Tests for CapabilityModule dataclass."""
 

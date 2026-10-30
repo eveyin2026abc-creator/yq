@@ -174,13 +174,6 @@ class TestOptionSource:
         assert source.values == ()
         assert source.is_dynamic() is True
 
-    def test_option_source_immutable(self):
-        """OptionSource is frozen (immutable)."""
-        source = OptionSource(type="inline")
-        with pytest.raises(Exception):
-            source.type = "dynamic"
-
-
 class TestLocalizedText:
     """Tests for LocalizedText value object."""
 
