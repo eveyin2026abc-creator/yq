@@ -45,15 +45,15 @@
         }
       ],
       "commit": "14ab865d",
-      "ci_miss_reason": "这 3 个失败仍是 01898f5f 引入、issue 586 跟踪的 nightly 用例。PR UT 默认 addopts = -m 'not npu and not nightly and not network'，不跑带 nightly 标记的用例，所以 14ab865d 的 CI 也不会报。本次日志开跑提交是 14ab865d；北京时间 14:35 同一检出被切到 feature/nightly-board-static，该分支不含 14ab865d，后面的用例和覆盖率不是干净的 master 结果。",
+      "ci_miss_reason": "这 3 个失败仍是 01898f5f 引入、issue 586 跟踪的 nightly 用例。PR UT 默认 addopts = -m 'not npu and not nightly and not network'，不跑带 nightly 标记的用例，所以 14ab865d 的 CI 也不会报。本次日志开跑提交是 14ab865d；北京时间 14:35 同一检出被切到 feature/nightly-board-static，该分支不含 14ab865d，后面的用例和覆盖率不是干净的 master 结果。随后 3ebcc381（MR !1075，2026-10-31 15:20 +0800）已合入：固定长度路径默认每请求 1 张图，两条用例的 max-batched-tokens 改为 80 和 2048。本地在该提交上重跑这 3 个用例为 3 passed，issue 586 已关闭。",
       "issue_numbers": [
         586
       ],
       "issues": [
         {
           "number": 586,
-          "state": "open",
-          "closed": false,
+          "state": "closed",
+          "closed": true,
           "title": "Nightly: throughput_optimizer VL 聚合在 01898f5f 失败，max_batched_tokens 装不下图像 token 预算",
           "html_url": "https://gitcode.com/Ascend/msmodeling/issues/586",
           "assignees": [
@@ -62,7 +62,7 @@
           "error": ""
         }
       ],
-      "loop": "未闭环"
+      "loop": "已闭环"
     }
   ]
 }

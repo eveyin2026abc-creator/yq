@@ -45,15 +45,15 @@
         }
       ],
       "commit": "01898f5f",
-      "ci_miss_reason": "PR UT 使用 pyproject.toml 的默认过滤 addopts = -m 'not npu and not nightly and not network'。这 3 个失败用例都带 nightly 标记：后两个在 TestThroughputOptimizerNightly 类上，smoke 方法自己也标了 @pytest.mark.nightly。因此合入 MR !1027（01898f5f）时 CI 不会跑到它们。本地 nightly Wave A 的标记是 not npu and not benchmark and not network，不排除 nightly，所以当天流水第一次报出。",
+      "ci_miss_reason": "PR UT 使用 pyproject.toml 的默认过滤 addopts = -m 'not npu and not nightly and not network'。这 3 个失败用例都带 nightly 标记：后两个在 TestThroughputOptimizerNightly 类上，smoke 方法自己也标了 @pytest.mark.nightly。因此合入 MR !1027（01898f5f）时 CI 不会跑到它们。本地 nightly Wave A 的标记是 not npu and not benchmark and not network，不排除 nightly，所以当天流水第一次报出。随后 3ebcc381（MR !1075，2026-10-31 15:20 +0800）已合入并关闭 issue 586。本地在该提交上重跑这 3 个用例为 3 passed。",
       "issue_numbers": [
         586
       ],
       "issues": [
         {
           "number": 586,
-          "state": "open",
-          "closed": false,
+          "state": "closed",
+          "closed": true,
           "title": "Nightly: throughput_optimizer VL 聚合在 01898f5f 失败，max_batched_tokens 装不下图像 token 预算",
           "html_url": "https://gitcode.com/Ascend/msmodeling/issues/586",
           "assignees": [
@@ -62,7 +62,7 @@
           "error": ""
         }
       ],
-      "loop": "未闭环"
+      "loop": "已闭环"
     }
   ]
 }
