@@ -1,6 +1,10 @@
 @echo off
 setlocal
 set "PUBLIC_DIR=%~dp0public"
+set "BIND=%~1"
+set "PORT=%~2"
+if "%BIND%"=="" set "BIND=0.0.0.0"
+if "%PORT%"=="" set "PORT=8766"
 
 if not exist "%PUBLIC_DIR%\index.html" goto missing_public
 
@@ -17,15 +21,18 @@ echo Python 3 was not found. Install Python 3 and try again.
 exit /b 1
 
 :use_py
-py -3 -m http.server 8766 --bind 127.0.0.1 --directory "%PUBLIC_DIR%"
+echo Serving on %BIND%:%PORT%
+py -3 -m http.server %PORT% --bind "%BIND%" --directory "%PUBLIC_DIR%"
 exit /b %errorlevel%
 
 :use_python3
-python3 -m http.server 8766 --bind 127.0.0.1 --directory "%PUBLIC_DIR%"
+echo Serving on %BIND%:%PORT%
+python3 -m http.server %PORT% --bind "%BIND%" --directory "%PUBLIC_DIR%"
 exit /b %errorlevel%
 
 :use_python
-python -m http.server 8766 --bind 127.0.0.1 --directory "%PUBLIC_DIR%"
+echo Serving on %BIND%:%PORT%
+python -m http.server %PORT% --bind "%BIND%" --directory "%PUBLIC_DIR%"
 exit /b %errorlevel%
 
 :missing_public

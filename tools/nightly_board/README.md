@@ -8,7 +8,7 @@
 - `export_static.py`：生成 `public/` 静态快照。
 - `publish_snapshot.py`：生成快照，并可选择提交、推送到个人 fork 数据分支。
 - `tracking.json`：日志文件与 commit、issue、CI 漏检原因的人工映射。
-- `serve_windows.ps1`、`serve_linux.sh`：静态网站启动脚本。
+- `serve_windows.cmd`、`serve_windows.ps1`、`serve_linux.sh`：静态网站启动脚本。
 
 ## Nightly 机器生成快照
 
@@ -48,15 +48,15 @@ export NIGHTLY_BOARD_TRACKING=/path/to/tracking.json
 
 ```powershell
 git pull --ff-only
-powershell -ExecutionPolicy Bypass -File .\tools\nightly_board\serve_windows.ps1
+cmd.exe /c ".\tools\nightly_board\serve_windows.cmd 0.0.0.0 8766"
 ```
 
-浏览器打开 <http://127.0.0.1:8766/>。
+第一个参数是监听 IP，第二个参数是端口。默认为 `0.0.0.0 8766`。本机浏览器打开 <http://127.0.0.1:8766/>，同事通过 `http://<你的局域网IP>:8766/` 访问。
 
 如需供同一内网其他机器访问：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\nightly_board\serve_windows.ps1 -Bind 0.0.0.0
+cmd.exe /c ".\tools\nightly_board\serve_windows.cmd 192.168.1.20 9000"
 ```
 
 开放 Windows 防火墙端口前，应确认该网络可信。
