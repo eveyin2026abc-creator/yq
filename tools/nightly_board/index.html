@@ -72,6 +72,18 @@
     .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
     .run { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
     .run:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
+    .issue-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 22px;
+      align-items: center;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #faf8f4;
+    }
+    .issue-title { flex-basis: 100%; color: var(--muted); }
     .badge {
       display: inline-block;
       border-radius: 999px;
@@ -219,7 +231,12 @@
       const closed = issue.closed === true ? "已闭环" : issue.closed === false ? "未闭环" : "状态未知";
       const badge = issue.closed === true ? "closed" : issue.closed === false ? "open" : "unknown";
       const who = (issue.assignees || []).join(", ") || "未指定";
-      return `<li><span class="badge ${badge}">${closed}</span> <a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a> <strong>责任人：${escapeHtml(who)}</strong> · ${escapeHtml(issue.title)}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</li>`;
+      return `<div class="issue-row">
+        <span><strong>跟踪 Issue：</strong><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a></span>
+        <span><strong>Issue 情况：</strong><span class="badge ${badge}">${closed}</span></span>
+        <span><strong>责任人：</strong>${escapeHtml(who)}</span>
+        <div class="issue-title">${escapeHtml(issue.title)}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</div>
+      </div>`;
     }
 
     function runBlock(run) {
@@ -234,8 +251,8 @@
         ? `<p class="reason">${escapeHtml(run.ci_miss_reason)}</p>`
         : "<p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
       const issues = run.issues.length
-        ? `<div><strong>跟踪 Issue</strong><ul>${run.issues.map(issueItem).join("")}</ul></div>`
-        : `<p><strong>跟踪 Issue：</strong><span class="badge unknown">未建 Issue</span> <strong>责任人：未指定</strong></p>`;
+        ? run.issues.map(issueItem).join("")
+        : `<div class="issue-row"><span><strong>跟踪 Issue：</strong>未建</span><span><strong>Issue 情况：</strong><span class="badge unknown">未跟踪</span></span><span><strong>责任人：</strong>未指定</span></div>`;
       return `
         <article class="run">
           ${issues}
