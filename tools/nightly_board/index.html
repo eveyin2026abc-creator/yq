@@ -218,8 +218,8 @@
     function issueItem(issue) {
       const closed = issue.closed === true ? "已闭环" : issue.closed === false ? "未闭环" : "状态未知";
       const badge = issue.closed === true ? "closed" : issue.closed === false ? "open" : "unknown";
-      const who = (issue.assignees || []).join(", ");
-      return `<li><span class="badge ${badge}">${closed}</span> <a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a> ${escapeHtml(issue.title)} ${who ? `（${escapeHtml(who)}）` : ""}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</li>`;
+      const who = (issue.assignees || []).join(", ") || "未指定";
+      return `<li><span class="badge ${badge}">${closed}</span> <a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a> <strong>责任人：${escapeHtml(who)}</strong> · ${escapeHtml(issue.title)}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</li>`;
     }
 
     function runBlock(run) {
@@ -234,10 +234,11 @@
         ? `<p class="reason">${escapeHtml(run.ci_miss_reason)}</p>`
         : "<p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
       const issues = run.issues.length
-        ? `<p><span class="badge ${run.loop === "已闭环" ? "closed" : run.loop === "未闭环" ? "open" : "unknown"}">${run.loop}</span></p><ul>${run.issues.map(issueItem).join("")}</ul>`
-        : `<p><span class="badge unknown">未建 issue</span></p>`;
+        ? `<div><strong>跟踪 Issue</strong><ul>${run.issues.map(issueItem).join("")}</ul></div>`
+        : `<p><strong>跟踪 Issue：</strong><span class="badge unknown">未建 Issue</span> <strong>责任人：未指定</strong></p>`;
       return `
         <article class="run">
+          ${issues}
           <div><span class="badge ${badge}">${exitText(run)}</span> ${escapeHtml(run.branch)} ${run.label === run.branch ? "" : escapeHtml(run.label)}</div>
           <p class="meta">${escapeHtml(run.started)} ${run.commit ? `· ${escapeHtml(run.commit)}` : ""} · passed ${run.passed} / failed ${run.failed} / errors ${run.errors} · pytest ${run.duration_sec}s</p>
           <p class="meta">${coverage}</p>
@@ -246,8 +247,6 @@
           ${failures}
           <h3>CI 没报错的原因</h3>
           ${ci}
-          <h3>跟踪 issue</h3>
-          ${issues}
         </article>`;
     }
 
