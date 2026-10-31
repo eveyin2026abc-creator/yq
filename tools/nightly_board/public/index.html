@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>msmodeling 流水日历</title>
+  <style>
+    :root {
+      --ink: #1c1915;
+      --muted: #6b645b;
+      --line: #e4ddd2;
+      --paper: #f6f3ee;
+      --card: #fffdf9;
+      --pass: #1f7a4d;
+      --fail: #b42318;
+      --timeout: #9a6700;
+      --empty: #d9d3ca;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+    }
+    header, main { max-width: 1180px; margin: 0 auto; padding: 28px 24px; }
+    header { padding-bottom: 0; }
+    h1 { font-size: 28px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.02em; }
+    p.lead { margin: 0; color: var(--muted); }
+    main { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+    }
+    .cal-head, .detail-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: var(--ink);
+    }
+    button:hover { border-color: #c8bfb2; }
+    .week, .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .week { margin: 14px 0 8px; color: var(--muted); font-size: 12px; text-align: center; }
+    .day {
+      min-height: 64px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: #f3efe8;
+      padding: 8px;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .day.empty-cell { visibility: hidden; }
+    .day.pass { background: #e7f6ee; color: var(--pass); }
+    .day.fail { background: #fdecea; color: var(--fail); }
+    .day.timeout { background: #fff6e0; color: var(--timeout); }
+    .day.none { background: #f3efe8; color: #8a837a; }
+    .day.selected { outline: 2px solid var(--ink); }
+    .day.today { box-shadow: inset 0 0 0 1px var(--ink); }
+    .num { font-weight: 650; }
+    .mark { font-size: 11px; }
+    .legend { display: flex; gap: 12px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+    h2 { margin: 0; font-size: 22px; }
+    .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .run { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+    .run:first-of-type { border-top: 0; margin-top: 8px; padding-top: 0; }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin-right: 6px;
+    }
+    .badge.pass { background: #e7f6ee; color: var(--pass); }
+    .badge.fail, .badge.open { background: #fdecea; color: var(--fail); }
+    .badge.timeout { background: #fff6e0; color: var(--timeout); }
+    .badge.closed { background: #e7f6ee; color: var(--pass); }
+    .badge.unknown { background: #f3efe8; color: var(--muted); }
+    h3 { margin: 14px 0 6px; font-size: 14px; }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 8px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .reason { white-space: pre-wrap; line-height: 1.55; }
+    a { color: #1d4e89; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>msmodeling 流水日历</h1>
+    <p class="lead">点一天查看当天本地 nightly：是否报错、报错原因、CI 没拦住的原因，以及跟踪 issue 是否闭环。时间按北京时间日志文件名。</p>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="cal-head">
+        <button id="prev" type="button">上个月</button>
+        <strong id="month-label"></strong>
+        <button id="next" type="button">下个月</button>
+      </div>
+      <div class="week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+      <div id="grid" class="grid"></div>
+      <div class="legend">
+        <span><i class="swatch" style="background:#1f7a4d"></i>通过</span>
+        <span><i class="swatch" style="background:#b42318"></i>有失败</span>
+        <span><i class="swatch" style="background:#9a6700"></i>超时</span>
+        <span><i class="swatch" style="background:#d9d3ca"></i>无记录</span>
+      </div>
+    </section>
+    <section class="panel" id="detail">
+      <p class="meta">选择一天</p>
+    </section>
+  </main>
+  <script src="config.js"></script>
+  <script>
+    const staticMode = window.NIGHTLY_BOARD_STATIC === true;
+    const monthLabel = document.getElementById("month-label");
+    const grid = document.getElementById("grid");
+    const detail = document.getElementById("detail");
+    let cursor = new Date();
+    let selected = null;
+    let today = "";
+
+    function ymd(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function statusText(status) {
+      if (status === "pass") return "通过";
+      if (status === "fail") return "有失败";
+      if (status === "timeout") return "超时";
+      return "无记录";
+    }
+
+    function exitText(run) {
+      if (run.exit_code === 0) return "通过";
+      if (run.exit_code === 1) return "pytest 失败";
+      if (run.exit_code === 3) return "归因需要跟进";
+      if (run.exit_code === 124) return "超时";
+      return `退出码 ${run.exit_code}`;
+    }
+
+    async function fetchMonth(year, month) {
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+      const url = staticMode ? `data/month/${key}.json` : `/api/month?year=${year}&month=${month}`;
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok && staticMode) {
+        return { today: window.NIGHTLY_BOARD_TODAY || ymd(new Date()), days: {} };
+      }
+      if (!response.ok) throw new Error(`读取月份失败：HTTP ${response.status}`);
+      return response.json();
+    }
+
+    async function fetchDay(date) {
+      const url = staticMode ? `data/day/${date}.json` : `/api/day?date=${date}`;
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok && staticMode) {
+        return { date, today: window.NIGHTLY_BOARD_TODAY || ymd(new Date()), runs: [] };
+      }
+      if (!response.ok) throw new Error(`读取日期失败：HTTP ${response.status}`);
+      return response.json();
+    }
+
+    async function loadMonth() {
+      const year = cursor.getFullYear();
+      const month = cursor.getMonth() + 1;
+      monthLabel.textContent = `${year} 年 ${month} 月`;
+      const payload = await fetchMonth(year, month);
+      today = payload.today;
+      const first = new Date(year, month - 1, 1);
+      const startOffset = (first.getDay() + 6) % 7;
+      const daysInMonth = new Date(year, month, 0).getDate();
+      grid.innerHTML = "";
+      for (let i = 0; i < startOffset; i += 1) {
+        const blank = document.createElement("div");
+        blank.className = "day empty-cell";
+        grid.appendChild(blank);
+      }
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const info = payload.days[date];
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `day ${info ? info.status : "none"}${date === selected ? " selected" : ""}${date === today ? " today" : ""}`;
+        button.innerHTML = `<span class="num">${day}</span><span class="mark">${info ? statusText(info.status) : ""}</span>`;
+        button.addEventListener("click", () => openDay(date));
+        grid.appendChild(button);
+      }
+      if (!selected) openDay(today);
+    }
+
+    function failureItem(item) {
+      const bits = [item.status, item.author, item.commit, item.subject].filter(Boolean).join(" · ");
+      return `<li><code>${escapeHtml(item.node_id)}</code><div>${escapeHtml(bits)}</div><div class="reason">${escapeHtml(item.error)}</div></li>`;
+    }
+
+    function issueItem(issue) {
+      const closed = issue.closed === true ? "已闭环" : issue.closed === false ? "未闭环" : "状态未知";
+      const badge = issue.closed === true ? "closed" : issue.closed === false ? "open" : "unknown";
+      const who = (issue.assignees || []).join(", ");
+      return `<li><span class="badge ${badge}">${closed}</span> <a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a> ${escapeHtml(issue.title)} ${who ? `（${escapeHtml(who)}）` : ""}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</li>`;
+    }
+
+    function runBlock(run) {
+      const badge = run.exit_code === 0 ? "pass" : run.exit_code === 124 ? "timeout" : "fail";
+      const coverage = run.coverage
+        ? `覆盖率 line ${run.coverage.line}% / branch ${run.coverage.branch}%（${run.coverage.gate === "passed" ? "门禁通过" : "门禁未过"}）`
+        : "日志里没有覆盖率门禁行";
+      const failures = run.failures.length
+        ? `<ul>${run.failures.map(failureItem).join("")}</ul>`
+        : "<p>没有 Failed 归因行。</p>";
+      const ci = run.ci_miss_reason
+        ? `<p class="reason">${escapeHtml(run.ci_miss_reason)}</p>`
+        : "<p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
+      const issues = run.issues.length
+        ? `<p><span class="badge ${run.loop === "已闭环" ? "closed" : run.loop === "未闭环" ? "open" : "unknown"}">${run.loop}</span></p><ul>${run.issues.map(issueItem).join("")}</ul>`
+        : `<p><span class="badge unknown">未建 issue</span></p>`;
+      return `
+        <article class="run">
+          <div><span class="badge ${badge}">${exitText(run)}</span> ${escapeHtml(run.branch)} ${run.label === run.branch ? "" : escapeHtml(run.label)}</div>
+          <p class="meta">${escapeHtml(run.started)} ${run.commit ? `· ${escapeHtml(run.commit)}` : ""} · passed ${run.passed} / failed ${run.failed} / errors ${run.errors} · pytest ${run.duration_sec}s</p>
+          <p class="meta">${coverage}</p>
+          <p class="meta"><code>${escapeHtml(run.log)}</code></p>
+          <h3>报错原因</h3>
+          ${failures}
+          <h3>CI 没报错的原因</h3>
+          ${ci}
+          <h3>跟踪 issue</h3>
+          ${issues}
+        </article>`;
+    }
+
+    async function openDay(date) {
+      selected = date;
+      await loadMonth();
+      detail.innerHTML = "<p class='meta'>正在读取日志和 issue 状态…</p>";
+      const payload = await fetchDay(date);
+      const title = date === payload.today ? `${date} · 今天` : date;
+      if (!payload.runs.length) {
+        detail.innerHTML = `<div class="detail-head"><h2>${title}</h2></div><p>这一天没有带 Nightly exit 的本地流水日志。</p>`;
+        return;
+      }
+      const action = staticMode ? `<span class="meta">静态快照：${window.NIGHTLY_BOARD_EXPORTED_AT || ""}</span>` : `<button id="reload" type="button">刷新 issue</button>`;
+      detail.innerHTML = `<div class="detail-head"><h2>${title}</h2>${action}</div>${payload.runs.map(runBlock).join("")}`;
+      if (!staticMode) document.getElementById("reload").addEventListener("click", () => openDay(date));
+    }
+
+    document.getElementById("prev").addEventListener("click", () => {
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+      selected = null;
+      loadMonth();
+    });
+    document.getElementById("next").addEventListener("click", () => {
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      selected = null;
+      loadMonth();
+    });
+    cursor = new Date();
+    loadMonth();
+  </script>
+</body>
+</html>

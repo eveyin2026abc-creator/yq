@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-21",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261021-0240.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-21",
+      "started": "2026-10-21 02:40",
+      "exit_code": 3,
+      "passed": 9563,
+      "failed": 9,
+      "errors": 0,
+      "duration_sec": 2948,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 75.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_empirical_metrics.py::TestModelRunnerProfilingMetrics::test_consecutive_non_pipeline_runs_isolate_empirical_records",
+          "status": "Root cause found",
+          "commit": "2509db59",
+          "author": "lutean",
+          "subject": "feat(tensor-cast): adapt DeepSeek V4.1 Flash",
+          "error": "AttributeError: 'ModelRunner' object has no attribute 'engram_host_resident_size_gb'"
+        },
+        {
+          "node_id": "tests/smoke/test_vllm_pd_smoke.py::TestPdGenDirSeparation::test_upload_all_scripts_always_uploads",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: [] is not true : must always upload scripts"
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_deepseek_v4_e2e.py::test_deepseek_v4_compressed_attention_paths_capture_and_compare",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: model diagnostics fail for tests/assets/model_config/deepseek_v4_flash (decode): 8 non-pass finding(s)"
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_text_capture_organize_and_compare[prefill-kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_text_capture_organize_and_compare[decode-kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_text_capture_organize_and_compare[w8a8-kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_text_mtp_capture_organize_and_compare[kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_parallel_shapes_compare[tp2_ep2-kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/e2e/test_kimi_k2_e2e.py::test_kimi_k25_compatible_parallel_shapes_compare[dp2_mdp2-kimi-k2.6]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-13",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261013-0139.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-13",
+      "started": "2026-10-13 01:39",
+      "exit_code": 124,
+      "passed": 9016,
+      "failed": 1,
+      "errors": 0,
+      "duration_sec": 2787,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 74.9
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_group_precision_judgment_0_glm5_2_group_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261013-0236.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-13",
+      "started": "2026-10-13 02:36",
+      "exit_code": 0,
+      "passed": 8670,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 2427,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

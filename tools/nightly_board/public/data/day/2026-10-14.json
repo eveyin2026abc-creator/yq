@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-14",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261014-0145.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-14",
+      "started": "2026-10-14 01:45",
+      "exit_code": 0,
+      "passed": 9081,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3490,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 74.9
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261014-0351.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-14",
+      "started": "2026-10-14 03:51",
+      "exit_code": 1,
+      "passed": 8672,
+      "failed": 1,
+      "errors": 0,
+      "duration_sec": 2410,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/smoke/test_vllm_pd_smoke.py::TestPdStopDeletesTmpDir::test_stop_removes_tmp_dir",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : stop must keep tmp dir when bak_path empty"
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

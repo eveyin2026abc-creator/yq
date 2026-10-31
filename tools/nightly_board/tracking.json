@@ -1,0 +1,29 @@
+{
+  "runs": {
+    "nightly-master-20261030-1520.log": {
+      "commit": "01898f5f",
+      "issues": [586],
+      "ci_miss_reason": "PR UT 使用 pyproject.toml 的默认过滤 addopts = -m 'not npu and not nightly and not network'。这 3 个失败用例都带 nightly 标记：后两个在 TestThroughputOptimizerNightly 类上，smoke 方法自己也标了 @pytest.mark.nightly。因此合入 MR !1027（01898f5f）时 CI 不会跑到它们。本地 nightly Wave A 的标记是 not npu and not benchmark and not network，不排除 nightly，所以当天流水第一次报出。"
+    },
+    "nightly-master-20261029-1025.log": {
+      "commit": "c79dfe57",
+      "issues": [],
+      "ci_miss_reason": ""
+    },
+    "nightly-master-20261028-0932.log": {
+      "commit": "dd4cc9ea",
+      "issues": [],
+      "ci_miss_reason": ""
+    },
+    "nightly-master-20261027-0932.log": {
+      "commit": "e8cb3362",
+      "issues": [],
+      "ci_miss_reason": ""
+    },
+    "nightly-master-20261026-0156.log": {
+      "commit": "1a479db5",
+      "issues": [],
+      "ci_miss_reason": ""
+    }
+  }
+}

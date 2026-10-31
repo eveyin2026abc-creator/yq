@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-12",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261012-0328.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-12",
+      "started": "2026-10-12 03:28",
+      "exit_code": 124,
+      "passed": 8938,
+      "failed": 2,
+      "errors": 0,
+      "duration_sec": 2822,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.8
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_04_kimi_k2_5_16k_decode",
+          "status": "Root cause found",
+          "commit": "b4fe8c10",
+          "author": "ChenHuiwen",
+          "subject": "feat(tensor-cast): MLAPO 默认关闭开关与 DSA indexer 拆分",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_group_precision_judgment_0_glm5_2_group_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261012-0213.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-12",
+      "started": "2026-10-12 02:13",
+      "exit_code": 1,
+      "passed": 8666,
+      "failed": 4,
+      "errors": 0,
+      "duration_sec": 2416,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_08_minimax_m2_7_decode",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_gate_returns_precomputed_topk_2_MiniMaxAI_MiniMax_M2",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_09_minimax_m2_7_prefill",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_ling_basic_1_inclusionAI_Ling_flash_2_0",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261012-0258.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-12",
+      "started": "2026-10-12 02:58",
+      "exit_code": 0,
+      "passed": 8670,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 2386,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

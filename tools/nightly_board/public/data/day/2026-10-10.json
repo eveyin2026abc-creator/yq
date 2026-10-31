@@ -1,0 +1,614 @@
+{
+  "date": "2026-10-10",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261010-0914.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-10",
+      "started": "2026-10-10 09:14",
+      "exit_code": 3,
+      "passed": 8883,
+      "failed": 22,
+      "errors": 2,
+      "duration_sec": 1335,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[844]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[1094]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_moe_fused_real_csv_keeps_full_weight_shapes_in_candidate_regime",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_scatter_base_miss_recovers_pool_agnostic_interpolation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_interpolates_per_token_m",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_interpolates_m_bracket",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dsa_chunked_prefill_interpolation_uses_specialized_scatter_lookup",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dfc_service_row_does_not_double_count_auxiliary_hcom",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_ep16_t20000_dfc_uses_measured_same_regime_row",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/smoke/test_vllm_pd_smoke.py::TestPdStopCleansOnExceptionPath::test_stop_del_log_false_still_cleans",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/vllm_pd_0_gen/run.sh'"
+        },
+        {
+          "node_id": "tests/smoke/test_vllm_pd_smoke.py::TestPdStopCleansAfterBackupSkipped::test_stop_cleans_when_backup_skipped",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_runtime_workload_in_2d",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/scripts/helpers/common/test_build_test_map.py::test_collect_allowed_node_ids_includes_build_helper_regression_tests",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "SystemExit: 2"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_12_qwen3_32b_4k_1_5k_decode_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_04_kimi_k2_5_16k_decode",
+          "status": "Root cause found",
+          "commit": "b4fe8c10",
+          "author": "ChenHuiwen",
+          "subject": "feat(tensor-cast): MLAPO 默认关闭开关与 DSA indexer 拆分",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_group_precision_judgment_0_glm5_2_group_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "_",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "Still failing after 7-day lookback; needs human follow-up"
+        },
+        {
+          "node_id": "2026-10-10 09:17:05,303 - scripts.helpers.common.build_test_map -",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "Still failing after 7-day lookback; needs human follow-up"
+        },
+        {
+          "node_id": "tests/regression/model_diagnostics/integration/test_packaging_boundary.py",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "ImportError while importing test module '/home/yinqian/msmodeling-nightly/tests/regression/model_diagnostics/integration/test_packaging_boundary.py'."
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-master-20261010-1004.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-10",
+      "started": "2026-10-10 10:04",
+      "exit_code": 124,
+      "passed": 8918,
+      "failed": 19,
+      "errors": 0,
+      "duration_sec": 2734,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dsa_chunked_prefill_interpolation_uses_specialized_scatter_lookup",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dfc_service_row_does_not_double_count_auxiliary_hcom",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_ep16_t20000_dfc_uses_measured_same_regime_row",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[844]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[1094]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_moe_fused_real_csv_keeps_full_weight_shapes_in_candidate_regime",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_scatter_base_miss_recovers_pool_agnostic_interpolation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_interpolates_per_token_m",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_interpolates_m_bracket",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_runtime_workload_in_2d",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_12_qwen3_32b_4k_1_5k_decode_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_04_kimi_k2_5_16k_decode",
+          "status": "Root cause found",
+          "commit": "b4fe8c10",
+          "author": "ChenHuiwen",
+          "subject": "feat(tensor-cast): MLAPO 默认关闭开关与 DSA indexer 拆分",
+          "error": "AssertionError:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_group_precision_judgment_0_glm5_2_group_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError:"
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261010-1055.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-10",
+      "started": "2026-10-10 10:55",
+      "exit_code": 3,
+      "passed": 8645,
+      "failed": 23,
+      "errors": 0,
+      "duration_sec": 2440,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.5
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dfc_service_row_does_not_double_count_auxiliary_hcom",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_ep16_t20000_dfc_uses_measured_same_regime_row",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_profiling_data_source.py::test_glm5_dsa_chunked_prefill_interpolation_uses_specialized_scatter_lookup",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_candidate_uses_runtime_workload",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'Runtime case_id'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_lightning_indexer_interpolates_runtime_workload_in_2d",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_effective_kv_length",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[844]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_sparse_attention_interpolates_arbitrary_single_request_prefill_length[1094]",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_moe_fused_real_csv_keeps_full_weight_shapes_in_candidate_regime",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/smoke/test_vllm_pd_smoke.py::TestPdStopCleansOnExceptionPath::test_stop_del_log_false_still_cleans",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_scatter_base_miss_recovers_pool_agnostic_interpolation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_preserves_base_exact_result",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_dynamic_quant_interpolates_per_token_m",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_specialized_operator_interpolation.py::test_real_v018_quantized_matmul_interpolates_m_bracket",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert None is not None"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_08_minimax_m2_7_decode",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/cli/test_throughput_optimizer.py::TestThroughputOptimizerNightly::test_VL_MOE_model_aggregation_with_output_validation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: unexpectedly None : Required section 'Input Configuration:' not found in output"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_gate_returns_precomputed_topk_2_MiniMaxAI_MiniMax_M2",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerateNightly::test_vl_moe_tp_ep_different_parallel",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: There was a specific connection error when trying to load Qwen/Qwen3-VL-235B-A22B-Instruct:"
+        },
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_09_minimax_m2_7_prefill",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_ling_basic_1_inclusionAI_Ling_flash_2_0",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-30",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261030-1520.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-30",
+      "started": "2026-10-30 15:20",
+      "exit_code": 3,
+      "passed": 10178,
+      "failed": 3,
+      "errors": 0,
+      "duration_sec": 3553,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.0
+      },
+      "failures": [
+        {
+          "node_id": "tests/regression/cli/test_throughput_optimizer.py::TestThroughputOptimizerNightly::test_VL_MOE_model_aggregation_with_output_validation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "ValueError: max_batched_tokens (100) cannot hold the per-request image token budget (2042); raise instead of straddling the image placeholders across chunks"
+        },
+        {
+          "node_id": "tests/smoke/test_throughput_optimizer_smoke.py::TestThroughputOptimizerSmoke::test_vl_moe_aggregation_compile_smoke",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "ValueError: max_batched_tokens (16) cannot hold the per-request image token budget (66); raise instead of straddling the image placeholders across chunks"
+        },
+        {
+          "node_id": "tests/regression/cli/test_throughput_optimizer.py::TestThroughputOptimizerNightly::test_vl_model_aggregation_with_output_validation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "ValueError: max_batched_tokens (4096) cannot hold the per-request image token budget (132096); raise instead of straddling the image placeholders across chunks"
+        }
+      ],
+      "commit": "01898f5f",
+      "ci_miss_reason": "PR UT 使用 pyproject.toml 的默认过滤 addopts = -m 'not npu and not nightly and not network'。这 3 个失败用例都带 nightly 标记：后两个在 TestThroughputOptimizerNightly 类上，smoke 方法自己也标了 @pytest.mark.nightly。因此合入 MR !1027（01898f5f）时 CI 不会跑到它们。本地 nightly Wave A 的标记是 not npu and not benchmark and not network，不排除 nightly，所以当天流水第一次报出。",
+      "issue_numbers": [
+        586
+      ],
+      "issues": [
+        {
+          "number": 586,
+          "state": "open",
+          "closed": false,
+          "title": "Nightly: throughput_optimizer VL 聚合在 01898f5f 失败，max_batched_tokens 装不下图像 token 预算",
+          "html_url": "https://gitcode.com/Ascend/msmodeling/issues/586",
+          "assignees": [
+            "hanxinlong1999"
+          ],
+          "error": ""
+        }
+      ],
+      "loop": "未闭环"
+    }
+  ]
+}

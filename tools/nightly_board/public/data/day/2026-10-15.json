@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-15",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261015-0153.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-15",
+      "started": "2026-10-15 01:53",
+      "exit_code": 0,
+      "passed": 9086,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3096,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 74.9
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-master-mr991-20261015-0808.log",
+      "label": "master-mr991",
+      "branch": "master",
+      "date": "2026-10-15",
+      "started": "2026-10-15 08:08",
+      "exit_code": 0,
+      "passed": 9162,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3117,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 75.6
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261015-0234.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-15",
+      "started": "2026-10-15 02:34",
+      "exit_code": 0,
+      "passed": 8673,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 2538,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}

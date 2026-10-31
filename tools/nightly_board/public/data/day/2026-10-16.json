@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-16",
+  "today": "2026-10-31",
+  "runs": [
+    {
+      "log": "nightly-master-20261016-0257.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-10-16",
+      "started": "2026-10-16 02:57",
+      "exit_code": 0,
+      "passed": 9226,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3394,
+      "coverage": {
+        "gate": "passed",
+        "line": 84.0,
+        "branch": 75.7
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.2.0-20261016-0355.log",
+      "label": "26.2.0",
+      "branch": "26.2.0",
+      "date": "2026-10-16",
+      "started": "2026-10-16 03:55",
+      "exit_code": 1,
+      "passed": 8671,
+      "failed": 2,
+      "errors": 0,
+      "duration_sec": 2357,
+      "coverage": {
+        "gate": "passed",
+        "line": 83.0,
+        "branch": 74.6
+      },
+      "failures": [
+        {
+          "node_id": "tests/regression/scripts/test_ai_native_validators.py::test_all_skills_have_required_frontmatter",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: [Finding(path='.agents/skills/msmodeling-request-pipeline/SKILL.md', message='missing SKILL.md', severity='error')]"
+        },
+        {
+          "node_id": "tests/regression/scripts/test_ai_native_validators.py::test_validate_skills_main_json",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "assert 1 == 0"
+        }
+      ],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
