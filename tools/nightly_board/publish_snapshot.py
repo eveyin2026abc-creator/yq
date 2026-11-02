@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +33,10 @@ def main() -> None:
     parser.add_argument("--branch", default="feature/nightly-board-static")
     args = parser.parse_args()
 
+    if args.publish:
+        git("fetch", args.remote, args.branch)
+        git("rebase", "FETCH_HEAD")
+
     output = ROOT / "public"
     count = export_static.export(output)
     print(f"exported {count} run(s) to {output}")
@@ -47,7 +52,18 @@ def main() -> None:
 
     date = datetime.now(server.BEIJING).date().isoformat()
     git("commit", "-m", f"data: update nightly board snapshot {date}")
-    git("push", args.remote, f"HEAD:refs/heads/{args.branch}")
+    pushed = False
+    for attempt in range(2):
+        result = git("push", args.remote, f"HEAD:refs/heads/{args.branch}", check=False)
+        if result.returncode == 0:
+            pushed = True
+            break
+        if attempt == 0:
+            git("fetch", args.remote, args.branch)
+            git("rebase", "FETCH_HEAD")
+            time.sleep(1)
+    if not pushed:
+        raise SystemExit("snapshot push failed after one safe rebase retry")
     print(f"published snapshot to {args.remote}/{args.branch}")
 
 

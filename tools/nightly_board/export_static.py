@@ -30,12 +30,12 @@ def export(output: Path) -> int:
 
     for month in months:
         year, month_number = (int(item) for item in month.split("-"))
-        write_json(output / "data" / "month" / f"{month}.json", server.month_payload(year, month_number))
+        write_json(output / "data" / "month" / f"{month}.json", server.month_payload(year, month_number, runs))
 
     for date in dates:
-        write_json(output / "data" / "day" / f"{date}.json", server.day_payload(date))
+        write_json(output / "data" / "day" / f"{date}.json", server.day_payload(date, runs))
 
-    write_json(output / "data" / "open_issues.json", server.open_issues_payload())
+    write_json(output / "data" / "open_issues.json", server.open_issues_payload(runs))
 
     exported_at = datetime.now(server.BEIJING).isoformat(timespec="seconds")
     config = (
@@ -46,7 +46,13 @@ def export(output: Path) -> int:
     (output / "config.js").write_text(config, encoding="utf-8")
     write_json(
         output / "data" / "manifest.json",
-        {"exported_at": exported_at, "dates": dates, "months": months, "run_count": len(runs)},
+        {
+            "schema_version": 2,
+            "exported_at": exported_at,
+            "dates": dates,
+            "months": months,
+            "run_count": len(runs),
+        },
     )
     return len(runs)
 

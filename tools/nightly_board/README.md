@@ -9,6 +9,7 @@
 - `publish_snapshot.py`：生成快照，并可选择提交、推送到个人 fork 数据分支。
 - `tracking.json`：日志文件与 commit、issue、CI 漏检原因的人工映射。
 - `serve_windows.cmd`、`serve_windows.ps1`、`serve_linux.sh`：静态网站启动脚本。
+- `install_windows_task.ps1`：将 Windows 站点注册为登录后自动启动的计划任务，并在异常后自动重试。
 
 ## Nightly 机器生成快照
 
@@ -60,6 +61,24 @@ cmd.exe /c ".\tools\nightly_board\serve_windows.cmd 192.168.1.20 9000"
 ```
 
 开放 Windows 防火墙端口前，应确认该网络可信。
+
+如需开机登录后自动启动，在 PowerShell 执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\nightly_board\install_windows_task.ps1 -Bind 0.0.0.0 -Port 8767
+```
+
+卸载计划任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\nightly_board\install_windows_task.ps1 -Uninstall
+```
+
+## 自检
+
+```bash
+python3 -m unittest tools/nightly_board/test_nightly_board.py
+```
 
 ## Linux 部署
 

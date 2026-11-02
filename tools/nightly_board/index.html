@@ -27,6 +27,9 @@
     header { padding-bottom: 0; }
     h1 { font-size: 28px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.02em; }
     p.lead { margin: 0; color: var(--muted); }
+    .freshness { margin-top: 10px; padding: 9px 12px; border-radius: 9px; font-size: 13px; }
+    .freshness.fresh { background: #e7f6ee; color: #145c38; }
+    .freshness.stale { background: #fff3cd; color: #713f12; border-left: 5px solid #d97706; }
     main { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
     .panel {
       background: var(--card);
@@ -67,6 +70,10 @@
     .num { font-weight: 650; }
     .mark { font-size: 11px; }
     .legend { display: flex; gap: 12px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
+    .summary span { padding: 8px; border-radius: 8px; background: #f3efe8; text-align: center; font-size: 12px; }
+    .summary strong { display: block; font-size: 17px; color: var(--ink); }
+    .sync-warning { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: #fff3cd; color: #713f12; font-size: 12px; }
     .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
     h2 { margin: 0; font-size: 22px; }
     .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
@@ -181,6 +188,7 @@
   <header>
     <h1>msmodeling 流水日历</h1>
     <p class="lead">点一天查看当天本地 nightly：是否报错、报错原因、CI 没拦住的原因，以及跟踪 issue 是否闭环。时间按北京时间日志文件名。</p>
+    <div id="freshness" class="freshness">正在检查数据新鲜度…</div>
   </header>
   <main>
     <section class="panel">
@@ -189,6 +197,7 @@
         <strong id="month-label"></strong>
         <button id="next" type="button">下个月</button>
       </div>
+      <div id="summary" class="summary"></div>
       <div class="week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
       <div id="grid" class="grid"></div>
       <div class="legend">
@@ -199,6 +208,7 @@
       </div>
       <div class="open-issues" id="open-issues">
         <h2>未闭环 Issue</h2>
+        <div id="issue-sync-warning"></div>
         <div id="open-issue-table"><p class="meta">正在读取未闭环 issue…</p></div>
       </div>
     </section>
@@ -212,6 +222,7 @@
     const monthLabel = document.getElementById("month-label");
     const grid = document.getElementById("grid");
     const detail = document.getElementById("detail");
+    const summary = document.getElementById("summary");
     let cursor = new Date();
     let selected = null;
     let today = "";
@@ -237,6 +248,22 @@
       if (status === "fail") return "有失败";
       if (status === "timeout") return "超时";
       return "无记录";
+    }
+
+    function renderFreshness() {
+      const host = document.getElementById("freshness");
+      if (!staticMode) {
+        host.className = "freshness fresh";
+        host.textContent = "● 实时模式：数据来自当前 Nightly 机器";
+        return;
+      }
+      const exported = new Date(window.NIGHTLY_BOARD_EXPORTED_AT || "");
+      const ageHours = (Date.now() - exported.getTime()) / 3600000;
+      const stale = !Number.isFinite(ageHours) || ageHours > 24;
+      host.className = `freshness ${stale ? "stale" : "fresh"}`;
+      host.textContent = stale
+        ? `⚠ 数据已超过 24 小时未更新（最后快照：${window.NIGHTLY_BOARD_EXPORTED_AT || "未知"}）`
+        : `● 数据已更新：${window.NIGHTLY_BOARD_EXPORTED_AT}`;
     }
 
     function exitText(run) {
@@ -274,6 +301,12 @@
       monthLabel.textContent = `${year} 年 ${month} 月`;
       const payload = await fetchMonth(year, month);
       today = payload.today;
+      const infos = Object.values(payload.days || {});
+      summary.innerHTML = `
+        <span><strong>${infos.reduce((sum, item) => sum + item.runs, 0)}</strong>本月运行</span>
+        <span><strong>${infos.filter((item) => item.status === "fail").length}</strong>失败日</span>
+        <span><strong>${infos.filter((item) => item.status === "timeout").length}</strong>超时日</span>
+        <span><strong>${infos.length}</strong>有记录日</span>`;
       const first = new Date(year, month - 1, 1);
       const startOffset = (first.getDay() + 6) % 7;
       const daysInMonth = new Date(year, month, 0).getDate();
@@ -288,6 +321,7 @@
         const info = payload.days[date];
         const button = document.createElement("button");
         button.type = "button";
+        button.dataset.date = date;
         button.className = `day ${info ? info.status : "none"}${date === selected ? " selected" : ""}${date === today ? " today" : ""}`;
         button.innerHTML = `<span class="num">${day}</span><span class="mark">${info ? statusText(info.status) : ""}</span>`;
         button.addEventListener("click", () => openDay(date));
@@ -357,6 +391,14 @@
     async function loadOpenIssues() {
       try {
         const payload = await fetchOpenIssues();
+        const warning = document.getElementById("issue-sync-warning");
+        if (payload.sync_ok === false) {
+          warning.className = "sync-warning";
+          warning.textContent = `⚠ Issue 状态同步失败 ${payload.sync_errors?.length || 0} 项，不能将空表解读为全部闭环。`;
+        } else {
+          warning.className = "";
+          warning.textContent = "";
+        }
         renderOpenIssues(payload.issues || [], payload.today || window.NIGHTLY_BOARD_TODAY || ymd(new Date()));
       } catch (error) {
         document.getElementById("open-issue-table").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
@@ -398,12 +440,17 @@
 
     async function openDay(date) {
       selected = date;
-      await loadMonth();
+      grid.querySelectorAll(".day[data-date]").forEach((button) => {
+        button.classList.toggle("selected", button.dataset.date === date);
+      });
       detail.innerHTML = "<p class='meta'>正在读取日志和 issue 状态…</p>";
       const payload = await fetchDay(date);
       const title = date === payload.today ? `${date} · 今天` : date;
       if (!payload.runs.length) {
-        detail.innerHTML = `<div class="detail-head"><h2>${title}</h2></div><p>这一天没有带 Nightly exit 的本地流水日志。</p>`;
+        const emptyText = date === payload.today
+          ? "⚪ 今日暂无流水记录（可能未运行或尚未同步）。"
+          : "这一天没有带 Nightly exit 的本地流水日志。";
+        detail.innerHTML = `<div class="detail-head"><h2>${title}</h2></div><p>${emptyText}</p>`;
         return;
       }
       const action = staticMode ? `<span class="meta">静态快照：${window.NIGHTLY_BOARD_EXPORTED_AT || ""}</span>` : `<button id="reload" type="button">刷新 issue</button>`;
@@ -422,6 +469,7 @@
       loadMonth();
     });
     cursor = new Date();
+    renderFreshness();
     loadMonth();
     loadOpenIssues();
   </script>

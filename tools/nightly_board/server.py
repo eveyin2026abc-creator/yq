@@ -179,6 +179,7 @@ def issue_state(number: int) -> dict:
             "assignees": [],
             "error": str(exc),
         }
+        ISSUE_CACHE[number] = (now, payload)
         return payload
     if completed.returncode != 0:
         payload = {
@@ -190,6 +191,7 @@ def issue_state(number: int) -> dict:
             "assignees": [],
             "error": (completed.stderr or completed.stdout or "gitcode issue view failed")[:300],
         }
+        ISSUE_CACHE[number] = (now, payload)
         return payload
     data = json.loads(completed.stdout)
     state = data.get("state") or "unknown"
@@ -235,8 +237,8 @@ def day_status(runs: list[dict]) -> str:
     return "fail"
 
 
-def month_payload(year: int, month: int) -> dict:
-    runs = load_runs()
+def month_payload(year: int, month: int, runs: list[dict] | None = None) -> dict:
+    runs = load_runs() if runs is None else runs
     prefix = f"{year:04d}-{month:02d}-"
     grouped: dict[str, list[dict]] = {}
     for run in runs:
@@ -253,16 +255,20 @@ def month_payload(year: int, month: int) -> dict:
     return {"year": year, "month": month, "today": beijing_today(), "days": days}
 
 
-def open_issues_payload() -> dict:
+def open_issues_payload(runs: list[dict] | None = None) -> dict:
     first_seen: dict[int, str] = {}
-    for run in load_runs():
+    for run in load_runs() if runs is None else runs:
         for number in run["issue_numbers"]:
             seen = first_seen.get(number)
             if seen is None or run["date"] < seen:
                 first_seen[number] = run["date"]
     issues = []
+    sync_errors = []
     for number, seen in sorted(first_seen.items(), key=lambda item: (item[1], item[0])):
         state = issue_state(number)
+        if state.get("closed") is None:
+            sync_errors.append({"number": number, "error": state.get("error") or "Issue 状态未知"})
+            continue
         if state.get("closed") is not False:
             continue
         issues.append(
@@ -274,11 +280,17 @@ def open_issues_payload() -> dict:
                 "introduced": state.get("created_at") or seen,
             }
         )
-    return {"today": beijing_today(), "issues": issues}
+    return {
+        "today": beijing_today(),
+        "issues": issues,
+        "sync_ok": not sync_errors,
+        "sync_errors": sync_errors,
+    }
 
 
-def day_payload(date: str) -> dict:
-    runs = [attach_issues(run) for run in load_runs() if run["date"] == date]
+def day_payload(date: str, runs: list[dict] | None = None) -> dict:
+    source = load_runs() if runs is None else runs
+    runs = [attach_issues(run) for run in source if run["date"] == date]
     runs.sort(key=lambda run: (run["branch"] != "master", run["label"] != "master", run["started"]))
     return {"date": date, "today": beijing_today(), "runs": runs}
 
