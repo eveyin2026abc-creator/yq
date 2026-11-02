@@ -112,6 +112,15 @@
       color: #fff;
       font-weight: 750;
     }
+    .issue-row.healthy-run {
+      background: linear-gradient(135deg, #e7f6ee, #d7f0e2);
+      border-color: #1f7a4d;
+      border-left: 8px solid #1f7a4d;
+      color: #145c38;
+      box-shadow: 0 4px 12px rgba(31, 122, 77, 0.16);
+      font-size: 16px;
+      font-weight: 750;
+    }
     .issue-title { flex-basis: 100%; color: var(--muted); }
     .open-issues { grid-column: 1 / -1; border-top: 5px solid var(--fail); }
     .open-issues h2 { font-size: 18px; margin-bottom: 12px; color: var(--fail); }
@@ -332,7 +341,9 @@
         : "<p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
       const issues = run.issues.length
         ? run.issues.map(issueItem).join("")
-        : `<div class="issue-row untracked-issue"><span><strong>跟踪 Issue：</strong>未建</span><span><strong>Issue 情况：</strong><span class="badge unknown">未跟踪</span></span><span><strong>责任人：</strong>未指定</span></div>`;
+        : run.exit_code === 0
+          ? `<div class="issue-row healthy-run">✅ 今日无问题</div>`
+          : `<div class="issue-row untracked-issue"><span><strong>跟踪 Issue：</strong>未建</span><span><strong>Issue 情况：</strong><span class="badge unknown">未跟踪</span></span><span><strong>责任人：</strong>未指定</span></div>`;
       return `
         <article class="run">
           ${issues}
