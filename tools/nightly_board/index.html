@@ -365,15 +365,20 @@
 
     function runBlock(run) {
       const badge = run.exit_code === 0 ? "pass" : run.exit_code === 124 ? "timeout" : "fail";
+      const healthy = run.exit_code === 0;
       const coverage = run.coverage
         ? `覆盖率 line ${run.coverage.line}% / branch ${run.coverage.branch}%（${run.coverage.gate === "passed" ? "门禁通过" : "门禁未过"}）`
         : "日志里没有覆盖率门禁行";
-      const failures = run.failures.length
-        ? `<ul>${run.failures.map(failureItem).join("")}</ul>`
-        : "<p>没有 Failed 归因行。</p>";
-      const ci = run.ci_miss_reason
-        ? `<p class="reason">${escapeHtml(run.ci_miss_reason)}</p>`
-        : "<p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
+      const failures = healthy
+        ? ""
+        : run.failures.length
+          ? `<h3>报错原因</h3><ul>${run.failures.map(failureItem).join("")}</ul>`
+          : "<h3>报错原因</h3><p>没有 Failed 归因行。</p>";
+      const ci = healthy
+        ? ""
+        : run.ci_miss_reason
+          ? `<h3>CI 没报错的原因</h3><p class="reason">${escapeHtml(run.ci_miss_reason)}</p>`
+          : "<h3>CI 没报错的原因</h3><p>这次没有单独记录 CI 未报错的原因。PR UT 默认排除 nightly / npu / network；只有核对过的日期会写明具体原因。</p>";
       const issues = run.issues.length
         ? run.issues.map(issueItem).join("")
         : run.exit_code === 0
@@ -386,9 +391,7 @@
           <p class="meta">${escapeHtml(run.started)} ${run.commit ? `· ${escapeHtml(run.commit)}` : ""} · passed ${run.passed} / failed ${run.failed} / errors ${run.errors} · pytest ${run.duration_sec}s</p>
           <p class="meta">${coverage}</p>
           <p class="meta"><code>${escapeHtml(run.log)}</code></p>
-          <h3>报错原因</h3>
           ${failures}
-          <h3>CI 没报错的原因</h3>
           ${ci}
         </article>`;
     }
