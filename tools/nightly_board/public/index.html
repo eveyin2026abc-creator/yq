@@ -137,7 +137,15 @@
     .healthy-copy small { color: #39785a; font-size: 12px; font-weight: 550; }
     .healthy-sparkle { margin-left: auto; font-size: 20px; }
     .issue-title { flex-basis: 100%; color: var(--muted); }
-    .open-issues { margin-top: 18px; padding-top: 14px; border-top: 4px solid var(--fail); }
+    .open-issues {
+      margin-top: 18px;
+      padding: 14px;
+      border: 2px solid #e7b2ad;
+      border-left: 6px solid var(--fail);
+      border-radius: 12px;
+      background: #fffafa;
+      box-shadow: 0 4px 14px rgba(180, 35, 24, 0.10);
+    }
     .open-issues h2 { font-size: 17px; margin: 0 0 10px; color: var(--fail); }
     table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
     .open-issues th, .open-issues td { width: 33.333%; overflow-wrap: anywhere; }
@@ -314,7 +322,18 @@
       return response.json();
     }
 
-    function renderOpenIssues(issues) {
+    function issueOpenDays(introduced, asOf) {
+      const toUtcDay = (value) => {
+        const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : NaN;
+      };
+      const started = toUtcDay(introduced);
+      const current = toUtcDay(asOf);
+      if (!Number.isFinite(started) || !Number.isFinite(current)) return "未知";
+      return `已开启 ${Math.max(0, Math.floor((current - started) / 86400000))} 天`;
+    }
+
+    function renderOpenIssues(issues, asOf) {
       const host = document.getElementById("open-issue-table");
       if (!issues.length) {
         host.innerHTML = "<p>当前没有未闭环 issue。</p>";
@@ -326,11 +345,11 @@
         return `<tr class="open-row">
           <td><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a></td>
           <td>${escapeHtml(who)}</td>
-          <td>${escapeHtml(issue.introduced || "")}</td>
+          <td>${escapeHtml(issueOpenDays(issue.introduced, asOf))}</td>
         </tr>`;
       }).join("");
       host.innerHTML = `<table>
-        <thead><tr><th>Issue 链接</th><th>责任人</th><th>开启时间</th></tr></thead>
+        <thead><tr><th>Issue 链接</th><th>责任人</th><th>已开启</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     }
@@ -338,7 +357,7 @@
     async function loadOpenIssues() {
       try {
         const payload = await fetchOpenIssues();
-        renderOpenIssues(payload.issues || []);
+        renderOpenIssues(payload.issues || [], payload.today || window.NIGHTLY_BOARD_TODAY || ymd(new Date()));
       } catch (error) {
         document.getElementById("open-issue-table").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
       }
