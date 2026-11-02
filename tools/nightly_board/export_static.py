@@ -35,6 +35,8 @@ def export(output: Path) -> int:
     for date in dates:
         write_json(output / "data" / "day" / f"{date}.json", server.day_payload(date))
 
+    write_json(output / "data" / "open_issues.json", server.open_issues_payload())
+
     exported_at = datetime.now(server.BEIJING).isoformat(timespec="seconds")
     config = (
         "window.NIGHTLY_BOARD_STATIC = true;\n"

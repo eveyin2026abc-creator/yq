@@ -77,13 +77,30 @@
       flex-wrap: wrap;
       gap: 8px 22px;
       align-items: center;
-      padding: 10px 12px;
-      margin-bottom: 6px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      border: 2px solid var(--line);
+      border-radius: 10px;
       background: #faf8f4;
     }
+    .issue-row.open-issue {
+      background: #b42318;
+      border-color: #7a120c;
+      color: #fff;
+    }
+    .issue-row.open-issue a { color: #fff; font-weight: 700; }
+    .issue-row.open-issue .issue-title { color: #ffe4de; }
+    .issue-row.closed-issue {
+      background: #e7f6ee;
+      border-color: #1f7a4d;
+    }
     .issue-title { flex-basis: 100%; color: var(--muted); }
+    .open-issues { grid-column: 1 / -1; }
+    .open-issues h2 { font-size: 18px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; font-weight: 650; }
+    tr.open-row td { background: #fdecea; }
     .badge {
       display: inline-block;
       border-radius: 999px;
@@ -92,7 +109,7 @@
       margin-right: 6px;
     }
     .badge.pass { background: #e7f6ee; color: var(--pass); }
-    .badge.fail, .badge.open { background: #fdecea; color: var(--fail); }
+    .badge.fail, .badge.open { background: #fff; color: var(--fail); font-weight: 700; }
     .badge.timeout { background: #fff6e0; color: var(--timeout); }
     .badge.closed { background: #e7f6ee; color: var(--pass); }
     .badge.unknown { background: #f3efe8; color: var(--muted); }
@@ -130,6 +147,10 @@
     </section>
     <section class="panel" id="detail">
       <p class="meta">选择一天</p>
+    </section>
+    <section class="panel open-issues" id="open-issues">
+      <h2>未闭环 Issue</h2>
+      <div id="open-issue-table"><p class="meta">正在读取未闭环 issue…</p></div>
     </section>
   </main>
   <script src="config.js"></script>
@@ -230,13 +251,52 @@
     function issueItem(issue) {
       const closed = issue.closed === true ? "已闭环" : issue.closed === false ? "未闭环" : "状态未知";
       const badge = issue.closed === true ? "closed" : issue.closed === false ? "open" : "unknown";
+      const row = issue.closed === false ? "open-issue" : issue.closed === true ? "closed-issue" : "";
       const who = (issue.assignees || []).join(", ") || "未指定";
-      return `<div class="issue-row">
+      return `<div class="issue-row ${row}">
         <span><strong>跟踪 Issue：</strong><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a></span>
         <span><strong>Issue 情况：</strong><span class="badge ${badge}">${closed}</span></span>
         <span><strong>责任人：</strong>${escapeHtml(who)}</span>
         <div class="issue-title">${escapeHtml(issue.title)}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</div>
       </div>`;
+    }
+
+    async function fetchOpenIssues() {
+      const url = staticMode ? "data/open_issues.json" : "/api/open-issues";
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok && staticMode) return { issues: [] };
+      if (!response.ok) throw new Error(`读取未闭环 issue 失败：HTTP ${response.status}`);
+      return response.json();
+    }
+
+    function renderOpenIssues(issues) {
+      const host = document.getElementById("open-issue-table");
+      if (!issues.length) {
+        host.innerHTML = "<p>当前没有未闭环 issue。</p>";
+        return;
+      }
+      const rows = issues.map((issue) => {
+        const who = (issue.assignees || []).join(", ") || "未指定";
+        const label = issue.title ? `#${issue.number} ${issue.title}` : `#${issue.number}`;
+        return `<tr class="open-row">
+          <td><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a></td>
+          <td>${escapeHtml(who)}</td>
+          <td>${escapeHtml(issue.introduced || "")}</td>
+        </tr>`;
+      }).join("");
+      host.innerHTML = `<table>
+        <thead><tr><th>Issue</th><th>责任人</th><th>引入时间</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    }
+
+    async function loadOpenIssues() {
+      try {
+        const payload = await fetchOpenIssues();
+        renderOpenIssues(payload.issues || []);
+      } catch (error) {
+        document.getElementById("open-issue-table").innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+      }
     }
 
     function runBlock(run) {
@@ -294,6 +354,7 @@
     });
     cursor = new Date();
     loadMonth();
+    loadOpenIssues();
   </script>
 </body>
 </html>

@@ -32,6 +32,19 @@ def beijing_today() -> str:
     return datetime.now(BEIJING).date().isoformat()
 
 
+def beijing_stamp(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text[:16]
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(BEIJING).strftime("%Y-%m-%d %H:%M")
+
+
 def load_tracking() -> dict:
     if not TRACKING_PATH.is_file():
         return {"runs": {}}
@@ -187,6 +200,7 @@ def issue_state(number: int) -> dict:
         "title": data.get("title") or "",
         "html_url": data.get("html_url") or f"https://gitcode.com/{REPO}/issues/{number}",
         "assignees": [item.get("login") for item in data.get("assignees") or [] if item.get("login")],
+        "created_at": beijing_stamp(data.get("created_at") or ""),
         "error": "",
     }
     ISSUE_CACHE[number] = (now, payload)
@@ -239,6 +253,30 @@ def month_payload(year: int, month: int) -> dict:
     return {"year": year, "month": month, "today": beijing_today(), "days": days}
 
 
+def open_issues_payload() -> dict:
+    first_seen: dict[int, str] = {}
+    for run in load_runs():
+        for number in run["issue_numbers"]:
+            seen = first_seen.get(number)
+            if seen is None or run["date"] < seen:
+                first_seen[number] = run["date"]
+    issues = []
+    for number, seen in sorted(first_seen.items(), key=lambda item: (item[1], item[0])):
+        state = issue_state(number)
+        if state.get("closed") is not False:
+            continue
+        issues.append(
+            {
+                "number": state["number"],
+                "title": state.get("title") or "",
+                "html_url": state["html_url"],
+                "assignees": state.get("assignees") or [],
+                "introduced": state.get("created_at") or seen,
+            }
+        )
+    return {"today": beijing_today(), "issues": issues}
+
+
 def day_payload(date: str) -> dict:
     runs = [attach_issues(run) for run in load_runs() if run["date"] == date]
     runs.sort(key=lambda run: (run["branch"] != "master", run["label"] != "master", run["started"]))
@@ -273,6 +311,10 @@ class Handler(BaseHTTPRequestHandler):
             year = int(query.get("year", [str(today.year)])[0])
             month = int(query.get("month", [str(today.month)])[0])
             body = json.dumps(month_payload(year, month), ensure_ascii=False).encode()
+            self._send(200, body, "application/json; charset=utf-8")
+            return
+        if parsed.path == "/api/open-issues":
+            body = json.dumps(open_issues_payload(), ensure_ascii=False).encode()
             self._send(200, body, "application/json; charset=utf-8")
             return
         if parsed.path == "/api/day":
