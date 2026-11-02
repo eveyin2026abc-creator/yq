@@ -137,9 +137,10 @@
     .healthy-copy small { color: #39785a; font-size: 12px; font-weight: 550; }
     .healthy-sparkle { margin-left: auto; font-size: 20px; }
     .issue-title { flex-basis: 100%; color: var(--muted); }
-    .open-issues { grid-column: 1 / -1; border-top: 5px solid var(--fail); }
-    .open-issues h2 { font-size: 18px; margin-bottom: 12px; color: var(--fail); }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .open-issues { margin-top: 18px; padding-top: 14px; border-top: 4px solid var(--fail); }
+    .open-issues h2 { font-size: 17px; margin: 0 0 10px; color: var(--fail); }
+    table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+    .open-issues th, .open-issues td { width: 33.333%; overflow-wrap: anywhere; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
     th { color: var(--muted); font-size: 12px; font-weight: 650; }
     tr.open-row td { background: #fdecea; border-bottom-color: #efb4ae; }
@@ -188,13 +189,13 @@
         <span><i class="swatch" style="background:#9a6700"></i>超时</span>
         <span><i class="swatch" style="background:#d9d3ca"></i>无记录</span>
       </div>
+      <div class="open-issues" id="open-issues">
+        <h2>未闭环 Issue</h2>
+        <div id="open-issue-table"><p class="meta">正在读取未闭环 issue…</p></div>
+      </div>
     </section>
     <section class="panel" id="detail">
       <p class="meta">选择一天</p>
-    </section>
-    <section class="panel open-issues" id="open-issues">
-      <h2>未闭环 Issue</h2>
-      <div id="open-issue-table"><p class="meta">正在读取未闭环 issue…</p></div>
     </section>
   </main>
   <script src="config.js"></script>
@@ -321,7 +322,7 @@
       }
       const rows = issues.map((issue) => {
         const who = (issue.assignees || []).join(", ") || "未指定";
-        const label = issue.title ? `#${issue.number} ${issue.title}` : `#${issue.number}`;
+        const label = `#${issue.number}`;
         return `<tr class="open-row">
           <td><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a></td>
           <td>${escapeHtml(who)}</td>
@@ -329,7 +330,7 @@
         </tr>`;
       }).join("");
       host.innerHTML = `<table>
-        <thead><tr><th>Issue</th><th>责任人</th><th>引入时间</th></tr></thead>
+        <thead><tr><th>Issue 链接</th><th>责任人</th><th>开启时间</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     }
