@@ -121,6 +121,21 @@
       font-size: 16px;
       font-weight: 750;
     }
+    .healthy-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #1f7a4d;
+      color: #fff;
+      font-size: 19px;
+      line-height: 1;
+      box-shadow: 0 3px 8px rgba(31, 122, 77, 0.28);
+    }
+    .healthy-copy { display: inline-flex; flex-direction: column; gap: 1px; }
+    .healthy-copy small { color: #39785a; font-size: 12px; font-weight: 550; }
+    .healthy-sparkle { margin-left: auto; font-size: 20px; }
     .issue-title { flex-basis: 100%; color: var(--muted); }
     .open-issues { grid-column: 1 / -1; border-top: 5px solid var(--fail); }
     .open-issues h2 { font-size: 18px; margin-bottom: 12px; color: var(--fail); }
@@ -342,7 +357,7 @@
       const issues = run.issues.length
         ? run.issues.map(issueItem).join("")
         : run.exit_code === 0
-          ? `<div class="issue-row healthy-run">✅ 今日无问题</div>`
+          ? `<div class="issue-row healthy-run"><span class="healthy-icon" aria-hidden="true">✓</span><span class="healthy-copy"><span>今日无问题</span><small>Nightly 流水运行正常</small></span><span class="healthy-sparkle" aria-hidden="true">✨</span></div>`
           : `<div class="issue-row untracked-issue"><span><strong>跟踪 Issue：</strong>未建</span><span><strong>Issue 情况：</strong><span class="badge unknown">未跟踪</span></span><span><strong>责任人：</strong>未指定</span></div>`;
       return `
         <article class="run">
