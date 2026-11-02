@@ -250,20 +250,27 @@
       return "无记录";
     }
 
-    function renderFreshness() {
+    async function renderFreshness() {
       const host = document.getElementById("freshness");
       if (!staticMode) {
         host.className = "freshness fresh";
         host.textContent = "● 实时模式：数据来自当前 Nightly 机器";
         return;
       }
-      const exported = new Date(window.NIGHTLY_BOARD_EXPORTED_AT || "");
+      let exportedAt = window.NIGHTLY_BOARD_EXPORTED_AT || "";
+      try {
+        const response = await fetch(`data/manifest.json?t=${Date.now()}`, { cache: "no-store" });
+        if (response.ok) exportedAt = (await response.json()).exported_at || exportedAt;
+      } catch (_) {
+        // Keep the config.js timestamp as a fallback when the manifest is unavailable.
+      }
+      const exported = new Date(exportedAt);
       const ageHours = (Date.now() - exported.getTime()) / 3600000;
       const stale = !Number.isFinite(ageHours) || ageHours > 24;
       host.className = `freshness ${stale ? "stale" : "fresh"}`;
       host.textContent = stale
-        ? `⚠ 数据已超过 24 小时未更新（最后快照：${window.NIGHTLY_BOARD_EXPORTED_AT || "未知"}）`
-        : `● 数据已更新：${window.NIGHTLY_BOARD_EXPORTED_AT}`;
+        ? `⚠ 数据已超过 24 小时未更新（最后快照：${exportedAt || "未知"}）`
+        : `● 数据已更新：${exportedAt}`;
     }
 
     function exitText(run) {
@@ -472,6 +479,12 @@
     renderFreshness();
     loadMonth();
     loadOpenIssues();
+    setInterval(() => {
+      renderFreshness();
+      loadMonth();
+      loadOpenIssues();
+      if (selected) openDay(selected);
+    }, 300000);
   </script>
 </body>
 </html>
