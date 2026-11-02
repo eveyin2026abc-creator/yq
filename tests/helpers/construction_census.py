@@ -77,20 +77,21 @@ def _function_stack(tree: ast.AST) -> dict[ast.AST, str]:
         def __init__(self) -> None:
             self._stack: list[str] = ["<module>"]
 
+        def _visit_scope(self, node: ast.AST, name: str) -> None:
+            self._stack.append(name)
+            try:
+                self.generic_visit(node)
+            finally:
+                self._stack.pop()
+
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self._stack.append(node.name)
-            self.generic_visit(node)
-            self._stack.pop()
+            self._visit_scope(node, node.name)
 
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            self._stack.append(node.name)
-            self.generic_visit(node)
-            self._stack.pop()
+            self._visit_scope(node, node.name)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            self._stack.append(node.name)
-            self.generic_visit(node)
-            self._stack.pop()
+            self._visit_scope(node, node.name)
 
         def generic_visit(self, node: ast.AST) -> None:
             parents[node] = self._stack[-1]
