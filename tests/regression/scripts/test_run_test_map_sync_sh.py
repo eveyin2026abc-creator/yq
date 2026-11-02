@@ -130,6 +130,7 @@ def _run(
     env = dict(os.environ)
     env.pop("PYTHON", None)
     env.pop("UV_NO_SYNC", None)
+    env.pop("MSMODELING_UV_VERBOSE", None)
     env.pop("MSMODELING_TEST_MAP_TARGET_BRANCH", None)
     # CI exports BASH_ENV, which sources profile scripts. Those scripts rewrite PATH
     # with tr/sed and hide the dirname/readlink entries this test just installed.
@@ -371,3 +372,32 @@ def test_watch_installs_even_when_commit_matches(tmp_path: Path) -> None:
         log = _assert_continued(result, case)
         assert "--watch" in log
         assert not (case / "git.log").exists()
+
+
+def test_sync_dependency_diagnostics_default_and_failure(tmp_path: Path) -> None:
+    result = _run(tmp_path, ["--once"], head="b" * 40, uv_exit=23)
+
+    assert result.returncode == 23
+    assert "sync --frozen --group ci --verbose" in (tmp_path / "uv.log").read_text()
+    assert "Dependency bootstrap starting" in result.stdout
+    assert "uv sync starting" in result.stdout
+    assert "uv sync finished (exit=23, elapsed=" in result.stdout
+    assert "starting map sync" not in result.stdout
+
+
+def test_sync_dependency_diagnostics_can_disable_verbosity(tmp_path: Path) -> None:
+    result = _run(tmp_path, ["--once"], head="b" * 40, uv_exit=0, extra_env={"MSMODELING_UV_VERBOSE": "0"})
+
+    assert result.returncode == 0
+    assert "--verbose" not in (tmp_path / "uv.log").read_text()
+    assert "uv sync finished (exit=0, elapsed=" in result.stdout
+    assert "starting map sync" in result.stdout
+
+
+def test_sync_dependency_logs_preserve_no_sync(tmp_path: Path) -> None:
+    result = _run(tmp_path, ["--once"], head="b" * 40, uv_exit=0, extra_env={"UV_NO_SYNC": "1"})
+
+    assert result.returncode == 0
+    assert "sync --frozen" not in (tmp_path / "uv.log").read_text()
+    assert "uv sync starting" not in result.stdout
+    assert "starting map sync" in result.stdout

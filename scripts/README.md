@@ -233,3 +233,11 @@ uv run python build.py test --suite benchmark
 # build wheel
 uv run python build.py
 ```
+
+### test_map dependency diagnostics
+
+`run_test_map_sync.sh` enables verbose uv dependency logs by default, with
+bootstrap/install timestamps, elapsed seconds and the install exit code.
+Set `MSMODELING_UV_VERBOSE=0` to disable uv verbosity. Existing `UV_NO_SYNC=1`
+and explicit `PYTHON` still skip installation; the up-to-date `--once` fast path
+still exits before bootstrap. No environment dump or shell tracing is enabled.

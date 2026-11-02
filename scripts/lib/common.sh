@@ -24,6 +24,7 @@
 #   PYTHONPATH   Exported to repository root (PROJECT_DIR); overrides any prior value
 #   PYTHON       Optional absolute path to interpreter; if unset, uses uv or python3
 #   UV_NO_SYNC   Set to 1 when dependencies were already synchronized
+#   MSMODELING_UV_VERBOSE   Set to 1 for verbose dependency download diagnostics
 
 # Guard against multiple inclusion
 [[ -n "${COMMON_SH_LOADED:-}" ]] && return 0
@@ -123,6 +124,19 @@ run_pytest() {
 if $USE_UV && [[ "${UV_NO_SYNC:-}" != "1" ]]; then
   (
     cd "${PROJECT_DIR}"
-    uv sync --frozen --group ci
+    _sync_args=(sync --frozen --group ci)
+    if [[ "${MSMODELING_UV_VERBOSE:-0}" == "1" ]]; then
+      _sync_args+=(--verbose)
+    fi
+    _sync_started=$SECONDS
+    printf '[%(%Y-%m-%dT%H:%M:%S%z)T] [dependencies] uv sync starting\n' -1
+    if uv "${_sync_args[@]}"; then
+      _sync_status=0
+    else
+      _sync_status=$?
+    fi
+    printf '[%(%Y-%m-%dT%H:%M:%S%z)T] [dependencies] uv sync finished (exit=%s, elapsed=%ss)\n' \
+      -1 "${_sync_status}" "$((SECONDS - _sync_started))"
+    exit "${_sync_status}"
   )
 fi

@@ -27,6 +27,7 @@
 #   MSMODELING_TEST_MAP_SYNC_INTERVAL  poll interval seconds for --watch (default: 60)
 #   MSMODELING_OFFLINE                 Hub offline mode (default: 0)
 #   MSMODELING_CACHE                   optional repo-local Hub cache
+#   MSMODELING_UV_VERBOSE              uv download diagnostics (default: 1; set 0 to disable)
 #   PYTHON                             absolute path to interpreter; if unset, uses uv or python3
 #
 # Usage:
@@ -45,6 +46,7 @@ if [[ -z "${MSMODELING_TEST_MAP_PATH:-}" ]]; then
 fi
 
 export MSMODELING_TEST_WEIGHTS_PRUNE="${MSMODELING_TEST_WEIGHTS_PRUNE:-0}"
+export MSMODELING_UV_VERBOSE="${MSMODELING_UV_VERBOSE:-1}"
 export MSMODELING_OFFLINE="${MSMODELING_OFFLINE:-0}"
 export MSMODELING_TEST_BASE_BRANCH="${MSMODELING_TEST_BASE_BRANCH:-master}"
 
@@ -149,7 +151,11 @@ if _test_map_already_current "$@"; then
   exit 0
 fi
 
+_bootstrap_started=$SECONDS
+printf '[%(%Y-%m-%dT%H:%M:%S%z)T] [test_map_sync] Dependency bootstrap starting\n' -1
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+printf '[%(%Y-%m-%dT%H:%M:%S%z)T] [test_map_sync] Bootstrap complete (%ss); starting map sync\n' \
+  -1 "$((SECONDS - _bootstrap_started))"
 
 run_py "${HELPERS_DIR}/ci_gate/sync.py" "$@"
