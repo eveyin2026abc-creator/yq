@@ -84,23 +84,30 @@
       background: #faf8f4;
     }
     .issue-row.open-issue {
-      background: #b42318;
-      border-color: #7a120c;
+      background: linear-gradient(135deg, #c6281c, #991b12);
+      border-color: #6f100a;
+      border-left: 8px solid #ffb4ab;
       color: #fff;
+      box-shadow: 0 6px 18px rgba(180, 35, 24, 0.32);
     }
     .issue-row.open-issue a { color: #fff; font-weight: 700; }
     .issue-row.open-issue .issue-title { color: #ffe4de; }
+    .issue-row.open-issue .badge.open { background: #fff; color: #b42318; font-weight: 750; }
     .issue-row.closed-issue {
-      background: #e7f6ee;
+      background: linear-gradient(135deg, #e7f6ee, #d7f0e2);
       border-color: #1f7a4d;
+      border-left: 8px solid #1f7a4d;
+      box-shadow: 0 4px 12px rgba(31, 122, 77, 0.18);
     }
     .issue-title { flex-basis: 100%; color: var(--muted); }
-    .open-issues { grid-column: 1 / -1; }
-    .open-issues h2 { font-size: 18px; margin-bottom: 12px; }
+    .open-issues { grid-column: 1 / -1; border-top: 5px solid var(--fail); }
+    .open-issues h2 { font-size: 18px; margin-bottom: 12px; color: var(--fail); }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
     th { color: var(--muted); font-size: 12px; font-weight: 650; }
-    tr.open-row td { background: #fdecea; }
+    tr.open-row td { background: #fdecea; border-bottom-color: #efb4ae; }
+    tr.open-row td:first-child { border-left: 5px solid var(--fail); }
+    tr.open-row a { color: #9f1d14; font-weight: 700; }
     .badge {
       display: inline-block;
       border-radius: 999px;
