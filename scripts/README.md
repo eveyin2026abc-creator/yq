@@ -59,6 +59,39 @@ scripts/
 
 `-v` / `--version` temporarily writes `project.version` in `pyproject.toml` via `uv version --frozen` for the wheel build, then restores the original version. Prefer `python build.py -v <ver>`. If you wrap with `uv run`, use `uv run -- python build.py -v <ver>` so uv does not consume `-v`.
 
+### Dependency downloads and persistent uv cache
+
+The default PyPI index is Huawei Cloud, declared in `pyproject.toml` and
+`scripts/defaults.env`. `uv.lock` records mirror artifact URLs so frozen CI
+installs use the same source. The explicit `pytorch-cpu` index for `torch` and
+`torchvision` remains separate; `HF_ENDPOINT` only controls model downloads.
+Changing `UV_INDEX_URL` alone does not rewrite a frozen lockfile. To switch the
+default mirror, update both configurations, run `uv lock`, review package
+versions and artifact URLs, and commit `uv.lock` with the configuration.
+
+Keep the uv cache across jobs on persistent runners. For example:
+
+```bash
+export UV_CACHE_DIR="${HOME}/.cache/uv"
+uv sync --python 3.11 --frozen --group ci
+UV_NO_SYNC=1 bash scripts/run_test_map_sync.sh --once
+```
+
+Set `MSMODELING_TEST_MAP_PATH` before running the sync script as described below.
+Only set `UV_NO_SYNC=1` after dependency installation succeeds. This avoids a
+second explicit sync in the shell bootstrap; uv still checks the environment
+when invoking `uv run`. `MSMODELING_CACHE` stores model/test-map data and is
+independent of `UV_CACHE_DIR`.
+
+For ephemeral containers, mount a persistent cache directory or configure the CI
+platform to restore/save it. A cache path inside an otherwise discarded
+container does not persist. Separate platform cache keys by OS, architecture,
+Python and uv version; include the `uv.lock` hash with a compatible fallback key.
+Keep the cache on the same filesystem as `.venv` where possible. Avoid routine
+`uv cache clean`, `--no-cache`, `--refresh`, or `uv cache prune --ci` on runners
+where retaining downloaded wheels is the goal. Prewarm the cache using the same
+Python version, architecture and dependency groups as the actual job.
+
 ### CI gate test_map resolution
 
 1. If `MSMODELING_TEST_MAP_PATH` (or `-e test_map_path=...`) points to an existing file with valid JSON object root → use it.

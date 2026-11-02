@@ -93,6 +93,11 @@ exclude_lines = [
 ]
 
 [[tool.uv.index]]
+name = "huaweicloud"
+url = "https://repo.huaweicloud.com/repository/pypi/simple"
+default = true
+
+[[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
