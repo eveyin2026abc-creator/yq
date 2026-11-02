@@ -209,8 +209,26 @@ def issue_state(number: int) -> dict:
     return payload
 
 
-def attach_issues(run: dict) -> dict:
-    issues = [issue_state(number) for number in run["issue_numbers"]]
+def issue_first_seen(runs: list[dict]) -> dict[int, str]:
+    first_seen: dict[int, str] = {}
+    for run in runs:
+        for number in run["issue_numbers"]:
+            seen = first_seen.get(number)
+            if seen is None or run["date"] < seen:
+                first_seen[number] = run["date"]
+    return first_seen
+
+
+def attach_issues(run: dict, first_seen: dict[int, str] | None = None) -> dict:
+    issues = []
+    previous_date = (datetime.fromisoformat(run["date"]).date() - timedelta(days=1)).isoformat()
+    for number in run["issue_numbers"]:
+        issue = dict(issue_state(number))
+        introduced = (first_seen or {}).get(number)
+        if introduced and introduced < run["date"]:
+            issue["first_seen_date"] = introduced
+            issue["repeat_kind"] = "previous_day" if introduced == previous_date else "historical"
+        issues.append(issue)
     if not issues:
         loop = "未建 issue"
     elif all(item["closed"] is True for item in issues):
@@ -256,12 +274,8 @@ def month_payload(year: int, month: int, runs: list[dict] | None = None) -> dict
 
 
 def open_issues_payload(runs: list[dict] | None = None) -> dict:
-    first_seen: dict[int, str] = {}
-    for run in load_runs() if runs is None else runs:
-        for number in run["issue_numbers"]:
-            seen = first_seen.get(number)
-            if seen is None or run["date"] < seen:
-                first_seen[number] = run["date"]
+    source = load_runs() if runs is None else runs
+    first_seen = issue_first_seen(source)
     issues = []
     sync_errors = []
     for number, seen in sorted(first_seen.items(), key=lambda item: (item[1], item[0])):
@@ -290,7 +304,8 @@ def open_issues_payload(runs: list[dict] | None = None) -> dict:
 
 def day_payload(date: str, runs: list[dict] | None = None) -> dict:
     source = load_runs() if runs is None else runs
-    runs = [attach_issues(run) for run in source if run["date"] == date]
+    first_seen = issue_first_seen(source)
+    runs = [attach_issues(run, first_seen) for run in source if run["date"] == date]
     runs.sort(key=lambda run: (run["branch"] != "master", run["label"] != "master", run["started"]))
     return {"date": date, "today": beijing_today(), "runs": runs}
 

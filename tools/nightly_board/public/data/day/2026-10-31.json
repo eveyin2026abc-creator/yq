@@ -60,7 +60,9 @@
             "hanxinlong1999"
           ],
           "created_at": "2026-10-30 16:39",
-          "error": ""
+          "error": "",
+          "first_seen_date": "2026-10-30",
+          "repeat_kind": "previous_day"
         }
       ],
       "loop": "已闭环"

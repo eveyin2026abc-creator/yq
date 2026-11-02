@@ -27,6 +27,14 @@ class NightlyBoardTests(unittest.TestCase):
         self.assertFalse(payload["sync_ok"])
         self.assertEqual(payload["sync_errors"][0]["number"], 586)
 
+    @mock.patch.object(server, "issue_state")
+    def test_previous_day_issue_is_marked_as_repeat(self, issue_state):
+        issue_state.return_value = {"number": 586, "closed": False}
+        run = {"date": "2026-10-31", "issue_numbers": [586]}
+        result = server.attach_issues(run, {586: "2026-10-30"})
+        self.assertEqual(result["issues"][0]["repeat_kind"], "previous_day")
+        self.assertEqual(result["issues"][0]["first_seen_date"], "2026-10-30")
+
 
 if __name__ == "__main__":
     unittest.main()

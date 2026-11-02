@@ -144,6 +144,15 @@
     .healthy-copy small { color: #39785a; font-size: 12px; font-weight: 550; }
     .healthy-sparkle { margin-left: auto; font-size: 20px; }
     .issue-title { flex-basis: 100%; color: var(--muted); }
+    .repeat-note {
+      flex-basis: 100%;
+      padding: 7px 9px;
+      border-radius: 7px;
+      background: #fff3cd;
+      color: #713f12;
+      font-size: 12px;
+      font-weight: 650;
+    }
     .open-issues {
       margin-top: 18px;
       padding: 14px;
@@ -347,11 +356,15 @@
       const badge = issue.closed === true ? "closed" : issue.closed === false ? "open" : "unknown";
       const row = issue.closed === false ? "open-issue" : issue.closed === true ? "closed-issue" : "";
       const who = (issue.assignees || []).join(", ") || "未指定";
+      const repeat = issue.repeat_kind
+        ? `<div class="repeat-note">🔁 ${issue.repeat_kind === "previous_day" ? "前一日重复问题" : "历史重复问题"}，首次出现于 ${escapeHtml(issue.first_seen_date)}</div>`
+        : "";
       return `<div class="issue-row ${row}">
         <span><strong>跟踪 Issue：</strong><a href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">#${escapeHtml(issue.number)}</a></span>
         <span><strong>Issue 情况：</strong><span class="badge ${badge}">${closed}</span></span>
         <span><strong>责任人：</strong>${escapeHtml(who)}</span>
         <div class="issue-title">${escapeHtml(issue.title)}${issue.error ? `<div>${escapeHtml(issue.error)}</div>` : ""}</div>
+        ${repeat}
       </div>`;
     }
 
