@@ -43,7 +43,9 @@ def collect_cov_helper_nodes(repo_root: Path, python_exe: str) -> set[str]:
         "-o",
         "addopts=",
     ]
-    completed = subprocess.run(command, cwd=repo_root, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    completed = subprocess.run(
+        command, cwd=repo_root, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     if completed.returncode not in {0, 5}:
         raise RuntimeError(f"cov_helper collection failed: {completed.stderr.strip()}")
     return {line.strip() for line in completed.stdout.splitlines() if line.startswith("tests/") and "::" in line}

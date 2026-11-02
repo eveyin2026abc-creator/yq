@@ -40,11 +40,33 @@ SCENARIOS = (
         vision=True,
     ),
     FamilyScenario("dense-qwen3-8b", "dense", "Qwen/Qwen3-8B", "qwen3", "tensor_cast.attention.default"),
-    FamilyScenario("moe-deepseek-v3", "moe", "deepseek-ai/DeepSeek-V3", "deepseek_v3", "tensor_cast.multihead_latent_attention.default"),
-    FamilyScenario("moe-deepseek-v32", "moe", "deepseek-ai/DeepSeek-V3.2", "deepseek_v32", "tensor_cast.mla_sparse_attention.default"),
-    FamilyScenario("moe-kimi-k2", "moe", "moonshotai/Kimi-K2-Thinking", "deepseek_v3", "tensor_cast.multihead_latent_attention.default"),
-    FamilyScenario("moe-minimax-m2", "moe", "MiniMaxAI/MiniMax-M2", "minimax_m2", "tensor_cast.init_routing_v2.default"),
-    FamilyScenario("multimodal-glm45v", "multimodal", "zai-org/GLM-4.5V", "glm4v_moe", "tensor_cast.attention.default", True),
+    FamilyScenario(
+        "moe-deepseek-v3",
+        "moe",
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek_v3",
+        "tensor_cast.multihead_latent_attention.default",
+    ),
+    FamilyScenario(
+        "moe-deepseek-v32",
+        "moe",
+        "deepseek-ai/DeepSeek-V3.2",
+        "deepseek_v32",
+        "tensor_cast.mla_sparse_attention.default",
+    ),
+    FamilyScenario(
+        "moe-kimi-k2",
+        "moe",
+        "moonshotai/Kimi-K2-Thinking",
+        "deepseek_v3",
+        "tensor_cast.multihead_latent_attention.default",
+    ),
+    FamilyScenario(
+        "moe-minimax-m2", "moe", "MiniMaxAI/MiniMax-M2", "minimax_m2", "tensor_cast.init_routing_v2.default"
+    ),
+    FamilyScenario(
+        "multimodal-glm45v", "multimodal", "zai-org/GLM-4.5V", "glm4v_moe", "tensor_cast.attention.default", True
+    ),
     FamilyScenario(
         "multimodal-qwen3vl-moe",
         "multimodal",
@@ -55,9 +77,7 @@ SCENARIOS = (
     ),
 )
 
-INCREMENTAL_SCENARIOS = frozenset(
-    {"qwen25-7b", "dense-qwen3-06b", "moe-qwen3-30b", "multimodal-qwen3vl-8b"}
-)
+INCREMENTAL_SCENARIOS = frozenset({"qwen25-7b", "dense-qwen3-06b", "moe-qwen3-30b", "multimodal-qwen3vl-8b"})
 
 PARAMETERS = tuple(
     pytest.param(

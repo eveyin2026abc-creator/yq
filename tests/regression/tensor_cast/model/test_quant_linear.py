@@ -31,7 +31,6 @@ from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.quantize_utils import LinearQuantType, QuantGranularity, QuantScheme
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config, get_mtp_block_module_name
-from tensor_cast.transformers.model import TransformerModel
 from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.utils import AutoModelConfigLoader
 from tensor_cast.utils import DTYPE_FP8

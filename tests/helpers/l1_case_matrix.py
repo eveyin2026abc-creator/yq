@@ -60,9 +60,13 @@ FIXTURE_ROWS: tuple[FixtureRow, ...] = (
     FixtureRow("qwen3_moe_235b", "tests/assets/model_config/qwen3_moe_235b_a22b", "qwen3_moe", "sibling", False),
     FixtureRow("qwen3_vl", "tests/assets/model_config/qwen3_vl_8b_instruct", "qwen3_vl", "representative", True),
     FixtureRow("qwen3_vl_tiny", "tests/assets/model_config/qwen3_vl_tiny", "qwen3_vl", "sibling", True),
-    FixtureRow("qwen3_vl_moe", "tests/assets/model_config/qwen3_vl_moe_235b_a22b", "qwen3_vl_moe", "representative", True),
+    FixtureRow(
+        "qwen3_vl_moe", "tests/assets/model_config/qwen3_vl_moe_235b_a22b", "qwen3_vl_moe", "representative", True
+    ),
     FixtureRow("qwen3_5", "tests/assets/model_config/qwen3_5_27b", "qwen3_5", "representative", False),
-    FixtureRow("qwen3_5_moe", "tests/assets/model_config/qwen3_5_moe_397b_a17b", "qwen3_5_moe", "representative", False),
+    FixtureRow(
+        "qwen3_5_moe", "tests/assets/model_config/qwen3_5_moe_397b_a17b", "qwen3_5_moe", "representative", False
+    ),
     FixtureRow("qwen3_next", "tests/assets/model_config/qwen3_next_80b_a3b", "qwen3_next", "representative", False),
     FixtureRow("deepseek_v3", "tests/assets/model_config/deepseek_v3", "deepseek_v3", "representative", False),
     FixtureRow("deepseek_v31", "tests/assets/model_config/deepseek_v31", "deepseek_v3", "sibling", False),

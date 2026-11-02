@@ -40,7 +40,6 @@ from tensor_cast.device import TEST_DEVICE
 from tensor_cast.performance_model.analytic import AnalyticPerformanceModel
 from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.runtime import Runtime
-from tensor_cast.transformers.model import TransformerModel
 from tests.helpers.model_builder import layer_transformer
 
 

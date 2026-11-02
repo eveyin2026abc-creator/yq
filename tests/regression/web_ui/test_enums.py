@@ -174,6 +174,7 @@ class TestOptionSource:
         assert source.values == ()
         assert source.is_dynamic() is True
 
+
 class TestLocalizedText:
     """Tests for LocalizedText value object."""
 

@@ -91,7 +91,9 @@ def _classify_file(repo_root: Path, current_file: str) -> tuple[str, str]:
         source = (repo_root / path).read_text(encoding="utf-8")
     except OSError:
         return physical, "pending-review"
-    if any(token in source for token in ("ModelRunner", "L1ScenarioExecutor", "model_id=", 'model_id = "', "model_id = '")):
+    if any(
+        token in source for token in ("ModelRunner", "L1ScenarioExecutor", "model_id=", 'model_id = "', "model_id = '")
+    ):
         return physical, "L1-model"
     l2_tokens = (
         "microbench",
@@ -115,14 +117,16 @@ def collect_inventory(args: argparse.Namespace) -> None:
         current_layer, target_layer = classifications.setdefault(
             current_file, _classify_file(args.repo_root, current_file)
         )
-        rows.append({
-            "node_id": node_id,
-            "current_file": current_file,
-            "current_layer": current_layer,
-            "target_layer": target_layer,
-            "target_file": current_file,
-            "status": "master-baseline",
-        })
+        rows.append(
+            {
+                "node_id": node_id,
+                "current_file": current_file,
+                "current_layer": current_layer,
+                "target_layer": target_layer,
+                "target_file": current_file,
+                "status": "master-baseline",
+            }
+        )
     _write_csv(args.output, rows, INVENTORY_FIELDS)
     print(json.dumps({"collected": len(rows), "output": str(args.output)}))
 
@@ -173,14 +177,18 @@ def check_assertions(args: argparse.Namespace) -> None:
         groups[row["family"]].add(row["group"])
         if row["status"] == "active":
             active.add(key)
-    incomplete = {family: sorted(ASSERTION_GROUPS - values) for family, values in groups.items() if values != ASSERTION_GROUPS}
+    incomplete = {
+        family: sorted(ASSERTION_GROUPS - values) for family, values in groups.items() if values != ASSERTION_GROUPS
+    }
     if incomplete:
         raise GateError(f"every family needs numeric/structural/capability assertions: {incomplete}")
     if args.baseline:
         baseline = _read_csv(args.baseline)
         _require_columns(args.baseline, baseline, required)
         baseline_active = {(r["family"], r["assertion_id"]) for r in baseline if r["status"] == "active"}
-        waived = {(r["family"], r["assertion_id"]) for r in rows if r["status"] == "waived" and r["reason"] and r["approver"]}
+        waived = {
+            (r["family"], r["assertion_id"]) for r in rows if r["status"] == "waived" and r["reason"] and r["approver"]
+        }
         lost = sorted(baseline_active - active - waived)
         if lost:
             raise GateError(f"assertions disappeared without signed waiver: {lost}")
@@ -188,14 +196,27 @@ def check_assertions(args: argparse.Namespace) -> None:
         inventory_rows = _read_csv(args.inventory)
         _require_columns(args.inventory, inventory_rows, INVENTORY_FIELDS)
         inventory_nodes = {row["node_id"] for row in inventory_rows}
-        unknown = sorted(row["source_node"] for row in rows if row["status"] == "active" and row["source_node"] not in inventory_nodes)
+        unknown = sorted(
+            row["source_node"]
+            for row in rows
+            if row["status"] == "active" and row["source_node"] not in inventory_nodes
+        )
         if unknown:
             raise GateError(f"active assertions reference nodes outside the master inventory: {unknown}")
     print(json.dumps({"families": len(groups), "active_assertions": len(active)}))
 
 
 def check_scenarios(args: argparse.Namespace) -> None:
-    required = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
+    required = (
+        "family",
+        "scenario_id",
+        "build_signature",
+        "run_signature",
+        "build_count",
+        "forward_count",
+        "actual_seconds",
+        "schedule",
+    )
     rows = _read_csv(args.matrix)
     _require_columns(args.matrix, rows, required)
     invalid = sorted({row["schedule"] for row in rows} - {"incremental", "nightly", "pending-approval"})
@@ -216,7 +237,16 @@ def check_scenarios(args: argparse.Namespace) -> None:
         scenarios[key] = max(scenarios.get(key, 0.0), seconds)
         builds.add(row["build_signature"])
     total = sum(scenarios.values())
-    print(json.dumps({"builds": len(builds), "runs": len(scenarios), "expected_seconds": round(total, 3), "budget_seconds": args.budget}))
+    print(
+        json.dumps(
+            {
+                "builds": len(builds),
+                "runs": len(scenarios),
+                "expected_seconds": round(total, 3),
+                "budget_seconds": args.budget,
+            }
+        )
+    )
     if total > args.budget:
         raise GateError(f"incremental L1 scenario budget exceeded: {total:.3f}s > {args.budget:.3f}s")
 
@@ -275,7 +305,12 @@ def check_new_tests(args: argparse.Namespace) -> None:
         uses_model_execution = "ModelRunner" in names or "build_model" in names
         uses_executor = "L1ScenarioExecutor" in names or "l1_executor" in source
         execution_exempt = "L1_EXECUTION_EXEMPT:" in source
-        if uses_model_execution and not uses_executor and not execution_exempt and "tests/helpers/tests/" not in path.as_posix():
+        if (
+            uses_model_execution
+            and not uses_executor
+            and not execution_exempt
+            and "tests/helpers/tests/" not in path.as_posix()
+        ):
             errors.append(f"{path}: L1 model execution must use L1ScenarioExecutor/l1_executor")
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
@@ -284,10 +319,17 @@ def check_new_tests(args: argparse.Namespace) -> None:
             if any(name.endswith("cov_helper") for name in decorators):
                 segment = ast.get_source_segment(source, node) or ""
                 if "COV_HELPER:" not in (ast.get_docstring(node) or ""):
-                    errors.append(f"{path}:{node.lineno}: cov_helper needs a COV_HELPER: product/path.py::symbol docstring")
+                    errors.append(
+                        f"{path}:{node.lineno}: cov_helper needs a COV_HELPER: product/path.py::symbol docstring"
+                    )
                 if any(token in segment for token in ('patch("tensor_cast.', 'patch("cli.', 'patch("serving_cast.')):
                     errors.append(f"{path}:{node.lineno}: cov_helper must not mock the product object under test")
-        if uses_model_execution and not execution_exempt and registered and not any(f"L1_FAMILY: {family}" in source for family in registered):
+        if (
+            uses_model_execution
+            and not execution_exempt
+            and registered
+            and not any(f"L1_FAMILY: {family}" in source for family in registered)
+        ):
             errors.append(f"{path}: L1 test must declare a registered 'L1_FAMILY: <name>'")
     if errors:
         raise GateError("\n".join(errors))
@@ -298,12 +340,7 @@ def check_l2_layers(args: argparse.Namespace) -> None:
     """Reject real model construction from every L2 helper and module test."""
     files = [Path("tests/helpers/l2_artifacts.py")]
     files.extend(sorted(Path("tests/regression").glob("*/module/**/*.py")))
-    violations = [
-        violation
-        for path in files
-        if path.is_file()
-        for violation in find_l2_model_violations_in_file(path)
-    ]
+    violations = [violation for path in files if path.is_file() for violation in find_l2_model_violations_in_file(path)]
     if violations:
         raise GateError("L2 model-construction violations:\n" + "\n".join(violations))
     print(json.dumps({"checked_l2_files": len(files), "violations": 0}))

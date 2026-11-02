@@ -23,11 +23,7 @@ from tests.helpers.l1_migration_backlog import DIRECT_SITES
 
 
 def test_backlog_matches_the_census_and_keeps_the_executor():
-    counted = Counter(
-        (site.path, site.function, site.callee)
-        for site in iter_sites()
-        if site.direct_model
-    )
+    counted = Counter((site.path, site.function, site.callee) for site in iter_sites() if site.direct_model)
     listed = {(note.path, note.function, note.callee): note for note in DIRECT_SITES}
     assert set(listed) == set(counted)
     for key, note in listed.items():

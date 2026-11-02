@@ -33,7 +33,6 @@ from tensor_cast.performance_model.memory_tracker import MemoryTracker
 from tensor_cast.quantize_utils import LinearQuantType, QuantGranularity
 from tensor_cast.runtime import Runtime
 from tensor_cast.transformers.custom_model_registry import get_moe_config
-from tensor_cast.transformers.model import TransformerModel
 from tests.helpers.model_builder import layer_transformer
 from tensor_cast.transformers.utils import AutoModelConfigLoader
 

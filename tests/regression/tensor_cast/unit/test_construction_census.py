@@ -29,7 +29,9 @@ def test_executor_and_direct_sites_are_both_visible():
     assert any(site.callee == "build_model" for site in pipeline)
     e2e = sites_in("tests/regression/model_diagnostics/e2e/conftest.py", sites)
     assert not any(site.callee == "capture_artifact_for_profile" for site in e2e)
-    integration = sites_in("tests/regression/model_diagnostics/model/sources/test_runtime_capture_integration.py", sites)
+    integration = sites_in(
+        "tests/regression/model_diagnostics/model/sources/test_runtime_capture_integration.py", sites
+    )
     assert any(site.callee == "capture_artifact_for_profile" for site in integration)
 
 

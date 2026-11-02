@@ -38,8 +38,7 @@ def find_l2_model_violations(source: str, *, filename: str = "<l2>") -> tuple[st
     violations: list[str] = []
     for function in (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
         calls_forbidden = any(
-            isinstance(child, ast.Call) and _called_name(child.func) in _FORBIDDEN_NAMES
-            for child in ast.walk(function)
+            isinstance(child, ast.Call) and _called_name(child.func) in _FORBIDDEN_NAMES for child in ast.walk(function)
         )
         if calls_forbidden:
             for argument in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs):

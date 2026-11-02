@@ -38,7 +38,6 @@ class SiteNote:
 
 
 DIRECT_SITES: tuple[SiteNote, ...] = (
-
     SiteNote(
         "tests/benchmark/models/auto_baseline.py",
         "_run_single",
@@ -288,4 +287,3 @@ DIRECT_SITES: tuple[SiteNote, ...] = (
         "The call still uses the session cache. That cache now builds the module through the L1 executor.",
     ),
 )
-

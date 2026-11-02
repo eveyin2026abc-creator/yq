@@ -153,7 +153,9 @@ def main() -> int:
                 "目标责任层": layer,
                 "目标模块": module_name(path),
                 "模型身份": identity,
-                "构建物": "L1RunArtifact" if layer == "L1" else ("canonical synthetic artifact" if layer == "L2" else "无模型构建"),
+                "构建物": "L1RunArtifact"
+                if layer == "L1"
+                else ("canonical synthetic artifact" if layer == "L2" else "无模型构建"),
                 "marker": "nightly/network" if schedule(path, source) == "nightly" else "default",
                 "CI调度": schedule(path, source),
                 "迁移PR": "PR2/PR3" if layer == "L1" else ("PR4/PR5" if layer in {"L2", "L3"} else "维护边界"),

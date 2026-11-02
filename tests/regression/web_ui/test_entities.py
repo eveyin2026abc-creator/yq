@@ -42,6 +42,7 @@ class TestNewId:
         assert len(result) == 32  # UUID4 hex length
         int(result, 16)  # Should not raise
 
+
 class TestCapabilityModule:
     """Tests for CapabilityModule dataclass."""
 

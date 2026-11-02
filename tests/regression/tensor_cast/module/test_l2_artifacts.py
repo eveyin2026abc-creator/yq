@@ -19,7 +19,7 @@
 from pathlib import Path
 
 import pytest
-from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
+from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 
 from tests.helpers.l2_artifacts import (
     L2_KINDS,

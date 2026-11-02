@@ -52,7 +52,9 @@ def test_rules_apply_in_order_and_do_not_label_the_rest_l2():
     assert runner.build_signature
 
     both = classify(
-        NodeRecord("tests/regression/tensor_cast/test_runtime.py", ("npu",), has_model_runner=True, has_build_model=True)
+        NodeRecord(
+            "tests/regression/tensor_cast/test_runtime.py", ("npu",), has_model_runner=True, has_build_model=True
+        )
     )
     assert both.evidence == "file text contains ModelRunner and build_model"
     assert both.schedule == "excluded-npu"

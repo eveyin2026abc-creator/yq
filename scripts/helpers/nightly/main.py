@@ -119,16 +119,14 @@ def _test_redundancy_warnings(cfg: Config) -> tuple[str, ...]:
     for finding in findings[:_REDUNDANCY_WARNING_LIMIT]:
         if finding["type"] == "redundant_pair":
             messages.append(
-                "Redundancy candidate "
-                f"Jaccard={finding['jaccard']}: {finding['test_a']} <> {finding['test_b']}"
+                f"Redundancy candidate Jaccard={finding['jaccard']}: {finding['test_a']} <> {finding['test_b']}"
             )
         else:
-            messages.append(
-                f"Over-covered symbol ({finding['test_count']} tests): {finding['symbol']}"
-            )
+            messages.append(f"Over-covered symbol ({finding['test_count']} tests): {finding['symbol']}")
     if len(findings) > _REDUNDANCY_WARNING_LIMIT:
         messages.append(f"... and {len(findings) - _REDUNDANCY_WARNING_LIMIT} more redundancy candidates")
     return tuple(messages)
+
 
 # Vendored remote configs whose live Hub counterpart we watch for drift.
 _DRIFT_FIXTURE_MAP: Final[dict[str, str]] = {

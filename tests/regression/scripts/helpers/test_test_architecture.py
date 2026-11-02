@@ -50,9 +50,7 @@ def _write_csv(path: Path, fields: tuple[str, ...], rows: list[tuple[str, ...]])
 def test_collect_inventory_uses_exact_node_ids(tmp_path: Path) -> None:
     collected = tmp_path / "collected.txt"
     collected.write_text(
-        "tests/a/test_x.py::test_one\n"
-        "tests/a/test_x.py::test_param[value with spaces]\n"
-        "2 tests collected\n",
+        "tests/a/test_x.py::test_one\ntests/a/test_x.py::test_param[value with spaces]\n2 tests collected\n",
         encoding="utf-8",
     )
     output = tmp_path / "inventory.csv"
@@ -84,7 +82,19 @@ def test_assertion_manifest_requires_all_three_groups(tmp_path: Path) -> None:
 def test_assertion_manifest_requires_signed_waiver(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.csv"
     fields = ("family", "group", "assertion_id", "source_node", "product_symbol", "status", "reason", "approver")
-    rows = [("qwen", group, group, f"tests/a.py::test_{group}", "p::s", "waived" if group == "numeric" else "active", "", "") for group in ("numeric", "structural", "capability")]
+    rows = [
+        (
+            "qwen",
+            group,
+            group,
+            f"tests/a.py::test_{group}",
+            "p::s",
+            "waived" if group == "numeric" else "active",
+            "",
+            "",
+        )
+        for group in ("numeric", "structural", "capability")
+    ]
     _write_csv(manifest, fields, rows)
     with pytest.raises(GateError, match="requires reason and approver"):
         check_assertions(argparse.Namespace(manifest=manifest, baseline=None, inventory=None))
@@ -92,7 +102,16 @@ def test_assertion_manifest_requires_signed_waiver(tmp_path: Path) -> None:
 
 def test_scenario_budget_counts_unique_build_run_pairs(tmp_path: Path) -> None:
     matrix = tmp_path / "scenarios.csv"
-    fields = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
+    fields = (
+        "family",
+        "scenario_id",
+        "build_signature",
+        "run_signature",
+        "build_count",
+        "forward_count",
+        "actual_seconds",
+        "schedule",
+    )
     rows = [
         ("qwen", "numeric", "build-a", "run-a", "1", "1", "90", "incremental"),
         ("qwen", "structural", "build-a", "run-a", "1", "1", "90", "incremental"),
@@ -103,7 +122,16 @@ def test_scenario_budget_counts_unique_build_run_pairs(tmp_path: Path) -> None:
 
 def test_scenario_budget_rejects_too_many_distinct_runs(tmp_path: Path) -> None:
     matrix = tmp_path / "scenarios.csv"
-    fields = ("family", "scenario_id", "build_signature", "run_signature", "build_count", "forward_count", "actual_seconds", "schedule")
+    fields = (
+        "family",
+        "scenario_id",
+        "build_signature",
+        "run_signature",
+        "build_count",
+        "forward_count",
+        "actual_seconds",
+        "schedule",
+    )
     rows = [
         ("qwen", "one", "build-a", "run-a", "1", "1", "100", "incremental"),
         ("qwen", "two", "build-a", "run-b", "1", "1", "100", "incremental"),
@@ -116,10 +144,15 @@ def test_scenario_budget_rejects_too_many_distinct_runs(tmp_path: Path) -> None:
 def test_watcher_gate_requires_mapped_symbol(tmp_path: Path) -> None:
     watchers = tmp_path / "watchers.csv"
     fields = ("family", "source_node", "product_symbol", "required")
-    rows = [(family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true") for family in ("qwen", "dense", "moe", "multimodal")]
+    rows = [
+        (family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true")
+        for family in ("qwen", "dense", "moe", "multimodal")
+    ]
     _write_csv(watchers, fields, rows)
     test_map = tmp_path / "test_map.json"
-    test_map.write_text(json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8")
+    test_map.write_text(
+        json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8"
+    )
     check_watchers(argparse.Namespace(watchers=watchers, test_map=test_map))
 
 
@@ -131,20 +164,26 @@ def test_compare_inventory_writes_empty_reports_for_matching_nodes(tmp_path: Pat
     collected = tmp_path / "collected.txt"
     collected.write_text(node + "\n", encoding="utf-8")
 
-    compare_inventory(argparse.Namespace(inventory=inventory, collect_output=collected, output_dir=tmp_path / "reports"))
+    compare_inventory(
+        argparse.Namespace(inventory=inventory, collect_output=collected, output_dir=tmp_path / "reports")
+    )
 
     assert (tmp_path / "reports/inventory_missing.csv").read_text(encoding="utf-8") == "node_id\n"
     assert (tmp_path / "reports/inventory_extra.csv").read_text(encoding="utf-8") == "node_id\n"
 
 
-def test_changed_test_files_keeps_only_added_existing_python_tests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_changed_test_files_keeps_only_added_existing_python_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     test_file = tmp_path / "tests/new/test_case.py"
     test_file.parent.mkdir(parents=True)
     test_file.write_text("def test_case(): pass\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "scripts.helpers.test_architecture.subprocess.run",
-        lambda *_args, **_kwargs: argparse.Namespace(stdout="tests/new/test_case.py\ntests/new/readme.md\ntests/missing.py\n"),
+        lambda *_args, **_kwargs: argparse.Namespace(
+            stdout="tests/new/test_case.py\ntests/new/readme.md\ntests/missing.py\n"
+        ),
     )
 
     assert _changed_test_files("origin/master") == [Path("tests/new/test_case.py")]
@@ -219,9 +258,7 @@ def test_check_l2_layers_scans_helpers_and_module_tests(tmp_path: Path, monkeypa
 
 def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     parser = argparse.Namespace(
-        parse_args=lambda: argparse.Namespace(
-            func=lambda _args: (_ for _ in ()).throw(GateError("boom"))
-        )
+        parse_args=lambda: argparse.Namespace(func=lambda _args: (_ for _ in ()).throw(GateError("boom")))
     )
     monkeypatch.setattr("scripts.helpers.test_architecture.build_parser", lambda: parser)
 
