@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -207,3 +208,105 @@ printf '{"schema_version":1,"built_from_commit":"%s","map":{"tests/test_demo.py:
         ["git", "rev-parse", "HEAD"], cwd=source_work, check=True, capture_output=True, text=True
     ).stdout.strip()
     assert json.loads(published)["built_from_commit"] == source_sha
+
+
+def _write_config(path: Path, payload: dict | None = None) -> Path:
+    body = {
+        "source_url": "https://example.com/source.git",
+        "publish_url": "https://example.com/publish.git",
+        "branches": [{"source": "master", "publish": "test-map/master"}],
+    }
+    if payload:
+        body.update(payload)
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+def test_load_config_accepts_unique_branch_names(tmp_path: Path) -> None:
+    config = publisher_module.load_config(_write_config(tmp_path / "publisher.json"))
+
+    assert config["branches"] == [{"source": "master", "publish": "test-map/master"}]
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        ({"source_url": "-https://example.com/source.git"}, "Missing/invalid source_url"),
+        ({"source_url": "https://user:secret@example.com/source.git"}, "Credentials are not allowed"),
+        ({"branches": []}, "at least one branch"),
+        ({"branches": [{"source": "master"}]}, "source and publish"),
+        (
+            {
+                "branches": [
+                    {"source": "master", "publish": "maps/master"},
+                    {"source": "master", "publish": "maps/other"},
+                ]
+            },
+            "Duplicate source",
+        ),
+        ({"branches": [{"source": "-master", "publish": "maps/master"}]}, "Invalid branch name"),
+        ({"branches": [{"source": "bad..name", "publish": "maps/master"}]}, "git failed"),
+    ],
+)
+def test_load_config_rejects_invalid_settings(tmp_path: Path, payload: dict, match: str) -> None:
+    with pytest.raises((ValueError, RuntimeError), match=match):
+        publisher_module.load_config(_write_config(tmp_path / "publisher.json", payload))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="publisher is a Linux service")
+def test_worker_lock_is_exclusive(tmp_path: Path) -> None:
+    with publisher_module.worker_lock(tmp_path):
+        assert (tmp_path / "publisher.lock").is_file()
+        with pytest.raises(BlockingIOError):
+            with publisher_module.worker_lock(tmp_path):
+                pass
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_main_once_returns_cycle_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, success: bool) -> None:
+    config = _write_config(tmp_path / "publisher.json")
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["publish_test_maps", "--config", str(config), "--workspace", str(workspace), "--once"],
+    )
+    monkeypatch.setattr(publisher_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(Publisher, "cycle", lambda _self: success)
+
+    assert publisher_module.main() == (0 if success else 1)
+    assert (workspace / "publisher.lock").is_file()
+
+
+def test_main_rejects_nonpositive_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _write_config(tmp_path / "publisher.json")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "publish_test_maps",
+            "--config",
+            str(config),
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--interval",
+            "0",
+            "--once",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        publisher_module.main()
+
+
+def test_main_returns_failure_when_config_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = tmp_path / "publisher.json"
+    config.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["publish_test_maps", "--config", str(config), "--workspace", str(tmp_path / "workspace"), "--once"],
+    )
+    monkeypatch.setattr(publisher_module.signal, "signal", lambda *_args: None)
+
+    assert publisher_module.main() == 1
