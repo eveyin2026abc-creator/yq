@@ -30,8 +30,10 @@ Python constants here — not environment variables.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 _DEFAULTS_ENV: Final = Path(__file__).resolve().parent.parent / "defaults.env"
 _PYTEST_XDIST_ARGS: Final = ("-n", "auto", "--dist", "worksteal")
@@ -93,11 +95,20 @@ PYTEST_XDIST_ARGS: Final = _PYTEST_XDIST_ARGS
 
 
 def build_test_map_url(base_branch: str) -> str:
-    """Return the OBS test_map URL for *base_branch* (may contain ``/``)."""
+    """Return the configured test_map URL for *base_branch* (may contain ``/``)."""
     branch = base_branch.strip().lstrip("/")
     if not branch:
         raise ValueError("base_branch must be non-empty")
-    return _TEST_MAP_URL_TEMPLATE.format(branch=branch)
+    template = os.environ.get("MSMODELING_TEST_MAP_URL_TEMPLATE", _TEST_MAP_URL_TEMPLATE).strip()
+    if template.count("{branch}") != 1:
+        raise ValueError("MSMODELING_TEST_MAP_URL_TEMPLATE must contain one {branch} placeholder")
+    url = template.format(branch=branch)
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("MSMODELING_TEST_MAP_URL_TEMPLATE must produce an HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credentials are not allowed in MSMODELING_TEST_MAP_URL_TEMPLATE")
+    return url
 
 
 def default_test_map_path(*, cache_dir: str | Path | None = None, base_branch: str) -> Path:

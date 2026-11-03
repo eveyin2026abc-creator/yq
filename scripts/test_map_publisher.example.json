@@ -1,0 +1,14 @@
+{
+  "source_url": "https://gitcode.com/Ascend/msmodeling.git",
+  "publish_url": "https://gitcode.com/eveyin1/msmodeling_pr.git",
+  "branches": [
+    {
+      "source": "master",
+      "publish": "test-map/master"
+    },
+    {
+      "source": "poc/AiClusterHub",
+      "publish": "test-map/poc/AiClusterHub"
+    }
+  ]
+}

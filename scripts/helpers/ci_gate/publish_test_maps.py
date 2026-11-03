@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+
+# -------------------------------------------------------------------------
+# This file is part of the MindStudio project.
+# Copyright (c) 2026 Huawei Technologies Co.,Ltd.
+#
+# MindStudio is licensed under Mulan PSL v2.
+# You can use this software according to the terms and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#
+#          http://license.coscl.org.cn/MulanPSL2
+#
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+# -------------------------------------------------------------------------
+"""Serial Linux worker publishing one test_map per configured source branch."""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import contextmanager
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import time
+from typing import Iterator
+from urllib.parse import urlsplit
+
+LOG = logging.getLogger("test_map_publisher")
+
+
+def run(
+    args: list[str],
+    cwd: Path,
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int = 120,
+    capture: bool = True,
+) -> str:
+    """Run without a shell and terminate the entire child group on interruption."""
+    with subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE if capture else None,
+        text=True,
+        start_new_session=True,
+    ) as proc:
+        try:
+            output, _ = proc.communicate(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            raise
+        if proc.returncode:
+            raise RuntimeError(f"{args[0]} failed (exit {proc.returncode})")
+        return output.strip() if output is not None else ""
+
+
+def git(root: Path, *args: str) -> str:
+    return run(["git", *args], root)
+
+
+def read_map(path: Path) -> dict:
+    """Reject incomplete/corrupt maps before using or publishing them."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("Unsupported test_map schema")
+    sha = payload.get("built_from_commit", "")
+    if not isinstance(sha, str) or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        raise ValueError("Invalid built_from_commit")
+    mapping = payload.get("map")
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("Empty or invalid test_map")
+    for node, sources in mapping.items():
+        if not isinstance(node, str) or not isinstance(sources, dict) or not sources:
+            raise ValueError("Invalid test_map node")
+        for source, symbols in sources.items():
+            if (
+                not isinstance(source, str)
+                or not isinstance(symbols, list)
+                or not all(isinstance(symbol, str) for symbol in symbols)
+            ):
+                raise ValueError("Invalid test_map source symbols")
+    return payload
+
+
+def load_config(path: Path) -> dict:
+    config = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("source_url", "publish_url"):
+        if not isinstance(config.get(key), str) or not config[key] or config[key].startswith("-"):
+            raise ValueError(f"Missing/invalid {key}")
+        parsed = urlsplit(config[key])
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError(f"Credentials are not allowed in {key}; use a Git credential helper")
+    branches = config.get("branches")
+    if not isinstance(branches, list) or not branches:
+        raise ValueError("Configure at least one branch")
+    if not all(isinstance(branch, dict) and {"source", "publish"} <= branch.keys() for branch in branches):
+        raise ValueError("Each branch needs source and publish names")
+    for field in ("source", "publish"):
+        names = [branch[field] for branch in branches]
+        if len(set(names)) != len(names):
+            raise ValueError(f"Duplicate {field} branches")
+        for name in names:
+            if not isinstance(name, str) or name.startswith("-"):
+                raise ValueError("Invalid branch name")
+            git(path.parent, "check-ref-format", f"refs/heads/{name}")
+    return config
+
+
+@contextmanager
+def worker_lock(workspace: Path) -> Iterator[None]:
+    """One worker owns every branch directory; releases automatically after crashes."""
+    import fcntl  # Linux server only.
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    with (workspace / "publisher.lock").open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
+class Publisher:
+    """Keep isolated source/environment/artifact checkouts and a durable local outbox."""
+
+    def __init__(self, config: dict, workspace: Path, *, python: str = "3.11", timeout: int = 7200):
+        self.config = config
+        self.workspace = workspace
+        self.python = python
+        self.timeout = timeout
+
+    def repository(self, path: Path, url: str) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        if not (path / ".git").exists():
+            git(path, "init")
+            git(path, "remote", "add", "origin", url)
+        elif git(path, "remote", "get-url", "origin") != url:
+            raise ValueError("Repository URL changed; use a new workspace")
+
+    def refresh_artifacts(self, repo: Path, branch: str) -> None:
+        self.repository(repo, self.config["publish_url"])
+        ref = f"refs/heads/{branch}"
+        if git(repo, "ls-remote", "--heads", "origin", ref):
+            git(repo, "fetch", "origin", f"+{ref}:refs/remotes/origin/published")
+            git(repo, "checkout", "-B", "published", "refs/remotes/origin/published")
+        elif not git(repo, "branch", "--list", "published"):
+            git(repo, "checkout", "--orphan", "published")
+
+    def publish(self, repo: Path, branch: str, candidate: Path) -> None:
+        payload = read_map(candidate)
+        target = repo / "test_map.json"
+        if not target.exists() or target.read_bytes() != candidate.read_bytes():
+            shutil.copyfile(candidate, target)
+            git(repo, "add", "--", "test_map.json")
+            git(repo, "commit", "-s", "-m", f"data: update test_map for {payload['built_from_commit']}")
+        git(repo, "push", "origin", f"HEAD:refs/heads/{branch}")
+        LOG.info("Published %s at source %s", branch, payload["built_from_commit"])
+
+    def generate(self, source: Path, sha: str, current: Path) -> None:
+        git(source, "checkout", "--detach", sha)
+        git(source, "branch", "-f", "publisher-target", sha)
+        remotes = git(source, "remote").splitlines()
+        if "snapshot" not in remotes:
+            git(source, "remote", "add", "snapshot", str(source / ".git"))
+        candidate = current.with_name("candidate.json")
+        candidate.unlink(missing_ok=True)
+        if current.exists():
+            shutil.copyfile(current, candidate)
+        env = dict(os.environ)
+        for key in (
+            "PYTHON",
+            "UV_NO_SYNC",
+            "UV_PROJECT_ENVIRONMENT",
+            "PYTHONPATH",
+            "MSMODELING_TEST_MAP_TARGET_BRANCH",
+            "BASH_ENV",
+            "ENV",
+        ):
+            env.pop(key, None)
+        env.update(
+            MSMODELING_TEST_MAP_PATH=str(candidate),
+            MSMODELING_TEST_BASE_BRANCH="snapshot/publisher-target",
+            MSMODELING_TEST_MAP_TARGET_BRANCH="snapshot/publisher-target",
+            GIT_TERMINAL_PROMPT="0",
+        )
+        LOG.info("Synchronizing dependencies for source %s", sha)
+        run(
+            ["uv", "sync", "--python", self.python, "--frozen", "--group", "ci"],
+            source,
+            env=env,
+            timeout=self.timeout,
+            capture=False,
+        )
+        env.update(PYTHON=str(source / ".venv/bin/python"), UV_NO_SYNC="1")
+        run(
+            ["bash", "scripts/run_test_map_sync.sh", "--once", "--target-branch", "snapshot/publisher-target"],
+            source,
+            env=env,
+            timeout=self.timeout,
+            capture=False,
+        )
+        if read_map(candidate)["built_from_commit"] != sha:
+            raise ValueError("Generated map does not match pinned source commit")
+        candidate.replace(current)
+
+    def process(self, branch: dict) -> None:
+        name = branch["source"]
+        key = hashlib.sha256(name.encode()).hexdigest()[:16]
+        root = self.workspace / key
+        source, artifacts, current = root / "source", root / "artifacts", root / "test_map.json"
+        self.refresh_artifacts(artifacts, branch["publish"])
+        remote_map = artifacts / "test_map.json"
+        # Flush a successful previous build before starting another expensive generation.
+        if current.exists():
+            read_map(current)
+            if not remote_map.exists() or current.read_bytes() != remote_map.read_bytes():
+                self.publish(artifacts, branch["publish"], current)
+        elif remote_map.exists():
+            read_map(remote_map)
+            shutil.copyfile(remote_map, current)
+        self.repository(source, self.config["source_url"])
+        git(source, "fetch", "origin", f"+refs/heads/{name}:refs/remotes/origin/target")
+        sha = git(source, "rev-parse", "refs/remotes/origin/target^{commit}")
+        if current.exists() and read_map(current)["built_from_commit"] == sha:
+            LOG.info("Unchanged: %s at %s", name, sha)
+            return
+        LOG.info("Generating %s at %s", name, sha)
+        self.generate(source, sha, current)
+        self.publish(artifacts, branch["publish"], current)
+
+    def cycle(self) -> bool:
+        success = True
+        for branch in self.config["branches"]:
+            try:
+                self.process(branch)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                LOG.exception("Branch failed: %s; retrying next cycle", branch["source"])
+                success = False
+        return success
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--python", default="3.11")
+    parser.add_argument("--interval", type=int, default=60)
+    parser.add_argument("--timeout", type=int, default=7200)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args()
+    if args.interval <= 0 or args.timeout <= 0:
+        parser.error("interval and timeout must be positive")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
+
+    def stop(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        config = load_config(args.config.resolve())
+        with worker_lock(args.workspace.resolve()):
+            publisher = Publisher(config, args.workspace.resolve(), python=args.python, timeout=args.timeout)
+            while True:
+                success = publisher.cycle()
+                if args.once:
+                    return 0 if success else 1
+                time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 0
+    except (OSError, ValueError, RuntimeError):
+        LOG.exception("Publisher stopped")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

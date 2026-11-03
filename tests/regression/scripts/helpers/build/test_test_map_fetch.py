@@ -39,6 +39,35 @@ def test_build_test_map_url_keeps_branch_slash() -> None:
     assert url.endswith("/sync/poc/AiClusterHub/test_map.json")
 
 
+def test_build_test_map_url_supports_ci_artifact_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "MSMODELING_TEST_MAP_URL_TEMPLATE",
+        "https://gitcode.com/eveyin1/msmodeling_pr/-/raw/test-map/{branch}/test_map.json",
+    )
+
+    assert build_test_map_url("release/1.0") == (
+        "https://gitcode.com/eveyin1/msmodeling_pr/-/raw/test-map/release/1.0/test_map.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    (
+        "https://example.com/no-placeholder.json",
+        "file:///tmp/{branch}/test_map.json",
+        "https://user:secret@example.com/{branch}/test_map.json",
+    ),
+)
+def test_build_test_map_url_rejects_unsafe_template(
+    monkeypatch: pytest.MonkeyPatch,
+    template: str,
+) -> None:
+    monkeypatch.setenv("MSMODELING_TEST_MAP_URL_TEMPLATE", template)
+
+    with pytest.raises(ValueError):
+        build_test_map_url("master")
+
+
 def test_default_test_map_path_is_branch_scoped() -> None:
     path = default_test_map_path(cache_dir=".msmodeling_cache", base_branch="poc/AiClusterHub")
     assert path.as_posix() == ".msmodeling_cache/test_map/poc/AiClusterHub/test_map.json"

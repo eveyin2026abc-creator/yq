@@ -1,0 +1,15 @@
+[Unit]
+Description=msmodeling multi-branch test_map publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yinqian
+WorkingDirectory=/home/yinqian/msmodeling-nightly
+ExecStart=/home/yinqian/msmodeling-nightly/.venv/bin/python scripts/helpers/ci_gate/publish_test_maps.py --config /home/yinqian/test-map-publisher.json --workspace /home/yinqian/test-map-publisher --interval 60
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -138,6 +138,12 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
 - Pytest collection is reused by execution and coverage conversion; sync does not run a second full `--collect-only`.
 - Pid-scoped temp branch `msmodeling-sync/<pid>`; restored & deleted on exit, SIGINT/SIGTERM, `--watch`, and `atexit`.
 - **OBS upload/download external**: sync writes local file only. CI wrapper upload after success; compile jobs download before `run_ci_gate.sh`. Freshness via `built_from_commit`.
+- A persistent Linux host can monitor several target branches and publish one validated map per artifact branch with
+  `scripts/helpers/ci_gate/publish_test_maps.py`. See
+  [multi-branch test_map publisher](../docs/zh/developer_guide/test_map_publisher.md) for configuration, failure recovery,
+  and systemd deployment.
+- `MSMODELING_TEST_MAP_URL_TEMPLATE` can redirect automatic downloads to another HTTP(S) artifact repository. The
+  template must contain one `{branch}` placeholder and no embedded credentials; the default remains the OBS URL above.
 
 ## nightly (`run_nightly.sh`)
 
