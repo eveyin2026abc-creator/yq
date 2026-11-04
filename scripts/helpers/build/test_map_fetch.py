@@ -29,7 +29,7 @@ from scripts.helpers.defaults import build_test_map_url, default_test_map_path
 
 logger: Final = logging.getLogger("build.test_map")
 
-# Small JSON over OBS; hang forever is worse than failing the gate.
+# The map is one JSON file; hanging forever is worse than failing the gate.
 _DOWNLOAD_TIMEOUT_SECONDS: Final = 30
 
 

@@ -36,7 +36,9 @@ if TYPE_CHECKING:
 
 def test_build_test_map_url_keeps_branch_slash() -> None:
     url = build_test_map_url("poc/AiClusterHub")
-    assert url.endswith("/sync/poc/AiClusterHub/test_map.json")
+    assert url == (
+        "https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/poc/AiClusterHub"
+    )
 
 
 def test_build_test_map_url_supports_ci_artifact_repository(monkeypatch: pytest.MonkeyPatch) -> None:

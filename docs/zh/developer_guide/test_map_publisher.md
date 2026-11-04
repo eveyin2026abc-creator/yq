@@ -51,10 +51,11 @@ journalctl -u test-map-publisher.service -f
 Each artifact branch contains `test_map.json` at its root. CI should choose the
 artifact branch from the pull request's target branch, download the file, and
 set `MSMODELING_TEST_MAP_PATH`. With the example's `test-map/<source>` naming,
-the existing zero-config downloader can instead be redirected before the CI gate:
+`python build.py test --suite ci_gate` already downloads that file. Set
+`MSMODELING_TEST_MAP_URL_TEMPLATE` only to point somewhere else:
 
 ```bash
-export MSMODELING_TEST_MAP_URL_TEMPLATE='https://gitcode.com/eveyin1/msmodeling_pr/-/raw/test-map/{branch}/test_map.json'
+export MSMODELING_TEST_MAP_URL_TEMPLATE='https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/{branch}'
 python build.py test --suite ci_gate
 ```
 

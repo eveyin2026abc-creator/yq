@@ -38,10 +38,10 @@ from urllib.parse import urlsplit
 _DEFAULTS_ENV: Final = Path(__file__).resolve().parent.parent / "defaults.env"
 _PYTEST_XDIST_ARGS: Final = ("-n", "auto", "--dist", "worksteal")
 
-# Not env vars — internal layout / OBS contract only.
+# Not env vars — internal layout. ``{branch}`` is the source branch name.
 _TEST_MAP_FILENAME: Final = "test_map.json"
 _TEST_MAP_URL_TEMPLATE: Final = (
-    "https://mindstudio-pr.obs.cn-north-4.myhuaweicloud.com/msmodeling/sync/{branch}/test_map.json"
+    "https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/{branch}"
 )
 
 # Keys applied as process env defaults (setdefault). Keep in sync with common.sh.
@@ -95,7 +95,7 @@ PYTEST_XDIST_ARGS: Final = _PYTEST_XDIST_ARGS
 
 
 def build_test_map_url(base_branch: str) -> str:
-    """Return the configured test_map URL for *base_branch* (may contain ``/``)."""
+    """Return the test_map download URL for *base_branch* (may contain ``/``)."""
     branch = base_branch.strip().lstrip("/")
     if not branch:
         raise ValueError("base_branch must be non-empty")
