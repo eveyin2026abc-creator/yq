@@ -26,6 +26,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -117,6 +118,22 @@ def load_config(path: Path) -> dict:
             if not isinstance(name, str) or name.startswith("-"):
                 raise ValueError("Invalid branch name")
             git(path.parent, "check-ref-format", f"refs/heads/{name}")
+    discovery = config.get("discover_branches")
+    if discovery is not None:
+        if not isinstance(discovery, dict) or not isinstance(discovery.get("patterns"), list):
+            raise ValueError("discover_branches needs a patterns list")
+        patterns = discovery["patterns"]
+        if not patterns or not all(isinstance(pattern, str) and pattern for pattern in patterns):
+            raise ValueError("Branch discovery patterns must be non-empty strings")
+        try:
+            for pattern in patterns:
+                re.compile(pattern)
+        except re.error as error:
+            raise ValueError(f"Invalid branch discovery pattern: {error}") from error
+        prefix = discovery.get("publish_prefix", "test-map/")
+        if not isinstance(prefix, str) or not prefix or prefix.startswith("-"):
+            raise ValueError("Invalid discovery publish_prefix")
+        git(path.parent, "check-ref-format", f"refs/heads/{prefix}placeholder")
     return config
 
 
@@ -239,9 +256,34 @@ class Publisher:
         self.generate(source, sha, current)
         self.publish(artifacts, branch["publish"], current)
 
+    def branches(self) -> list[dict[str, str]]:
+        branches = list(self.config["branches"])
+        discovery = self.config.get("discover_branches")
+        if discovery is None:
+            return branches
+        output = git(self.workspace, "ls-remote", "--heads", self.config["source_url"])
+        patterns = [re.compile(pattern) for pattern in discovery["patterns"]]
+        prefix = discovery.get("publish_prefix", "test-map/")
+        configured = {branch["source"] for branch in branches}
+        discovered = sorted(
+            name
+            for line in output.splitlines()
+            if "refs/heads/" in line
+            for name in [line.split("refs/heads/", 1)[1]]
+            if name not in configured and any(pattern.fullmatch(name) for pattern in patterns)
+        )
+        branches.extend({"source": name, "publish": f"{prefix}{name}"} for name in discovered)
+        LOG.info("Active source branches: %s", ", ".join(branch["source"] for branch in branches))
+        return branches
+
     def cycle(self) -> bool:
         success = True
-        for branch in self.config["branches"]:
+        try:
+            branches = self.branches()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            LOG.exception("Branch discovery failed; retrying next cycle")
+            return False
+        for branch in branches:
             try:
                 self.process(branch)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):

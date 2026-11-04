@@ -1,15 +1,19 @@
 # Multi-branch test_map publisher
 
-`publish_test_maps.py` watches an explicit list of source branches, serially
+`publish_test_maps.py` watches configured and automatically discovered source branches, serially
 updates their maps with the existing `run_test_map_sync.sh --once` workflow, and
 pushes each validated map to its configured artifact branch. It is intended for
 a persistent Linux worker, so dependency environments and the uv cache survive
 between cycles.
 
 Copy `scripts/test_map_publisher.example.json` outside the source checkout and
-edit the source/publish branch pairs. Branch names must be exact; wildcards are
-not expanded. Use a Git credential helper or SSH agent for the publication
-repository. Credentials in repository URLs are rejected.
+edit the source/publish branch pairs. The example explicitly keeps `master`,
+`dev`, and `develop`, and discovers version branches such as `26.1.0` and
+`26.2.0` on every cycle. A future version branch is picked up without changing
+the configuration or restarting the service. Discovery patterns use regular
+expression full matches, so temporary feature branches are not selected. Use a
+Git credential helper or SSH agent for the publication repository. Credentials
+in repository URLs are rejected.
 
 Run one diagnostic cycle before enabling the service:
 

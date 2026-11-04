@@ -133,6 +133,39 @@ def test_cycle_continues_after_one_branch_fails(tmp_path: Path, monkeypatch: pyt
     assert visited == ["broken", "master"]
 
 
+def test_branch_discovery_adds_only_matching_unconfigured_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publisher = _publisher(tmp_path)
+    publisher.config["branches"] = [{"source": "master", "publish": "test-map/master"}]
+    publisher.config["discover_branches"] = {
+        "patterns": [r"[0-9]+\.[0-9]+\.[0-9]+"],
+        "publish_prefix": "test-map/",
+    }
+    output = "\n".join(
+        [
+            f"{_SHA}\trefs/heads/26.2.0",
+            f"{_SHA}\trefs/heads/feature/skip-me",
+            f"{_SHA}\trefs/heads/26.1.0",
+        ]
+    )
+    monkeypatch.setattr(publisher_module, "git", lambda *_: output)
+
+    assert publisher.branches() == [
+        {"source": "master", "publish": "test-map/master"},
+        {"source": "26.1.0", "publish": "test-map/26.1.0"},
+        {"source": "26.2.0", "publish": "test-map/26.2.0"},
+    ]
+
+
+def test_cycle_retries_when_branch_discovery_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    publisher = _publisher(tmp_path)
+    publisher.config["discover_branches"] = {"patterns": [".*"]}
+    monkeypatch.setattr(publisher_module, "git", lambda *_: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    assert publisher.cycle() is False
+
+
 @pytest.mark.skipif(os.name == "nt", reason="publisher is a Linux service")
 def test_publisher_end_to_end_updates_only_after_source_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source_work = tmp_path / "source-work"
@@ -228,6 +261,17 @@ def test_load_config_accepts_unique_branch_names(tmp_path: Path) -> None:
     assert config["branches"] == [{"source": "master", "publish": "test-map/master"}]
 
 
+def test_load_config_accepts_branch_discovery(tmp_path: Path) -> None:
+    config = publisher_module.load_config(
+        _write_config(
+            tmp_path / "publisher.json",
+            {"discover_branches": {"patterns": [r"[0-9]+\.[0-9]+\.[0-9]+"], "publish_prefix": "maps/"}},
+        )
+    )
+
+    assert config["discover_branches"]["publish_prefix"] == "maps/"
+
+
 @pytest.mark.parametrize(
     ("payload", "match"),
     [
@@ -246,6 +290,7 @@ def test_load_config_accepts_unique_branch_names(tmp_path: Path) -> None:
         ),
         ({"branches": [{"source": "-master", "publish": "maps/master"}]}, "Invalid branch name"),
         ({"branches": [{"source": "bad..name", "publish": "maps/master"}]}, "git failed"),
+        ({"discover_branches": {"patterns": ["["]}}, "Invalid branch discovery pattern"),
     ],
 )
 def test_load_config_rejects_invalid_settings(tmp_path: Path, payload: dict, match: str) -> None:
