@@ -1,25 +1,15 @@
 # Multi-branch test_map publisher
 
-`publish_test_maps.py` watches configured and automatically discovered source branches, serially
+`publish_test_maps.py` watches an explicit list of source branches, serially
 updates their maps with the existing `run_test_map_sync.sh --once` workflow, and
 pushes each validated map to its configured artifact branch. It is intended for
 a persistent Linux worker, so dependency environments and the uv cache survive
 between cycles.
 
 Copy `scripts/test_map_publisher.example.json` outside the source checkout and
-edit the source/publish branch pairs. The example explicitly keeps `master`,
-`dev`, and `develop`, and discovers version branches such as `26.1.0` and
-`26.2.0` on every cycle. A future version branch is picked up without changing
-the configuration or restarting the service. Discovery patterns use regular
-expression full matches, so temporary feature branches are not selected. Use a
-Git credential helper or SSH agent for the publication repository. Credentials
-in repository URLs are rejected.
-
-`dependency_index` optionally re-resolves artifact URLs against a reachable
-package index before synchronization. The publisher verifies that every locked
-package version remains unchanged and restores the committed `uv.lock` before
-map generation. This supports branches whose lock files contain unavailable
-mirror URLs without creating lock-file changes.
+edit the source/publish branch pairs. Branch names must be exact; wildcards are
+not expanded. Use a Git credential helper or SSH agent for the publication
+repository. Credentials in repository URLs are rejected.
 
 Run one diagnostic cycle before enabling the service:
 
@@ -51,11 +41,10 @@ journalctl -u test-map-publisher.service -f
 Each artifact branch contains `test_map.json` at its root. CI should choose the
 artifact branch from the pull request's target branch, download the file, and
 set `MSMODELING_TEST_MAP_PATH`. With the example's `test-map/<source>` naming,
-`python build.py test --suite ci_gate` already downloads that file. Set
-`MSMODELING_TEST_MAP_URL_TEMPLATE` only to point somewhere else:
+the existing zero-config downloader can instead be redirected before the CI gate:
 
 ```bash
-export MSMODELING_TEST_MAP_URL_TEMPLATE='https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/{branch}'
+export MSMODELING_TEST_MAP_URL_TEMPLATE='https://gitcode.com/eveyin1/msmodeling_pr/-/raw/test-map/{branch}/test_map.json'
 python build.py test --suite ci_gate
 ```
 
