@@ -20,12 +20,16 @@ tests/
 │   └── web_ui/
 ├── assets/                  # Model config fixtures
 ├── helpers/                 # Shared builders/assertions
-└── benchmark/
-    ├── models/              # Model precision/performance
-    └── ops/                 # Operator perf_database
+├── benchmark/
+│   ├── models/              # Model precision/performance
+│   └── ops/                 # Operator perf_database
+└── e2e/
+    └── web_ui/              # Web console Playwright e2e (self-contained npm package, NOT pytest)
 ```
 
 Layering by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (long-running), `npu` (hardware), `network` (live Hub).
+
+`e2e/` is the exception: Playwright (TypeScript) browser suites, each a self-contained npm package run via its own `npm run test`. CI gates collect only `test_*.py`/`*_test.py`, so nothing under `e2e/` is picked up by pytest or the gates.
 
 ## Marker Semantics
 

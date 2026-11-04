@@ -105,7 +105,7 @@ const showProgress = computed(() => isRunning.value || isPending.value)
               </el-tag>
               <span class="module-label">{{ job.module_id }}</span>
             </div>
-            <div class="job-id">Job ID: {{ job.id }}</div>
+            <div class="job-id">Job ID: {{ job.job_id }}</div>
           </div>
         </div>
       </div>

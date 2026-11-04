@@ -28,13 +28,18 @@ import { fileURLToPath, URL } from 'node:url'
 //   ``localhost`` so the proxy target matches what the backend actually bound
 //   to — matters on machines where IPv4 is disabled and backend is on ``::1``.
 //   IPv6 literals need ``[...]`` in a URL; bare hostnames don't.
+//   ``MSMODELING_BACKEND_PORT`` overrides the proxy target port (default 8000)
+//   so stacks running under a non-default ``MSMODELING_PORT`` (e.g. the
+//   Playwright e2e servers) proxy to the right backend.
 // - Plugin enablement is data-driven: src/plugins/index.ts enables every plugin
 //   dir present under src/plugins/ (copied by scripts/copy-plugins.mjs). A public
 //   build has no plugin dirs there, so no plugin code is bundled. Adding/removing
 //   a plugin needs no edit here.
 const backendHost = process.env.MSMODELING_BACKEND_HOST || 'localhost'
-const backendTarget =
-  backendHost.includes(':') ? `http://[${backendHost}]:8000` : `http://${backendHost}:8000`
+const backendPort = process.env.MSMODELING_BACKEND_PORT || '8000'
+const backendTarget = backendHost.includes(':')
+  ? `http://[${backendHost}]:${backendPort}`
+  : `http://${backendHost}:${backendPort}`
 
 // Frontend bind host: use env var if set, otherwise let Vite decide (IPv4/IPv6)
 const frontendHost = process.env.MSMODELING_FRONTEND_HOST
