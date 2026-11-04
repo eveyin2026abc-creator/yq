@@ -31,6 +31,7 @@ import shutil
 import signal
 import subprocess
 import time
+import tomllib
 from typing import Iterator
 from urllib.parse import urlsplit
 
@@ -97,6 +98,11 @@ def read_map(path: Path) -> dict:
     return payload
 
 
+def locked_versions(data: bytes) -> list[tuple[str, str]]:
+    packages = tomllib.loads(data.decode("utf-8")).get("package", [])
+    return sorted((package["name"], package.get("version", "")) for package in packages)
+
+
 def load_config(path: Path) -> dict:
     config = json.loads(path.read_text(encoding="utf-8"))
     for key in ("source_url", "publish_url"):
@@ -105,6 +111,11 @@ def load_config(path: Path) -> dict:
         parsed = urlsplit(config[key])
         if parsed.username is not None or parsed.password is not None:
             raise ValueError(f"Credentials are not allowed in {key}; use a Git credential helper")
+    dependency_index = config.get("dependency_index")
+    if dependency_index is not None:
+        parsed = urlsplit(dependency_index)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username is not None:
+            raise ValueError("dependency_index must be an HTTP(S) URL without credentials")
     branches = config.get("branches")
     if not isinstance(branches, list) or not branches:
         raise ValueError("Configure at least one branch")
@@ -180,6 +191,7 @@ class Publisher:
         if not target.exists() or target.read_bytes() != candidate.read_bytes():
             shutil.copyfile(candidate, target)
             git(repo, "add", "--", "test_map.json")
+        if git(repo, "status", "--porcelain", "--", "test_map.json"):
             git(repo, "commit", "-s", "-m", f"data: update test_map for {payload['built_from_commit']}")
         git(repo, "push", "origin", f"HEAD:refs/heads/{branch}")
         LOG.info("Published %s at source %s", branch, payload["built_from_commit"])
@@ -212,13 +224,31 @@ class Publisher:
             GIT_TERMINAL_PROMPT="0",
         )
         LOG.info("Synchronizing dependencies for source %s", sha)
-        run(
-            ["uv", "sync", "--python", self.python, "--frozen", "--group", "ci"],
-            source,
-            env=env,
-            timeout=self.timeout,
-            capture=False,
-        )
+        lock = source / "uv.lock"
+        dependency_index = self.config.get("dependency_index")
+        original_lock = lock.read_bytes() if dependency_index else None
+        try:
+            if dependency_index:
+                assert original_lock is not None
+                run(
+                    ["uv", "lock", "--default-index", dependency_index],
+                    source,
+                    env=env,
+                    timeout=self.timeout,
+                    capture=False,
+                )
+                if locked_versions(lock.read_bytes()) != locked_versions(original_lock):
+                    raise ValueError("Dependency index changed locked package versions")
+            run(
+                ["uv", "sync", "--python", self.python, "--frozen", "--group", "ci"],
+                source,
+                env=env,
+                timeout=self.timeout,
+                capture=False,
+            )
+        finally:
+            if original_lock is not None:
+                lock.write_bytes(original_lock)
         env.update(PYTHON=str(source / ".venv/bin/python"), UV_NO_SYNC="1")
         run(
             ["bash", "scripts/run_test_map_sync.sh", "--once", "--target-branch", "snapshot/publisher-target"],

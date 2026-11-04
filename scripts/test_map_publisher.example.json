@@ -1,6 +1,7 @@
 {
   "source_url": "https://gitcode.com/Ascend/msmodeling.git",
   "publish_url": "https://gitcode.com/eveyin1/msmodeling_pr.git",
+  "dependency_index": "https://repo.huaweicloud.com/repository/pypi/simple",
   "branches": [
     {
       "source": "master",

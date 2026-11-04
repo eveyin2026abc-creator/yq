@@ -15,6 +15,12 @@ expression full matches, so temporary feature branches are not selected. Use a
 Git credential helper or SSH agent for the publication repository. Credentials
 in repository URLs are rejected.
 
+`dependency_index` optionally re-resolves artifact URLs against a reachable
+package index before synchronization. The publisher verifies that every locked
+package version remains unchanged and restores the committed `uv.lock` before
+map generation. This supports branches whose lock files contain unavailable
+mirror URLs without creating lock-file changes.
+
 Run one diagnostic cycle before enabling the service:
 
 ```bash

@@ -89,6 +89,27 @@ def test_process_reuses_published_map_when_source_is_unchanged(tmp_path: Path, m
     assert read_map(root / "test_map.json")["built_from_commit"] == _SHA
 
 
+def test_publish_recovers_a_previously_staged_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    publisher = _publisher(tmp_path)
+    repo = tmp_path / "artifacts"
+    repo.mkdir()
+    candidate = tmp_path / "candidate.json"
+    _write_map(candidate)
+    _write_map(repo / "test_map.json")
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(_root: Path, *args: str) -> str:
+        calls.append(args)
+        return "A  test_map.json" if args[0] == "status" else ""
+
+    monkeypatch.setattr(publisher_module, "git", fake_git)
+
+    publisher.publish(repo, "test-map/master", candidate)
+
+    assert any(args[0] == "commit" for args in calls)
+    assert calls[-1][:2] == ("push", "origin")
+
+
 def test_generate_keeps_last_good_map_when_sync_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     publisher = _publisher(tmp_path)
     source = tmp_path / "source"
@@ -112,6 +133,32 @@ def test_generate_keeps_last_good_map_when_sync_fails(tmp_path: Path, monkeypatc
         publisher.generate(source, "b" * 40, current)
 
     assert read_map(current)["built_from_commit"] == _SHA
+
+
+def test_generate_restores_lock_after_dependency_index_sync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    publisher = _publisher(tmp_path)
+    publisher.config["dependency_index"] = "https://example.com/simple"
+    source = tmp_path / "source"
+    source.mkdir()
+    lock = source / "uv.lock"
+    original = b'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+    lock.write_bytes(original)
+    current = tmp_path / "test_map.json"
+    monkeypatch.setattr(publisher_module, "git", lambda *_: "")
+
+    def fake_run(args: list[str], *_args: object, **_kwargs: object) -> str:
+        if args[:2] == ["uv", "lock"]:
+            lock.write_bytes(original + b'source = { registry = "https://example.com/simple" }\n')
+        elif args[0] == "bash":
+            _write_map(current.with_name("candidate.json"), "b" * 40)
+        return ""
+
+    monkeypatch.setattr(publisher_module, "run", fake_run)
+
+    publisher.generate(source, "b" * 40, current)
+
+    assert lock.read_bytes() == original
+    assert read_map(current)["built_from_commit"] == "b" * 40
 
 
 def test_cycle_continues_after_one_branch_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,6 +324,7 @@ def test_load_config_accepts_branch_discovery(tmp_path: Path) -> None:
     [
         ({"source_url": "-https://example.com/source.git"}, "Missing/invalid source_url"),
         ({"source_url": "https://user:secret@example.com/source.git"}, "Credentials are not allowed"),
+        ({"dependency_index": "file:///tmp/simple"}, "dependency_index must be"),
         ({"branches": []}, "at least one branch"),
         ({"branches": [{"source": "master"}]}, "source and publish"),
         (
