@@ -52,7 +52,7 @@
     "nightly-master-20261104-0926.log": {
       "commit": "8eacc6eb",
       "issues": [],
-      "ci_miss_reason": ""
+      "ci_miss_reason": "master 8eacc6eb 的 3 个失败是同一处 Kimi-K2.5 类补丁没留在最终加载的远端类上。8eacc6eb 和 b2ed24f6 没有改 tensor_cast/transformers/builtin_model/kimi_k25.py。_hf_config_patch_for_kimi_k25 每次都会把 _attn_implementation 降级为 tensor_cast，但登记 ATTENTION_CLASSES['tensor_cast'] 和改写 DeepseekV3DecoderLayer.forward 只在进程内执行一次。失败用例的日志里只有降级警告，没有 “Patched transformers environment for Kimi-K2.5”，说明 _patched_kimi_k25 已为真。随后 transformers 按文件哈希重新执行 modeling_deepseek.py，补丁被冲掉且不会再打。带 MTP 的 test_performance_regression_07_kimi_k2_5_3_5k_decode 和 test_kimi_k25_vision_language_decode_with_mtp 在新建 DeepseekV3DecoderLayer 时 KeyError: 'tensor_cast'。test_kimi_k25_text_only_generation 把 attention 换成 MultiheadLatentAttentionTensorCast 后，远端 forward 仍不传 position_embeddings，TypeError。单独重跑 benchmark 那条为通过。同一流水里其他 Kimi-K2.5 用例有通过，是跑在补丁被冲掉之前。Kimi-K3 有同样的 _patched_kimi_k3 开关，本次没有失败。代码在 wangshen001 的 4e12f84d 和 e4cbd42b。"
     }
   }
 }
