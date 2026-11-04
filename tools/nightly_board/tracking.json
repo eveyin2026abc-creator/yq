@@ -48,6 +48,11 @@
       "commit": "47132e7b",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261104-0926.log": {
+      "commit": "8eacc6eb",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

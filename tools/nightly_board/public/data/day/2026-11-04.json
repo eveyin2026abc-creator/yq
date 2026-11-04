@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-04",
+  "today": "2026-11-04",
+  "runs": [
+    {
+      "log": "nightly-master-20261104-0926.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-04",
+      "started": "2026-11-04 09:26",
+      "exit_code": 3,
+      "passed": 10362,
+      "failed": 3,
+      "errors": 0,
+      "duration_sec": 3293,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.1
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_07_kimi_k2_5_3_5k_decode",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'tensor_cast'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_kimi_k25.py::TestKimiK25::test_kimi_k25_text_only_generation",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "TypeError: MultiheadLatentAttentionTensorCast.forward() missing 1 required positional argument: 'position_embeddings'"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/test_kimi_k25.py::TestKimiK25::test_kimi_k25_vision_language_decode_with_mtp",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "KeyError: 'tensor_cast'"
+        }
+      ],
+      "commit": "8eacc6eb",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
