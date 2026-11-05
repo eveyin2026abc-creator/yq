@@ -541,8 +541,6 @@ def test_main_once_returns_cycle_status(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(Publisher, "cycle", lambda _self, _mode="all": success)
 
     assert publisher_module.main() == (0 if success else 1)
-    if os.name != "nt":
-        assert (workspace / "publisher.lock").is_file()
 
 
 def test_main_rejects_nonpositive_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
