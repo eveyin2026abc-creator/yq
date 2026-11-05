@@ -269,12 +269,12 @@ class Publisher:
         elif not git(repo, "branch", "--list", "published"):
             git(repo, "checkout", "--orphan", "published")
 
-    def publish(self, repo: Path, branch: str, candidate: Path) -> None:
-        payload = read_map(candidate)
+    def publish(self, repo: Path, branch: str, test_map_path: Path) -> None:
+        payload = read_map(test_map_path)
         target = repo / "test_map.json"
-        candidate_bytes = read_regular_bytes(candidate)
-        if not target.exists() or read_regular_bytes(target) != candidate_bytes:
-            atomic_copy_regular(candidate, target)
+        test_map_bytes = read_regular_bytes(test_map_path)
+        if not target.exists() or read_regular_bytes(target) != test_map_bytes:
+            atomic_copy_regular(test_map_path, target)
             git(repo, "add", "--", "test_map.json")
         if git(repo, "status", "--porcelain", "--", "test_map.json"):
             git(
@@ -398,13 +398,16 @@ class Publisher:
         patterns = [re.compile(pattern) for pattern in discovery["patterns"]]
         prefix = discovery.get("publish_prefix", "test-map/")
         configured = {branch["source"] for branch in branches}
-        discovered = sorted(
-            name
-            for line in output.splitlines()
-            if "refs/heads/" in line
-            for name in [line.split("refs/heads/", 1)[1]]
-            if name not in configured and any(pattern.fullmatch(name) for pattern in patterns)
-        )
+        discovered = []
+        for line in output.splitlines():
+            if "refs/heads/" not in line:
+                continue
+            name = line.split("refs/heads/", 1)[1]
+            if name in configured:
+                continue
+            if any(pattern.fullmatch(name) for pattern in patterns):
+                discovered.append(name)
+        discovered.sort()
         branches.extend({"source": name, "publish": f"{prefix}{name}"} for name in discovered)
         for field in ("source", "publish"):
             names = [branch[field] for branch in branches]

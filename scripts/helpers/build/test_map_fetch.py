@@ -99,7 +99,10 @@ def download_test_map(*, base_branch: str, dest: Path) -> None:
     ``*.tmp`` then replaces. Tmp is removed on failure; a killed process may
     leave a stale ``*.tmp`` (safe to delete manually).
     """
-    url = build_test_map_url(base_branch)
+    try:
+        url = build_test_map_url(base_branch)
+    except ValueError as exc:
+        raise MapFetchError(f"invalid test_map download URL for branch {base_branch!r}: {exc}") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     logger.info("Downloading test_map from %s → %s", url, dest)

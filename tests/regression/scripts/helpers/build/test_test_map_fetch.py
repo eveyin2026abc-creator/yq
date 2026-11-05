@@ -52,10 +52,29 @@ def test_build_test_map_url_supports_ci_artifact_repository(monkeypatch: pytest.
     )
 
 
+def test_build_test_map_url_encodes_branch_query_characters() -> None:
+    url = build_test_map_url("release/1.0&candidate?#fragment")
+
+    assert url.endswith("test-map/release/1.0%26candidate%3F%23fragment")
+
+
+def test_build_test_map_url_requires_explicit_custom_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "MSMODELING_TEST_MAP_URL_TEMPLATE",
+        "https://artifacts.example.com/test-map/{branch}.json",
+    )
+
+    with pytest.raises(ValueError, match="not allowed"):
+        build_test_map_url("master")
+
+    monkeypatch.setenv("MSMODELING_TEST_MAP_ALLOWED_HOSTS", "artifacts.example.com")
+    assert build_test_map_url("master") == "https://artifacts.example.com/test-map/master.json"
+
 @pytest.mark.parametrize(
     "template",
     (
         "https://example.com/no-placeholder.json",
+        "https://gitcode.com/{branch}/{unknown}.json",
         "file:///tmp/{branch}/test_map.json",
         "https://user:secret@example.com/{branch}/test_map.json",
     ),
@@ -164,6 +183,13 @@ def test_download_http_error_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr("scripts.helpers.build.test_map_fetch.urllib.request.urlopen", fake_urlopen)
     with pytest.raises(MapFetchError, match="HTTP 404"):
+        download_test_map(base_branch="master", dest=tmp_path / "test_map.json")
+
+
+def test_download_wraps_invalid_url_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSMODELING_TEST_MAP_URL_TEMPLATE", "file:///tmp/{branch}.json")
+
+    with pytest.raises(MapFetchError, match="invalid test_map download URL"):
         download_test_map(base_branch="master", dest=tmp_path / "test_map.json")
 
 

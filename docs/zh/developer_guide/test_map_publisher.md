@@ -84,9 +84,12 @@ python build.py test --suite ci_gate
 ```
 
 `{branch}` is replaced by `MSMODELING_TEST_BASE_BRANCH`. The template must be an
-HTTP(S) URL without embedded credentials. CI must still apply the existing
-freshness checks and block or fall back to the full suite when the map is
-missing or stale.
+HTTP(S) URL without embedded credentials. Branch names are URL-encoded while
+preserving `/`. The default host allowlist contains only `gitcode.com`; a custom
+artifact host must also be declared explicitly, for example
+`MSMODELING_TEST_MAP_ALLOWED_HOSTS=artifacts.example.com`. Multiple hosts are
+comma-separated. CI must still apply the existing freshness checks and block or
+fall back to the full suite when the map is missing or stale.
 
 Useful options are `--python 3.11`, `--interval 60`, and `--timeout 7200`. The
 timeout applies independently to dependency synchronization and map generation.
