@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -25,7 +26,11 @@ import sys
 import pytest
 
 from scripts.helpers.ci_gate import publish_test_maps as publisher_module
-from scripts.helpers.ci_gate.publish_test_maps import Publisher, read_map
+from scripts.helpers.ci_gate.publish_test_maps import (
+    Publisher,
+    locked_artifacts,
+    read_map,
+)
 
 _SHA = "a" * 40
 
@@ -46,7 +51,11 @@ def _write_map(path: Path, sha: str = _SHA) -> None:
 
 def _publisher(tmp_path: Path) -> Publisher:
     return Publisher(
-        {"source_url": "https://gitcode.com/Ascend/msmodeling.git", "publish_url": "publish.git", "branches": []},
+        {
+            "source_url": "https://gitcode.com/Ascend/msmodeling.git",
+            "publish_url": "publish.git",
+            "branches": [],
+        },
         tmp_path,
     )
 
@@ -60,8 +69,16 @@ def test_read_map_requires_nonempty_valid_payload(tmp_path: Path) -> None:
         (
             {},
             {"schema_version": 1, "built_from_commit": _SHA, "map": {}},
-            {"schema_version": 1, "built_from_commit": "short", "map": {"node": {"source": ["symbol"]}}},
-            {"schema_version": 1, "built_from_commit": _SHA, "map": {"node": {"source": "symbol"}}},
+            {
+                "schema_version": 1,
+                "built_from_commit": "short",
+                "map": {"node": {"source": ["symbol"]}},
+            },
+            {
+                "schema_version": 1,
+                "built_from_commit": _SHA,
+                "map": {"node": {"source": "symbol"}},
+            },
         )
     ):
         invalid = tmp_path / f"invalid-{index}.json"
@@ -70,21 +87,63 @@ def test_read_map_requires_nonempty_valid_payload(tmp_path: Path) -> None:
             read_map(invalid)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs elevated Windows privileges")
+def test_read_map_rejects_symlink(tmp_path: Path) -> None:
+    real = tmp_path / "real.json"
+    link = tmp_path / "test_map.json"
+    _write_map(real)
+    link.symlink_to(real)
+
+    with pytest.raises(ValueError, match="regular file"):
+        read_map(link)
+
+
+def test_locked_artifacts_rejects_same_version_with_changed_hash() -> None:
+    original = b"""version = 1
+[[package]]
+name = "demo"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [{ url = "https://files.example/demo-1.0.whl", hash = "sha256:111", size = 1 }]
+"""
+    mirrored = original.replace(b"pypi.org", b"mirror.example").replace(b"sha256:111", b"sha256:222")
+
+    assert locked_artifacts(original) != locked_artifacts(mirrored)
+
+
+def test_locked_artifacts_allows_registry_host_change_with_same_hash() -> None:
+    original = b"""version = 1
+[[package]]
+name = "demo"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [{ url = "https://pypi.org/files/demo-1.0.whl", hash = "sha256:111", size = 1 }]
+"""
+    mirrored = original.replace(b"pypi.org", b"mirror.example")
+
+    assert locked_artifacts(original) == locked_artifacts(mirrored)
+
+
 def test_process_reuses_published_map_when_source_is_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     publisher = _publisher(tmp_path)
     branch = {"source": "master", "publish": "maps/master"}
-    root = tmp_path / publisher_module.hashlib.sha256(b"master").hexdigest()[:16]
+    root = tmp_path / "generation" / publisher_module.hashlib.sha256(b"master").hexdigest()[:16]
 
-    def refresh(repo: Path, _branch: str) -> None:
-        _write_map(repo / "test_map.json")
-
-    monkeypatch.setattr(publisher, "refresh_artifacts", refresh)
+    _write_map(root / "test_map.json")
     monkeypatch.setattr(publisher, "repository", lambda *_: None)
-    monkeypatch.setattr(publisher_module, "git", lambda _root, *args: _SHA if args[0] == "rev-parse" else "")
-    monkeypatch.setattr(publisher, "generate", lambda *_: pytest.fail("unchanged map must not regenerate"))
+    monkeypatch.setattr(
+        publisher_module,
+        "git",
+        lambda _root, *args: _SHA if args[0] == "rev-parse" else "",
+    )
+    monkeypatch.setattr(
+        publisher,
+        "generate",
+        lambda *_: pytest.fail("unchanged map must not regenerate"),
+    )
     monkeypatch.setattr(publisher, "publish", lambda *_: pytest.fail("unchanged map must not republish"))
 
-    publisher.process(branch)
+    publisher.process(branch, "generate")
 
     assert read_map(root / "test_map.json")["built_from_commit"] == _SHA
 
@@ -141,14 +200,20 @@ def test_generate_restores_lock_after_dependency_index_sync(tmp_path: Path, monk
     source = tmp_path / "source"
     source.mkdir()
     lock = source / "uv.lock"
-    original = b'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+    original = b"""version = 1
+[[package]]
+name = "demo"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [{ url = "https://pypi.org/files/demo-1.0.whl", hash = "sha256:111", size = 1 }]
+"""
     lock.write_bytes(original)
     current = tmp_path / "test_map.json"
     monkeypatch.setattr(publisher_module, "git", lambda *_: "")
 
     def fake_run(args: list[str], *_args: object, **_kwargs: object) -> str:
         if args[:2] == ["uv", "lock"]:
-            lock.write_bytes(original + b'source = { registry = "https://example.com/simple" }\n')
+            lock.write_bytes(original.replace(b"pypi.org", b"example.com"))
         elif args[0] == "bash":
             _write_map(current.with_name("candidate.json"), "b" * 40)
         return ""
@@ -169,7 +234,7 @@ def test_cycle_continues_after_one_branch_fails(tmp_path: Path, monkeypatch: pyt
     ]
     visited: list[str] = []
 
-    def process(branch: dict) -> None:
+    def process(branch: dict, _mode: str = "all") -> None:
         visited.append(branch["source"])
         if branch["source"] == "broken":
             raise RuntimeError("expected")
@@ -178,6 +243,28 @@ def test_cycle_continues_after_one_branch_fails(tmp_path: Path, monkeypatch: pyt
 
     assert publisher.cycle() is False
     assert visited == ["broken", "master"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "generated", "published"),
+    [("generate", True, False), ("publish", False, True), ("all", True, True)],
+)
+def test_process_separates_generation_from_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    generated: bool,
+    published: bool,
+) -> None:
+    publisher = _publisher(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(publisher, "generate_branch", lambda _branch: calls.append("generate"))
+    monkeypatch.setattr(publisher, "publish_branch", lambda _branch: calls.append("publish"))
+
+    publisher.process({"source": "master", "publish": "test-map/master"}, mode)
+
+    assert ("generate" in calls) is generated
+    assert ("publish" in calls) is published
 
 
 def test_branch_discovery_adds_only_matching_unconfigured_branches(
@@ -205,10 +292,27 @@ def test_branch_discovery_adds_only_matching_unconfigured_branches(
     ]
 
 
+def test_branch_discovery_rejects_publish_target_collision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    publisher = _publisher(tmp_path)
+    publisher.config["branches"] = [{"source": "legacy", "publish": "test-map/26.2.0"}]
+    publisher.config["discover_branches"] = {
+        "patterns": [r"[0-9]+\.[0-9]+\.[0-9]+"],
+        "publish_prefix": "test-map/",
+    }
+    monkeypatch.setattr(publisher_module, "git", lambda *_: f"{_SHA}\trefs/heads/26.2.0")
+
+    with pytest.raises(ValueError, match="Duplicate effective publish"):
+        publisher.branches()
+
+
 def test_cycle_retries_when_branch_discovery_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     publisher = _publisher(tmp_path)
     publisher.config["discover_branches"] = {"patterns": [".*"]}
-    monkeypatch.setattr(publisher_module, "git", lambda *_: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(
+        publisher_module,
+        "git",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
 
     assert publisher.cycle() is False
 
@@ -219,15 +323,30 @@ def test_publisher_end_to_end_updates_only_after_source_commit(tmp_path: Path, m
     source_bare = tmp_path / "source.git"
     publish_bare = tmp_path / "publish.git"
     source_work.mkdir()
-    subprocess.run(["git", "init", "-b", "master"], cwd=source_work, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "master"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=source_work, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source_work, check=True)
     (source_work / "source.txt").write_text("one\n", encoding="utf-8")
     subprocess.run(["git", "add", "source.txt"], cwd=source_work, check=True)
-    subprocess.run(["git", "commit", "-m", "initial"], cwd=source_work, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "init", "--bare", source_bare], check=True, capture_output=True)
     subprocess.run(["git", "remote", "add", "origin", source_bare], cwd=source_work, check=True)
-    subprocess.run(["git", "push", "origin", "master"], cwd=source_work, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "push", "origin", "master"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(["git", "init", "--bare", publish_bare], check=True, capture_output=True)
 
     fake_bin = tmp_path / "bin"
@@ -266,7 +385,13 @@ printf '{"schema_version":1,"built_from_commit":"%s","map":{"tests/test_demo.py:
     assert publisher.cycle() is True
     assert (
         subprocess.run(
-            ["git", "--git-dir", publish_bare, "rev-parse", "refs/heads/test-map/master"],
+            [
+                "git",
+                "--git-dir",
+                publish_bare,
+                "rev-parse",
+                "refs/heads/test-map/master",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -275,17 +400,37 @@ printf '{"schema_version":1,"built_from_commit":"%s","map":{"tests/test_demo.py:
     )
 
     (source_work / "source.txt").write_text("two\n", encoding="utf-8")
-    subprocess.run(["git", "commit", "-am", "update"], cwd=source_work, check=True, capture_output=True)
-    subprocess.run(["git", "push", "origin", "master"], cwd=source_work, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-am", "update"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "push", "origin", "master"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+    )
     assert publisher.cycle() is True
     published = subprocess.run(
-        ["git", "--git-dir", publish_bare, "show", "refs/heads/test-map/master:test_map.json"],
+        [
+            "git",
+            "--git-dir",
+            publish_bare,
+            "show",
+            "refs/heads/test-map/master:test_map.json",
+        ],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
     source_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=source_work, check=True, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=source_work,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert json.loads(published)["built_from_commit"] == source_sha
 
@@ -312,7 +457,12 @@ def test_load_config_accepts_branch_discovery(tmp_path: Path) -> None:
     config = publisher_module.load_config(
         _write_config(
             tmp_path / "publisher.json",
-            {"discover_branches": {"patterns": [r"[0-9]+\.[0-9]+\.[0-9]+"], "publish_prefix": "maps/"}},
+            {
+                "discover_branches": {
+                    "patterns": [r"[0-9]+\.[0-9]+\.[0-9]+"],
+                    "publish_prefix": "maps/",
+                }
+            },
         )
     )
 
@@ -322,8 +472,14 @@ def test_load_config_accepts_branch_discovery(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("payload", "match"),
     [
-        ({"source_url": "-https://example.com/source.git"}, "Missing/invalid source_url"),
-        ({"source_url": "https://user:secret@example.com/source.git"}, "Credentials are not allowed"),
+        (
+            {"source_url": "-https://example.com/source.git"},
+            "Missing/invalid source_url",
+        ),
+        (
+            {"source_url": "https://user:secret@example.com/source.git"},
+            "Credentials are not allowed",
+        ),
         ({"dependency_index": "file:///tmp/simple"}, "dependency_index must be"),
         ({"branches": []}, "at least one branch"),
         ({"branches": [{"source": "master"}]}, "source and publish"),
@@ -336,9 +492,18 @@ def test_load_config_accepts_branch_discovery(tmp_path: Path) -> None:
             },
             "Duplicate source",
         ),
-        ({"branches": [{"source": "-master", "publish": "maps/master"}]}, "Invalid branch name"),
-        ({"branches": [{"source": "bad..name", "publish": "maps/master"}]}, "git failed"),
-        ({"discover_branches": {"patterns": ["["]}}, "Invalid branch discovery pattern"),
+        (
+            {"branches": [{"source": "-master", "publish": "maps/master"}]},
+            "Invalid branch name",
+        ),
+        (
+            {"branches": [{"source": "bad..name", "publish": "maps/master"}]},
+            "git failed",
+        ),
+        (
+            {"discover_branches": {"patterns": ["["]}},
+            "Invalid branch discovery pattern",
+        ),
     ],
 )
 def test_load_config_rejects_invalid_settings(tmp_path: Path, payload: dict, match: str) -> None:
@@ -362,13 +527,22 @@ def test_main_once_returns_cycle_status(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(
         sys,
         "argv",
-        ["publish_test_maps", "--config", str(config), "--workspace", str(workspace), "--once"],
+        [
+            "publish_test_maps",
+            "--config",
+            str(config),
+            "--workspace",
+            str(workspace),
+            "--once",
+        ],
     )
     monkeypatch.setattr(publisher_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(Publisher, "cycle", lambda _self: success)
+    monkeypatch.setattr(publisher_module, "worker_lock", lambda *_args: nullcontext())
+    monkeypatch.setattr(Publisher, "cycle", lambda _self, _mode="all": success)
 
     assert publisher_module.main() == (0 if success else 1)
-    assert (workspace / "publisher.lock").is_file()
+    if os.name != "nt":
+        assert (workspace / "publisher.lock").is_file()
 
 
 def test_main_rejects_nonpositive_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -398,7 +572,14 @@ def test_main_returns_failure_when_config_is_invalid(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         sys,
         "argv",
-        ["publish_test_maps", "--config", str(config), "--workspace", str(tmp_path / "workspace"), "--once"],
+        [
+            "publish_test_maps",
+            "--config",
+            str(config),
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--once",
+        ],
     )
     monkeypatch.setattr(publisher_module.signal, "signal", lambda *_args: None)
 

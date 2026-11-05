@@ -1,15 +1,29 @@
 [Unit]
 Description=msmodeling multi-branch test_map publisher
-After=network-online.target
+After=network-online.target test-map-generator.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=yinqian
-WorkingDirectory=/home/yinqian/msmodeling-nightly
-ExecStart=/home/yinqian/msmodeling-nightly/.venv/bin/python scripts/helpers/ci_gate/publish_test_maps.py --config /home/yinqian/test-map-publisher.json --workspace /home/yinqian/test-map-publisher --interval 60
+User=msmodeling-map-publisher
+Group=msmodeling-test-map
+WorkingDirectory=/opt/msmodeling-test-map-publisher
+ExecStart=/opt/msmodeling-test-map-publisher/.venv/bin/python scripts/helpers/ci_gate/publish_test_maps.py --config /etc/msmodeling-test-map/publisher.json --workspace /var/lib/msmodeling-test-map --mode publish --interval 60
 Restart=on-failure
 RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/msmodeling-test-map/generation
+ReadWritePaths=/var/lib/msmodeling-test-map/publication
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LoadCredential=gitcode-username:/etc/msmodeling-test-map/gitcode-username
+LoadCredential=gitcode-token:/etc/msmodeling-test-map/gitcode-token
+Environment=GIT_ASKPASS=/opt/msmodeling-test-map-publisher/contrib/systemd/test-map-git-askpass.sh
+Environment=GIT_CONFIG_GLOBAL=/etc/msmodeling-test-map/gitconfig
+Environment=GIT_TERMINAL_PROMPT=0
 
 [Install]
 WantedBy=multi-user.target

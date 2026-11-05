@@ -27,9 +27,10 @@ import logging
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
+import stat
 import subprocess
+import tempfile
 import time
 import tomllib
 from typing import Iterator
@@ -74,9 +75,49 @@ def git(root: Path, *args: str) -> str:
     return run(["git", *args], root)
 
 
+def read_regular_bytes(path: Path) -> bytes:
+    """Read a regular file without following a final-component symlink."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        raise
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"Expected a regular file: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Expected a regular file: {path}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def atomic_copy_regular(source: Path, target: Path) -> None:
+    """Copy a regular file via a same-directory temporary file."""
+    payload = read_regular_bytes(source)
+    if target.exists() or target.is_symlink():
+        if not stat.S_ISREG(target.lstat().st_mode):
+            raise ValueError(f"Refusing to replace a non-regular file: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o640)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def read_map(path: Path) -> dict:
     """Reject incomplete/corrupt maps before using or publishing them."""
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(read_regular_bytes(path).decode("utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported test_map schema")
     sha = payload.get("built_from_commit", "")
@@ -98,9 +139,36 @@ def read_map(path: Path) -> dict:
     return payload
 
 
-def locked_versions(data: bytes) -> list[tuple[str, str]]:
+def locked_artifacts(data: bytes) -> list[tuple]:
+    """Return immutable package identities while allowing only registry host changes."""
     packages = tomllib.loads(data.decode("utf-8")).get("package", [])
-    return sorted((package["name"], package.get("version", "")) for package in packages)
+    identities = []
+    for package in packages:
+        source = package.get("source", {})
+        source_identity = tuple(sorted(source.items())) if "registry" not in source else (("registry", "<mirror>"),)
+        artifacts = []
+        for artifact in [package.get("sdist"), *package.get("wheels", [])]:
+            if not artifact:
+                continue
+            digest = artifact.get("hash")
+            url = artifact.get("url", "")
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                raise ValueError(f"Locked artifact lacks a sha256 hash: {package.get('name', '<unknown>')}")
+            filename = Path(urlsplit(url).path).name
+            if not filename:
+                raise ValueError(f"Locked artifact lacks a filename: {package.get('name', '<unknown>')}")
+            artifacts.append((filename, digest, artifact.get("size")))
+        if "registry" in source and not artifacts:
+            raise ValueError(f"Registry package lacks locked artifacts: {package.get('name', '<unknown>')}")
+        identities.append(
+            (
+                package["name"],
+                package.get("version", ""),
+                source_identity,
+                tuple(sorted(artifacts)),
+            )
+        )
+    return sorted(identities)
 
 
 def load_config(path: Path) -> dict:
@@ -149,12 +217,13 @@ def load_config(path: Path) -> dict:
 
 
 @contextmanager
-def worker_lock(workspace: Path) -> Iterator[None]:
+def worker_lock(workspace: Path, mode: str = "all") -> Iterator[None]:
     """One worker owns every branch directory; releases automatically after crashes."""
     import fcntl  # Linux server only.
 
-    workspace.mkdir(parents=True, exist_ok=True)
-    with (workspace / "publisher.lock").open("a", encoding="utf-8") as handle:
+    lock_root = workspace if mode == "all" else workspace / ("generation" if mode == "generate" else "publication")
+    lock_root.mkdir(parents=True, exist_ok=True)
+    with (lock_root / "publisher.lock").open("a", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
 
@@ -162,7 +231,14 @@ def worker_lock(workspace: Path) -> Iterator[None]:
 class Publisher:
     """Keep isolated source/environment/artifact checkouts and a durable local outbox."""
 
-    def __init__(self, config: dict, workspace: Path, *, python: str = "3.11", timeout: int = 7200):
+    def __init__(
+        self,
+        config: dict,
+        workspace: Path,
+        *,
+        python: str = "3.11",
+        timeout: int = 7200,
+    ):
         self.config = config
         self.workspace = workspace
         self.python = python
@@ -176,6 +252,14 @@ class Publisher:
         elif git(path, "remote", "get-url", "origin") != url:
             raise ValueError("Repository URL changed; use a new workspace")
 
+    def branch_paths(self, name: str) -> tuple[Path, Path, Path]:
+        key = hashlib.sha256(name.encode()).hexdigest()[:16]
+        generation = self.workspace / "generation" / key
+        source = generation / "source"
+        current = generation / "test_map.json"
+        artifacts = self.workspace / "publication" / key / "artifacts"
+        return source, current, artifacts
+
     def refresh_artifacts(self, repo: Path, branch: str) -> None:
         self.repository(repo, self.config["publish_url"])
         ref = f"refs/heads/{branch}"
@@ -188,11 +272,18 @@ class Publisher:
     def publish(self, repo: Path, branch: str, candidate: Path) -> None:
         payload = read_map(candidate)
         target = repo / "test_map.json"
-        if not target.exists() or target.read_bytes() != candidate.read_bytes():
-            shutil.copyfile(candidate, target)
+        candidate_bytes = read_regular_bytes(candidate)
+        if not target.exists() or read_regular_bytes(target) != candidate_bytes:
+            atomic_copy_regular(candidate, target)
             git(repo, "add", "--", "test_map.json")
         if git(repo, "status", "--porcelain", "--", "test_map.json"):
-            git(repo, "commit", "-s", "-m", f"data: update test_map for {payload['built_from_commit']}")
+            git(
+                repo,
+                "commit",
+                "-s",
+                "-m",
+                f"data: update test_map for {payload['built_from_commit']}",
+            )
         git(repo, "push", "origin", f"HEAD:refs/heads/{branch}")
         LOG.info("Published %s at source %s", branch, payload["built_from_commit"])
 
@@ -205,7 +296,7 @@ class Publisher:
         candidate = current.with_name("candidate.json")
         candidate.unlink(missing_ok=True)
         if current.exists():
-            shutil.copyfile(current, candidate)
+            atomic_copy_regular(current, candidate)
         env = dict(os.environ)
         for key in (
             "PYTHON",
@@ -237,8 +328,8 @@ class Publisher:
                     timeout=self.timeout,
                     capture=False,
                 )
-                if locked_versions(lock.read_bytes()) != locked_versions(original_lock):
-                    raise ValueError("Dependency index changed locked package versions")
+                if locked_artifacts(lock.read_bytes()) != locked_artifacts(original_lock):
+                    raise ValueError("Dependency index changed locked package artifacts")
             run(
                 ["uv", "sync", "--python", self.python, "--frozen", "--group", "ci"],
                 source,
@@ -251,7 +342,13 @@ class Publisher:
                 lock.write_bytes(original_lock)
         env.update(PYTHON=str(source / ".venv/bin/python"), UV_NO_SYNC="1")
         run(
-            ["bash", "scripts/run_test_map_sync.sh", "--once", "--target-branch", "snapshot/publisher-target"],
+            [
+                "bash",
+                "scripts/run_test_map_sync.sh",
+                "--once",
+                "--target-branch",
+                "snapshot/publisher-target",
+            ],
             source,
             env=env,
             timeout=self.timeout,
@@ -261,21 +358,9 @@ class Publisher:
             raise ValueError("Generated map does not match pinned source commit")
         candidate.replace(current)
 
-    def process(self, branch: dict) -> None:
+    def generate_branch(self, branch: dict) -> None:
         name = branch["source"]
-        key = hashlib.sha256(name.encode()).hexdigest()[:16]
-        root = self.workspace / key
-        source, artifacts, current = root / "source", root / "artifacts", root / "test_map.json"
-        self.refresh_artifacts(artifacts, branch["publish"])
-        remote_map = artifacts / "test_map.json"
-        # Flush a successful previous build before starting another expensive generation.
-        if current.exists():
-            read_map(current)
-            if not remote_map.exists() or current.read_bytes() != remote_map.read_bytes():
-                self.publish(artifacts, branch["publish"], current)
-        elif remote_map.exists():
-            read_map(remote_map)
-            shutil.copyfile(remote_map, current)
+        source, current, _artifacts = self.branch_paths(name)
         self.repository(source, self.config["source_url"])
         git(source, "fetch", "origin", f"+refs/heads/{name}:refs/remotes/origin/target")
         sha = git(source, "rev-parse", "refs/remotes/origin/target^{commit}")
@@ -284,7 +369,25 @@ class Publisher:
             return
         LOG.info("Generating %s at %s", name, sha)
         self.generate(source, sha, current)
+
+    def publish_branch(self, branch: dict) -> None:
+        _source, current, artifacts = self.branch_paths(branch["source"])
+        if not current.exists():
+            LOG.info("No generated map ready for %s", branch["source"])
+            return
+        read_map(current)
+        self.refresh_artifacts(artifacts, branch["publish"])
+        remote_map = artifacts / "test_map.json"
+        if remote_map.exists() and read_regular_bytes(current) == read_regular_bytes(remote_map):
+            LOG.info("Already published: %s", branch["publish"])
+            return
         self.publish(artifacts, branch["publish"], current)
+
+    def process(self, branch: dict, mode: str = "all") -> None:
+        if mode in {"all", "generate"}:
+            self.generate_branch(branch)
+        if mode in {"all", "publish"}:
+            self.publish_branch(branch)
 
     def branches(self) -> list[dict[str, str]]:
         branches = list(self.config["branches"])
@@ -303,10 +406,17 @@ class Publisher:
             if name not in configured and any(pattern.fullmatch(name) for pattern in patterns)
         )
         branches.extend({"source": name, "publish": f"{prefix}{name}"} for name in discovered)
-        LOG.info("Active source branches: %s", ", ".join(branch["source"] for branch in branches))
+        for field in ("source", "publish"):
+            names = [branch[field] for branch in branches]
+            if len(set(names)) != len(names):
+                raise ValueError(f"Duplicate effective {field} branches")
+        LOG.info(
+            "Active source branches: %s",
+            ", ".join(branch["source"] for branch in branches),
+        )
         return branches
 
-    def cycle(self) -> bool:
+    def cycle(self, mode: str = "all") -> bool:
         success = True
         try:
             branches = self.branches()
@@ -315,7 +425,7 @@ class Publisher:
             return False
         for branch in branches:
             try:
-                self.process(branch)
+                self.process(branch, mode)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                 LOG.exception("Branch failed: %s; retrying next cycle", branch["source"])
                 success = False
@@ -329,6 +439,7 @@ def main() -> int:
     parser.add_argument("--python", default="3.11")
     parser.add_argument("--interval", type=int, default=60)
     parser.add_argument("--timeout", type=int, default=7200)
+    parser.add_argument("--mode", choices=("all", "generate", "publish"), default="all")
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
     if args.interval <= 0 or args.timeout <= 0:
@@ -342,10 +453,15 @@ def main() -> int:
     signal.signal(signal.SIGTERM, stop)
     try:
         config = load_config(args.config.resolve())
-        with worker_lock(args.workspace.resolve()):
-            publisher = Publisher(config, args.workspace.resolve(), python=args.python, timeout=args.timeout)
+        with worker_lock(args.workspace.resolve(), args.mode):
+            publisher = Publisher(
+                config,
+                args.workspace.resolve(),
+                python=args.python,
+                timeout=args.timeout,
+            )
             while True:
-                success = publisher.cycle()
+                success = publisher.cycle(args.mode)
                 if args.once:
                     return 0 if success else 1
                 time.sleep(args.interval)
