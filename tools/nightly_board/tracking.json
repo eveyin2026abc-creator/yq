@@ -60,6 +60,11 @@
       "commit": "5e110c18",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261106-0530.log": {
+      "commit": "7d275873",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

@@ -1,7 +1,7 @@
 {
   "year": 2026,
   "month": 11,
-  "today": "2026-11-05",
+  "today": "2026-11-06",
   "days": {
     "2026-11-01": {
       "status": "pass",
@@ -24,6 +24,11 @@
       "failed": 3
     },
     "2026-11-05": {
+      "status": "pass",
+      "runs": 1,
+      "failed": 0
+    },
+    "2026-11-06": {
       "status": "pass",
       "runs": 1,
       "failed": 0
