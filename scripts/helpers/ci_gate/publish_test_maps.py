@@ -130,11 +130,7 @@ def read_map(path: Path) -> dict:
         if not isinstance(node, str) or not isinstance(sources, dict) or not sources:
             raise ValueError("Invalid test_map node")
         for source, symbols in sources.items():
-            if (
-                not isinstance(source, str)
-                or not isinstance(symbols, list)
-                or not all(isinstance(symbol, str) for symbol in symbols)
-            ):
+            if not isinstance(source, str) or not isinstance(symbols, list) or not all(isinstance(symbol, str) for symbol in symbols):
                 raise ValueError("Invalid test_map source symbols")
     return payload
 
