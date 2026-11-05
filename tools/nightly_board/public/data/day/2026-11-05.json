@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-05",
+  "today": "2026-11-05",
+  "runs": [
+    {
+      "log": "nightly-master-20261105-0925.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-05",
+      "started": "2026-11-05 09:25",
+      "exit_code": 0,
+      "passed": 10570,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3405,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.2
+      },
+      "failures": [],
+      "commit": "5e110c18",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
