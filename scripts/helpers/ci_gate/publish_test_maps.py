@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import logging
@@ -47,7 +47,6 @@ def run(
     timeout: int = 120,
     capture: bool = True,
 ) -> str:
-    """Run without a shell and terminate the entire child group on interruption."""
     with subprocess.Popen(
         args,
         cwd=cwd,
@@ -76,7 +75,6 @@ def git(root: Path, *args: str) -> str:
 
 
 def read_regular_bytes(path: Path) -> bytes:
-    """Read a regular file without following a final-component symlink."""
     try:
         mode = path.lstat().st_mode
     except FileNotFoundError:
@@ -95,7 +93,6 @@ def read_regular_bytes(path: Path) -> bytes:
 
 
 def atomic_copy_regular(source: Path, target: Path) -> None:
-    """Copy a regular file via a same-directory temporary file."""
     payload = read_regular_bytes(source)
     if target.exists() or target.is_symlink():
         if not stat.S_ISREG(target.lstat().st_mode):
@@ -116,7 +113,6 @@ def atomic_copy_regular(source: Path, target: Path) -> None:
 
 
 def read_map(path: Path) -> dict:
-    """Reject incomplete/corrupt maps before using or publishing them."""
     payload = json.loads(read_regular_bytes(path).decode("utf-8"))
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported test_map schema")
@@ -136,7 +132,6 @@ def read_map(path: Path) -> dict:
 
 
 def locked_artifacts(data: bytes) -> list[tuple]:
-    """Return immutable package identities while allowing only registry host changes."""
     packages = tomllib.loads(data.decode("utf-8")).get("package", [])
     identities = []
     for package in packages:
@@ -214,19 +209,22 @@ def load_config(path: Path) -> dict:
 
 @contextmanager
 def worker_lock(workspace: Path, mode: str = "all") -> Iterator[None]:
-    """One worker owns every branch directory; releases automatically after crashes."""
     import fcntl  # Linux server only.
 
-    lock_root = workspace if mode == "all" else workspace / ("generation" if mode == "generate" else "publication")
-    lock_root.mkdir(parents=True, exist_ok=True)
-    with (lock_root / "publisher.lock").open("a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    lock_roots = (
+        (workspace / "generation", workspace / "publication")
+        if mode == "all"
+        else (workspace / ("generation" if mode == "generate" else "publication"),)
+    )
+    with ExitStack() as stack:
+        for lock_root in lock_roots:
+            lock_root.mkdir(parents=True, exist_ok=True)
+            handle = stack.enter_context((lock_root / "publisher.lock").open("a", encoding="utf-8"))
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
 
 
 class Publisher:
-    """Keep isolated source/environment/artifact checkouts and a durable local outbox."""
-
     def __init__(
         self,
         config: dict,
@@ -371,7 +369,12 @@ class Publisher:
         if not current.exists():
             LOG.info("No generated map ready for %s", branch["source"])
             return
-        read_map(current)
+        payload = read_map(current)
+        remote = git(
+            self.workspace, "ls-remote", "--heads", self.config["source_url"], f"refs/heads/{branch['source']}"
+        )
+        if not remote or payload["built_from_commit"] != remote.split()[0]:
+            raise ValueError("Generated map is not from the current source branch commit")
         self.refresh_artifacts(artifacts, branch["publish"])
         remote_map = artifacts / "test_map.json"
         if remote_map.exists() and read_regular_bytes(current) == read_regular_bytes(remote_map):
@@ -409,10 +412,7 @@ class Publisher:
             names = [branch[field] for branch in branches]
             if len(set(names)) != len(names):
                 raise ValueError(f"Duplicate effective {field} branches")
-        LOG.info(
-            "Active source branches: %s",
-            ", ".join(branch["source"] for branch in branches),
-        )
+        LOG.info("Active source branches: %s", ", ".join(branch["source"] for branch in branches))
         return branches
 
     def cycle(self, mode: str = "all") -> bool:

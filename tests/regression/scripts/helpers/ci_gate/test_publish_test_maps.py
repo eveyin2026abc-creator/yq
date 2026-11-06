@@ -273,7 +273,7 @@ def test_main_once_publishes_generated_map(tmp_path: Path, monkeypatch: pytest.M
             remotes[str(root)] = args[3]
         elif args[:3] == ("remote", "get-url", "origin"):
             return remotes[str(root)]
-        elif args[0] == "rev-parse":
+        elif args[0] in {"rev-parse", "ls-remote"}:
             return _SHA
         elif args[:2] == ("status", "--porcelain"):
             return "M test_map.json"
