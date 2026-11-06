@@ -3,21 +3,9 @@
   "publish_url": "https://gitcode.com/eveyin1/msmodeling_pr.git",
   "dependency_index": "https://repo.huaweicloud.com/repository/pypi/simple",
   "branches": [
-    {
-      "source": "master",
-      "publish": "test-map/master"
-    },
-    {
-      "source": "dev",
-      "publish": "test-map/dev"
-    },
-    {
-      "source": "develop",
-      "publish": "test-map/develop"
-    }
+    {"source": "master", "publish": "test-map/master"},
+    {"source": "dev", "publish": "test-map/dev"},
+    {"source": "develop", "publish": "test-map/develop"}
   ],
-  "discover_branches": {
-    "patterns": ["^[0-9]+\\.[0-9]+\\.[0-9]+$"],
-    "publish_prefix": "test-map/"
-  }
+  "discover_branches": {"patterns": ["^[0-9]+\\.[0-9]+\\.[0-9]+$"], "publish_prefix": "test-map/"}
 }

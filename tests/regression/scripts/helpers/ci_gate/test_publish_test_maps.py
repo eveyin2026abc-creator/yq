@@ -261,3 +261,37 @@ def _write_config(path: Path, payload: dict | None = None) -> Path:
 def test_load_config_rejects_invalid_settings(tmp_path: Path, payload: dict, match: str) -> None:
     with pytest.raises((ValueError, RuntimeError), match=match):
         publisher_module.load_config(_write_config(tmp_path / "publisher.json", payload))
+
+
+def test_main_once_publishes_generated_map(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    remotes: dict[str, str] = {}
+
+    def fake_git(root: Path, *args: str) -> str:
+        if args == ("init",):
+            (root / ".git").mkdir(exist_ok=True)
+        elif args[:3] == ("remote", "add", "origin"):
+            remotes[str(root)] = args[3]
+        elif args[:3] == ("remote", "get-url", "origin"):
+            return remotes[str(root)]
+        elif args[0] == "rev-parse":
+            return _SHA
+        elif args[:2] == ("status", "--porcelain"):
+            return "M test_map.json"
+        return ""
+
+    def fake_run(args: list[str], _cwd: Path, **kwargs: object) -> str:
+        if args[:1] == ["bash"]:
+            env = kwargs["env"]
+            assert isinstance(env, dict)
+            _write_map(Path(str(env["MSMODELING_TEST_MAP_PATH"])), _SHA)
+        return ""
+
+    monkeypatch.setattr(publisher_module, "git", fake_git)
+    monkeypatch.setattr(publisher_module, "run", fake_run)
+    config = _write_config(tmp_path / "publisher.json")
+    workspace = tmp_path / "work"
+    argv = ["publish_test_maps.py", "--config", str(config), "--workspace", str(workspace), "--once"]
+    monkeypatch.setattr("sys.argv", argv)
+    assert publisher_module.main() == 0
+    published = next(workspace.glob("publication/*/artifacts/test_map.json"))
+    assert read_map(published)["built_from_commit"] == _SHA
