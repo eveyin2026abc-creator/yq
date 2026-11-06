@@ -70,6 +70,7 @@ def test_build_test_map_url_requires_explicit_custom_host(monkeypatch: pytest.Mo
     monkeypatch.setenv("MSMODELING_TEST_MAP_ALLOWED_HOSTS", "artifacts.example.com")
     assert build_test_map_url("master") == "https://artifacts.example.com/test-map/master.json"
 
+
 @pytest.mark.parametrize(
     "template",
     (
