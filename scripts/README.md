@@ -137,7 +137,7 @@ MSMODELING_WHEEL_OUTPUT_DIR=/tmp/wheels bash scripts/build.sh
 - Collection/config changes and still-existing product sources without an old-map watcher fall back to a full rebuild; map-irrelevant changes only advance `built_from_commit`.
 - Pytest collection is reused by execution and coverage conversion; sync does not run a second full `--collect-only`.
 - Pid-scoped temp branch `msmodeling-sync/<pid>`; restored & deleted on exit, SIGINT/SIGTERM, `--watch`, and `atexit`.
-- **Artifact upload is separate**: sync writes the local file only. `publish_test_maps.py` pushes `test-map/{branch}`; compile jobs download before `run_ci_gate.sh`. Freshness via `built_from_commit`. See [test_map publisher](test_map_publisher.md).
+- **Artifact upload is separate**: sync writes the local file only. `publish_test_maps.py` pushes `test-map/{branch}`; compile jobs download before `run_ci_gate.sh`. Freshness via `built_from_commit`.
 - The download URL above is `eveyin1/msmodeling_pr`, not OBS. `MSMODELING_TEST_MAP_URL_TEMPLATE` may select another HTTP(S) URL with one `{branch}`, no credentials, and a host on the allowlist.
 
 ## nightly (`run_nightly.sh`)
