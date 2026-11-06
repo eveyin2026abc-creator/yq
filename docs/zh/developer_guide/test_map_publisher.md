@@ -34,5 +34,3 @@ python build.py test --suite ci_gate
 `{branch}` is replaced by `MSMODELING_TEST_BASE_BRANCH`; branch names are URL-encoded while preserving `/`. Templates must be HTTP(S) without credentials.
 The default host allowlist is `gitcode.com`; declare custom hosts with `MSMODELING_TEST_MAP_ALLOWED_HOSTS` (comma-separated).
 CI still blocks or falls back to the full suite when the map is missing or stale.
-
-Useful options are `--python`, `--interval` and `--timeout`.

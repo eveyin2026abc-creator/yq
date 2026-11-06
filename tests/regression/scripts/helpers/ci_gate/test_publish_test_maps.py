@@ -200,9 +200,7 @@ def test_process_separates_generation_from_publication(
     assert ("publish" in calls) is published
 
 
-def test_branch_discovery_adds_only_matching_unconfigured_branches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_branch_discovery_adds_matching_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     publisher = _publisher(tmp_path)
     publisher.config["branches"] = [{"source": "master", "publish": "test-map/master"}]
     publisher.config["discover_branches"] = {
@@ -239,11 +237,8 @@ def test_branch_discovery_rejects_publish_target_collision(tmp_path: Path, monke
 
 
 def _write_config(path: Path, payload: dict | None = None) -> Path:
-    body = {
-        "source_url": "https://example.com/source.git",
-        "publish_url": "https://example.com/publish.git",
-        "branches": [{"source": "master", "publish": "test-map/master"}],
-    }
+    body = {"source_url": "https://e.com/s.git", "publish_url": "https://e.com/p.git"}
+    body["branches"] = [{"source": "master", "publish": "maps/m"}]
     body.update(payload or {})
     path.write_text(json.dumps(body), encoding="utf-8")
     return path
@@ -257,15 +252,7 @@ def _write_config(path: Path, payload: dict | None = None) -> Path:
         ({"dependency_index": "file:///tmp/simple"}, "dependency_index must be"),
         ({"branches": []}, "at least one branch"),
         ({"branches": [{"source": "master"}]}, "source and publish"),
-        (
-            {
-                "branches": [
-                    {"source": "master", "publish": "maps/master"},
-                    {"source": "master", "publish": "maps/other"},
-                ]
-            },
-            "Duplicate source",
-        ),
+        ({"branches": [{"source": "m", "publish": "a"}, {"source": "m", "publish": "b"}]}, "Duplicate source"),
         ({"branches": [{"source": "-master", "publish": "maps/master"}]}, "Invalid branch name"),
         ({"branches": [{"source": "bad..name", "publish": "maps/master"}]}, "git failed"),
         ({"discover_branches": {"patterns": ["["]}}, "Invalid branch discovery pattern"),
