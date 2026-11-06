@@ -1,16 +1,6 @@
 {
-  "today": "2026-11-06",
-  "issues": [
-    {
-      "number": 596,
-      "title": "Nightly: Kimi-K2.5 类补丁在同一 worker 内被冲掉后不再重打，3 个用例失败",
-      "html_url": "https://gitcode.com/Ascend/msmodeling/issues/596",
-      "assignees": [
-        "wangshen001"
-      ],
-      "introduced": "2026-11-04 10:55"
-    }
-  ],
+  "today": "2026-11-07",
+  "issues": [],
   "sync_ok": true,
   "sync_errors": []
 }
