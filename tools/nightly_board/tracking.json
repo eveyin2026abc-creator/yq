@@ -80,6 +80,11 @@
       "commit": "3eeba056",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261110-0530.log": {
+      "commit": "0067b0f4",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
