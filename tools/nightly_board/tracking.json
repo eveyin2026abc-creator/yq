@@ -85,6 +85,11 @@
       "commit": "0067b0f4",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261111-0530.log": {
+      "commit": "413889b5",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
