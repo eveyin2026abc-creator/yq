@@ -17,6 +17,9 @@ installed here.
 cd tests/e2e/web_ui
 npm install                 # once (~ playwright + typescript)
 npm run test                # headless chromium, full stack auto-managed
+# Nightly runs this same command after the pytest waves (CI=1, 900s).
+# It is skipped when pytest already timed out. Pytest counts on the
+# Nightly exit= line stay pytest-only; e2e_passed / e2e_failed are appended.
 npm run test:ui             # interactive watch mode
 npm run type-check          # tsc over specs + config
 npx playwright show-report  # last HTML report (CI reporter)

@@ -243,6 +243,14 @@ def _render_summary_markdown(
         lines.append("")
         lines.append(coverage)
 
+    if report.e2e_passed is not None and report.e2e_failed is not None:
+        lines.append("")
+        lines.append(f"**Web UI e2e:** Passed **{report.e2e_passed}** · Failed **{report.e2e_failed}**")
+        lines.extend(f"- {spec}" for spec in report.e2e_failed_specs[:10])
+    elif report.e2e_note and report.e2e_note != report.status_note:
+        lines.append("")
+        lines.append(report.e2e_note)
+
     if report.drift_warnings:
         lines.append("")
         lines.append(f"**Config drift ({len(report.drift_warnings)}):**")

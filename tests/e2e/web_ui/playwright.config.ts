@@ -93,7 +93,13 @@ export default defineConfig({
   timeout: 240_000,
   expect: { timeout: 15_000 },
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  reporter: process.env.CI
+    ? [
+        ['list'],
+        ['html', { open: 'never' }],
+        ['json', { outputFile: process.env.MSMODELING_E2E_JSON || 'e2e-results.json' }],
+      ]
+    : [['list']],
   use: {
     baseURL: `http://127.0.0.1:${FRONTEND_PORT}`,
     trace: 'retain-on-failure',

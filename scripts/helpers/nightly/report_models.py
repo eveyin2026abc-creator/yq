@@ -96,3 +96,7 @@ class FeishuReportInput:
     infra_message: str = ""
     timed_out: bool = False
     status_note: str = ""
+    e2e_passed: int | None = None
+    e2e_failed: int | None = None
+    e2e_note: str = ""
+    e2e_failed_specs: tuple[str, ...] = ()

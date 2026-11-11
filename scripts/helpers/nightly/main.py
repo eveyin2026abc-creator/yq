@@ -20,7 +20,8 @@
 
 CLI entry for run_nightly.sh. Intended for CI only — local runs are discouraged.
 Two pytest waves over ``tests/`` run in parallel: non-benchmark/non-network (xdist + coverage) and
-benchmark-or-network (serial). A non-blocking config drift check compares vendored remote configs
+benchmark-or-network (serial). Web UI Playwright e2e then runs with its own 900s budget, unless
+pytest already timed out. A non-blocking config drift check compares vendored remote configs
 against the live Hub → report.
 """
 
@@ -81,6 +82,7 @@ from scripts.helpers.nightly.pytest_parser import (
     parse_pytest_stdout,
 )
 from scripts.helpers.nightly.report_builder import fetch_env_info
+from scripts.helpers.nightly.web_ui_e2e import WebUiE2EResult, run_web_ui_e2e
 from scripts.helpers.nightly.report_models import (
     AttributionConclusion,
     CoverageSummary,
@@ -542,6 +544,7 @@ def emit_report(
     failure_blames: tuple[FailureBlame, ...] | None = None,
     timed_out: bool = False,
     status_note: str = "",
+    e2e: WebUiE2EResult | None = None,
 ) -> NightlyRunStats:
     """Parse pytest stdout, push report to Feishu when webhook is set."""
     logger = logging.getLogger("nightly")
@@ -575,6 +578,10 @@ def emit_report(
         infra_message=infra_message,
         timed_out=timed_out,
         status_note=status_note,
+        e2e_passed=e2e.passed if e2e is not None and e2e.ran else None,
+        e2e_failed=e2e.failed if e2e is not None and e2e.ran else None,
+        e2e_note="" if e2e is None or e2e.ran else e2e.note,
+        e2e_failed_specs=e2e.failed_specs if e2e is not None else (),
     )
     push_feishu_report(webhook_url, report)
     return resolved_stats
@@ -615,6 +622,23 @@ def emit_init_failure_report(
     push_feishu_report(webhook_url, report)
 
 
+def _apply_web_ui_e2e_exit(
+    exit_code: int,
+    e2e: WebUiE2EResult,
+    *,
+    timed_out: bool,
+    status_note: str,
+) -> tuple[int, str]:
+    """Fold the e2e result into the nightly exit without overriding timeout or attribution."""
+    if timed_out or exit_code in {PYTEST_TIMEOUT_EXIT_CODE, ATTRIBUTION_HARD_FAIL_EXIT_CODE}:
+        return exit_code, status_note
+    if e2e.exit_code == 0:
+        return exit_code, status_note
+    if exit_code == 0 and not status_note:
+        status_note = e2e.note or "Web UI e2e failed"
+    return 1, status_note
+
+
 def _build_terminal_summary(
     *,
     pytest_exit: int,
@@ -624,6 +648,7 @@ def _build_terminal_summary(
     drift_warnings: tuple[str, ...],
     timed_out: bool = False,
     status_note: str = "",
+    e2e: WebUiE2EResult | None = None,
 ) -> list[str]:
     """Expert/agent console lines — node id, status, last error, attribution."""
     lines = [
@@ -638,8 +663,14 @@ def _build_terminal_summary(
             )
         ),
     ]
+    if e2e is not None and e2e.ran:
+        lines[0] += f" e2e_passed={e2e.passed} e2e_failed={e2e.failed}"
     if timed_out:
         lines.append("Timed out: partial results below")
+    if e2e is not None and e2e.note and e2e.note != status_note:
+        lines.append(e2e.note)
+    for spec in (e2e.failed_specs if e2e is not None else ())[:10]:
+        lines.append(f"Web UI e2e failed: {spec}")
     if status_note:
         lines.append(status_note)
     if coverage is not None:
@@ -746,6 +777,13 @@ def _run_nightly_pipeline(
         )
 
     exit_code = _resolve_exit_code(pytest_exit, failure_blames, timed_out=timed_out)
+    e2e = run_web_ui_e2e(logger, skip=timed_out, repo_root=REPO_ROOT)
+    exit_code, status_note = _apply_web_ui_e2e_exit(
+        exit_code,
+        e2e,
+        timed_out=timed_out,
+        status_note=status_note,
+    )
 
     emit_report(
         pytest_stdout,
@@ -758,6 +796,7 @@ def _run_nightly_pipeline(
         failure_blames=failure_blames,
         timed_out=timed_out,
         status_note=status_note,
+        e2e=e2e,
     )
 
     summary_lines = _build_terminal_summary(
@@ -768,6 +807,7 @@ def _run_nightly_pipeline(
         drift_warnings=drift_warnings,
         timed_out=timed_out,
         status_note=status_note,
+        e2e=e2e,
     )
     for line in summary_lines:
         logger.info("%s", line)
