@@ -17,9 +17,9 @@ installed here.
 cd tests/e2e/web_ui
 npm install                 # once (~ playwright + typescript)
 npm run test                # headless chromium, full stack auto-managed
-# Nightly runs this same command after the pytest waves (CI=1, 900s)
-# once a *.e2e.ts spec is in this directory. With no specs it skips
-# before npm install. It also skips when pytest already timed out.
+# Nightly runs this same command after the pytest waves (CI=1, 900s).
+# It skips before npm install when this directory has no *.e2e.ts,
+# and when pytest already timed out.
 # Pytest counts on the Nightly exit= line stay pytest-only;
 # e2e_passed / e2e_failed are appended only when the suite ran.
 npm run test:ui             # interactive watch mode
@@ -34,6 +34,8 @@ Prereqs:
 - Playwright chromium browser: `npx playwright install chromium` once
   (shared global cache — no re-download if `web_ui/frontend` already uses
   the same playwright minor version).
+- Chromium needs `libasound.so.2`. Nightly prepends
+  `~/.local/playwright-libs/usr/lib/<triplet>` when that extract is present.
 
 ## Isolation from your dev stack
 
@@ -65,7 +67,10 @@ tests/e2e/web_ui/
 │   │                 #   submitJob, expectJobSucceeded, …
 │   └── case.ts       # declarative layer: FormCase config type + control→
 │                     #   setter factory (applyFill) + generic runFormCase
-├── *.e2e.ts                       # specs, added per console module (none yet)
+├── console-text-generate.e2e.ts
+├── console-video-generate.e2e.ts
+├── console-throughput-optimizer.e2e.ts
+├── *.e2e.ts                       # further specs, one file per console module
 ├── playwright.config.ts           # stack bring-up + temp-DB management
 └── tsconfig.json                  # standalone type-check: npm run type-check
 ```

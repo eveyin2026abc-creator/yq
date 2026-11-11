@@ -30,7 +30,12 @@ from scripts.helpers._config import Config
 from scripts.helpers.nightly.feishu_notifier import build_feishu_card_payload
 from scripts.helpers.nightly.main import _apply_web_ui_e2e_exit, _run_nightly_pipeline
 from scripts.helpers.nightly.report_models import FeishuReportInput
-from scripts.helpers.nightly.web_ui_e2e import WebUiE2EResult, parse_playwright_report, run_web_ui_e2e
+from scripts.helpers.nightly.web_ui_e2e import (
+    WebUiE2EResult,
+    _prepend_user_chromium_libs,
+    parse_playwright_report,
+    run_web_ui_e2e,
+)
 
 
 def test_parse_playwright_report_counts_and_ids() -> None:
@@ -74,6 +79,20 @@ def test_missing_suite_is_infra_and_does_not_run_npm(tmp_path: Path) -> None:
     assert result.ran is False
     assert result.exit_code == 1
     assert "package.json is missing" in result.note
+
+
+def test_user_chromium_libs_are_prepended(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    triplet = tmp_path / ".local" / "playwright-libs" / "usr" / "lib" / "aarch64-linux-gnu"
+    triplet.mkdir(parents=True)
+    (triplet / "libasound.so.2").write_bytes(b"")
+    monkeypatch.setattr("scripts.helpers.nightly.web_ui_e2e.Path.home", lambda: tmp_path)
+    env = {"LD_LIBRARY_PATH": "/already"}
+    _prepend_user_chromium_libs(env)
+    assert env["LD_LIBRARY_PATH"] == f"{triplet}:/already"
+    monkeypatch.setattr("scripts.helpers.nightly.web_ui_e2e.Path.home", lambda: tmp_path / "empty")
+    untouched = {"LD_LIBRARY_PATH": "/already"}
+    _prepend_user_chromium_libs(untouched)
+    assert untouched["LD_LIBRARY_PATH"] == "/already"
 
 
 def test_no_specs_skips_before_npm(tmp_path: Path) -> None:

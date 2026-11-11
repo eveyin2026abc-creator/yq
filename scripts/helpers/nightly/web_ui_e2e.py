@@ -143,6 +143,7 @@ def run_web_ui_e2e(
     test_env = os.environ.copy()
     test_env["CI"] = "1"
     test_env["MSMODELING_E2E_JSON"] = str(report_path)
+    _prepend_user_chromium_libs(test_env)
     logger.info("Web UI e2e: npm run test (budget %ss)", WEB_UI_E2E_TEST_TIMEOUT_SECONDS)
     code, output = _run_command(
         ["npm", "run", "test"],
@@ -192,6 +193,31 @@ def _last_result_ok(spec: dict[str, object]) -> bool:
     if not isinstance(final, dict):
         return False
     return final.get("status") in {"passed", "skipped"}
+
+
+def _prepend_user_chromium_libs(env: dict[str, str]) -> None:
+    """Use a user-prefix libasound when the system package is not installed.
+
+    Headless Chromium refuses to start without ``libasound.so.2``. Hosts that
+    cannot install the deb system-wide can extract it under
+    ``~/.local/playwright-libs/usr/lib/<triplet>/``.
+    """
+    lib_root = Path.home() / ".local" / "playwright-libs" / "usr" / "lib"
+    extra = _library_dirs_containing(lib_root, "libasound.so.2")
+    if not extra:
+        return
+    current = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = ":".join(extra + ([current] if current else []))
+
+
+def _library_dirs_containing(lib_root: Path, soname: str) -> list[str]:
+    if not lib_root.is_dir():
+        return []
+    return [
+        str(path)
+        for path in sorted(lib_root.iterdir())
+        if path.is_dir() and (path / soname).is_file()
+    ]
 
 
 def _read_report(
