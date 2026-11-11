@@ -33,7 +33,12 @@ import {
   expectJobStatusPage,
   expectJobSucceeded,
   formItem,
+  openModule,
   readJobId,
+  setComboboxField,
+  setMultiSelectField,
+  setSelectField,
+  setSwitchField,
   submitJob,
 } from './support/actions'
 import { runFormCase, fill, type FormCase } from './support/case'
@@ -61,6 +66,17 @@ test.describe('Console · text_generate lifecycle', () => {
   test('num-devices=9 → run → succeeded result → history', async ({ page }) => {
     // Job runs a real simulation (~10s); every other step is FormCase config.
     await runFormCase(page, numDevicesLifecycle)
+  })
+
+  test('select, combobox, multi-select, and switch commit in the form', async ({ page }) => {
+    // Form layer only — no simulation. Covers the four setters colleagues use
+    // from fill(), including a switch inside a group that starts collapsed.
+    await openModule(page, MODULES.text)
+    await setSelectField(page, FIELDS.text.logLevel, 'info')
+    await setComboboxField(page, FIELDS.text.modelId, 'Qwen/Qwen3-8B')
+    await setMultiSelectField(page, FIELDS.text.device, ['ATLAS_350_425T_84G'])
+    await setSwitchField(page, FIELDS.text.prefill, false)
+    await setSwitchField(page, FIELDS.text.chromeTrace, true)
   })
 
   test('spin buttons move 设备数量 by ±1 per click', async ({ page }) => {

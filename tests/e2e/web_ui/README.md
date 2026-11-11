@@ -55,8 +55,9 @@ tests/e2e/web_ui/
 │   │                 #   text patterns (TEXT), and the form-field registry
 │   │                 #   (FIELDS — id + control component + zh/en label)
 │   ├── actions.ts    # operation functions: expectConsoleReady, openModule,
-│   │                 #   setNumberField, setTextField, submitJob,
-│   │                 #   expectJobSucceeded, …
+│   │                 #   setNumberField, setTextField, setSelectField,
+│   │                 #   setComboboxField, setMultiSelectField, setSwitchField,
+│   │                 #   submitJob, expectJobSucceeded, …
 │   └── case.ts       # declarative layer: FormCase config type + control→
 │                     #   setter factory (applyFill) + generic runFormCase
 ├── console-text-generate.e2e.ts   # specs = FormCase configs + hand-written
@@ -78,6 +79,10 @@ tests/e2e/web_ui/
   a UI refactor is one edit there.
 - `FIELDS` entries must match `web_ui/backend/services/ui_props/*.py`
   (labels, control types) — that module is the form-schema source of truth.
+  Add a field when a spec uses it. `fill()` accepts `number`, `text`,
+  `select`, `combobox`, `multi-select`, and `switch`. Pass the schema value;
+  set `options` on the field only when the visible option text differs
+  (log level `info` is shown as `Info`). Collapsed groups are expanded by the setter.
 - Match UI text bilingually (`/文本生成|Text Generation/`): zh is the app
   default locale, en keeps specs robust to a locale flip.
 - Assert submits through the intercepted `POST /api/jobs` payload

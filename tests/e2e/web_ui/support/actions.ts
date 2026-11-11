@@ -48,6 +48,25 @@ export function formItem(page: Page, field: FieldDef): Locator {
   return page.locator(SEL.formItem).filter({ has: label })
 }
 
+/**
+ * The form item, expanded if its group is collapsed. SchemaForm hides a
+ * collapsed group's fields with v-show, so a click on the header is required
+ * before the control can be filled.
+ */
+export async function ensureFieldVisible(page: Page, field: FieldDef): Promise<Locator> {
+  const item = formItem(page, field)
+  await expect(item).toBeAttached()
+  if (await item.isVisible()) return item
+  await page.locator(SEL.formSection).filter({ has: item }).locator(SEL.sectionHeader).click()
+  await expect(item).toBeVisible()
+  return item
+}
+
+/** Visible option text for a submitted value. Falls back to the value itself. */
+function optionLabel(field: FieldDef, value: string): string {
+  return field.options?.find((option) => option.value === value)?.label ?? value
+}
+
 /** A console tab by its bilingual title. */
 export function tab(page: Page, title: RegExp): Locator {
   return page.locator(SEL.consoleTabs).locator(SEL.tabItem, { hasText: title })
@@ -118,7 +137,7 @@ export async function setNumberField(page: Page, field: FieldDef, value: number)
   if (field.control !== 'number') {
     throw new Error(`setNumberField: ${field.id} renders as '${field.control}', not 'number'`)
   }
-  const input = formItem(page, field).locator(SEL.inputNumberInput)
+  const input = (await ensureFieldVisible(page, field)).locator(SEL.inputNumberInput)
   await input.click()
   await input.fill(String(value))
   await input.press('Enter')
@@ -134,7 +153,7 @@ export async function setTextField(page: Page, field: FieldDef, value: string): 
   if (field.control !== 'text') {
     throw new Error(`setTextField: ${field.id} renders as '${field.control}', not 'text'`)
   }
-  const input = formItem(page, field).locator(SEL.inputText)
+  const input = (await ensureFieldVisible(page, field)).locator(SEL.inputText)
   await input.click()
   await input.fill(value)
   await input.press('Enter')
@@ -154,12 +173,98 @@ export async function clickNumberSpin(
   if (field.control !== 'number') {
     throw new Error(`clickNumberSpin: ${field.id} renders as '${field.control}', not 'number'`)
   }
-  const button = formItem(page, field).locator(
+  const button = (await ensureFieldVisible(page, field)).locator(
     direction === 'increase' ? SEL.inputNumberIncrease : SEL.inputNumberDecrease,
   )
   for (let i = 0; i < times; i += 1) {
     await button.click()
   }
+}
+
+/**
+ * Open an el-select and choose the option for `value`.
+ * `field.options` maps a submitted value onto a different visible label.
+ * A combobox with no matching option types the value (allow-create).
+ */
+async function chooseSelectOption(
+  page: Page,
+  field: FieldDef,
+  value: string,
+  allowCreate: boolean,
+): Promise<void> {
+  const select = (await ensureFieldVisible(page, field)).locator(SEL.select)
+  const label = optionLabel(field, value)
+  await select.click()
+  const option = page.getByRole('option', { name: label, exact: true })
+  try {
+    await option.click({ timeout: 5_000 })
+  } catch (error) {
+    if (!allowCreate) throw error
+    const input = select.locator('input').last()
+    await input.fill(label)
+    await input.press('Enter')
+  }
+  await expect(select).toContainText(label)
+}
+
+/** Set a `control: 'select'` field to a schema value. */
+export async function setSelectField(page: Page, field: FieldDef, value: string): Promise<void> {
+  if (field.control !== 'select') {
+    throw new Error(`setSelectField: ${field.id} renders as '${field.control}', not 'select'`)
+  }
+  await chooseSelectOption(page, field, value, false)
+}
+
+/** Set a `control: 'combobox'` field. Unknown values are typed in. */
+export async function setComboboxField(page: Page, field: FieldDef, value: string): Promise<void> {
+  if (field.control !== 'combobox') {
+    throw new Error(`setComboboxField: ${field.id} renders as '${field.control}', not 'combobox'`)
+  }
+  await chooseSelectOption(page, field, value, true)
+}
+
+/**
+ * Set a `control: 'multi-select'` field to exactly `values`.
+ * Options already selected and not in `values` are cleared.
+ */
+export async function setMultiSelectField(
+  page: Page,
+  field: FieldDef,
+  values: readonly string[],
+): Promise<void> {
+  if (field.control !== 'multi-select') {
+    throw new Error(`setMultiSelectField: ${field.id} renders as '${field.control}', not 'multi-select'`)
+  }
+  const select = (await ensureFieldVisible(page, field)).locator(SEL.multiSelect)
+  await select.click()
+  const options = page.getByRole('option')
+  await expect(options.first()).toBeVisible()
+  const names: string[] = []
+  const count = await options.count()
+  for (let i = 0; i < count; i += 1) {
+    names.push((await options.nth(i).innerText()).trim())
+  }
+  const wanted = new Set(values.map((value) => optionLabel(field, value)))
+  for (const name of names) {
+    const option = page.getByRole('option', { name, exact: true })
+    const selected = (await option.getAttribute('aria-selected')) === 'true'
+    if (wanted.has(name) !== selected) await option.click()
+  }
+  await page.keyboard.press('Escape')
+  for (const value of values) {
+    await expect(select).toContainText(optionLabel(field, value))
+  }
+}
+
+/** Set a `control: 'switch'` field on or off. */
+export async function setSwitchField(page: Page, field: FieldDef, value: boolean): Promise<void> {
+  if (field.control !== 'switch') {
+    throw new Error(`setSwitchField: ${field.id} renders as '${field.control}', not 'switch'`)
+  }
+  const toggle = (await ensureFieldVisible(page, field)).locator(SEL.switch)
+  const input = toggle.locator('input')
+  if ((await input.isChecked()) !== value) await toggle.click()
+  await expect(input).toBeChecked({ checked: value })
 }
 
 /**
@@ -184,13 +289,15 @@ export async function expectJobSucceeded(page: Page, timeoutMs = 180_000): Promi
   const terminal = `${SEL.stateRunning}, ${SEL.stateSucceeded}, ${SEL.stateFailed}`
   await expect(page.locator(terminal)).toBeVisible({ timeout: 30_000 })
 
+  const succeeded = page.locator(SEL.stateSucceeded)
   const failed = page.locator(SEL.stateFailed)
-  if (await failed.isVisible().catch(() => false)) {
+  // A validation error can land after the first paint of "running". Wait for
+  // either terminal state instead of spending the whole job budget on success.
+  await expect(succeeded.or(failed)).toBeVisible({ timeout: timeoutMs })
+  if (await failed.isVisible()) {
     const detail = await failed.innerText().catch(() => '(unreadable)')
     throw new Error(`job failed:\n${detail}`)
   }
-
-  await expect(page.locator(SEL.stateSucceeded)).toBeVisible({ timeout: timeoutMs })
 }
 
 /**

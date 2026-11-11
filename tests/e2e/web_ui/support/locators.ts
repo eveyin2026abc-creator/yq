@@ -56,6 +56,8 @@ export const SEL = {
   // --- Schema form (SchemaFormItem.vue → Element Plus) ---
   formItem: '.el-form-item', // one rendered schema field
   formItemLabel: '.el-form-item__label', // its caption (label-text anchor)
+  formSection: '.form-section', // collapsible group (SchemaForm.vue)
+  sectionHeader: '.section-header', // group header button; expands a collapsed group
   inputNumber: '.el-input-number', // control="number" (controls-position=right)
   inputNumberInput: '.el-input-number input[role="spinbutton"]',
   inputNumberIncrease: '.el-input-number__increase', // "+" spin button
@@ -121,6 +123,12 @@ export type Control = 'number' | 'text' | 'select' | 'combobox' | 'multi-select'
  * against the control (number field ↔ number value) at compile time;
  * it defaults to the full union for control-agnostic consumers (formItem).
  */
+/** One dropdown choice. `value` is what POST /api/jobs sends; `label` is the visible option text. */
+export interface FieldOption {
+  value: string
+  label: string
+}
+
 export interface FieldDef<C extends Control = Control> {
   /** Schema field id — equals the CLI param name in the submit payload. */
   id: string
@@ -128,6 +136,12 @@ export interface FieldDef<C extends Control = Control> {
   control: C
   /** Label exactly as defined in backend/services/ui_props/*.py. */
   label: { zh: string; en: string }
+  /**
+   * Present when the visible option text differs from the submitted value
+   * (log level: label `Info`, value `info`). Omit when they are the same
+   * string — the setter then clicks the option whose text is `value`.
+   */
+  options?: readonly FieldOption[]
 }
 
 /** Active UI locale — mirrors DEFAULT_LOCALE in src/composables/useLocale.ts. */
@@ -178,6 +192,27 @@ export const FIELDS = {
       id: 'dp-size',
       control: 'number',
       label: { zh: '数据并行', en: 'Data Parallel Size' },
+    },
+    logLevel: {
+      id: 'log-level',
+      control: 'select',
+      label: { zh: '日志级别', en: 'Log Level' },
+      options: [
+        { value: 'debug', label: 'Debug' },
+        { value: 'info', label: 'Info' },
+        { value: 'warning', label: 'Warning' },
+        { value: 'error', label: 'Error' },
+      ],
+    },
+    prefill: {
+      id: 'prefill',
+      control: 'switch',
+      label: { zh: 'Prefill 阶段', en: 'Prefill Phase' },
+    },
+    chromeTrace: {
+      id: 'chrome-trace-file',
+      control: 'switch',
+      label: { zh: 'Chrome trace 导出', en: 'Chrome Trace Export' },
     },
   },
   /** ui_props/video_generate.py */

@@ -44,18 +44,27 @@ import {
   expectMetricTiles,
   openModule,
   readJobId,
+  setComboboxField,
+  setMultiSelectField,
   setNumberField,
+  setSelectField,
+  setSwitchField,
   setTextField,
   submitJob,
 } from './actions'
 import type { FieldDef, ModuleDef } from './locators'
 
-/** Controls that have a registered setter (add rows as specs need them —
- *  deliberately no speculative switch/select/combobox support yet). */
-export type FillableControl = 'number' | 'text'
+/** Controls that have a registered setter. */
+export type FillableControl = 'number' | 'text' | 'select' | 'combobox' | 'multi-select' | 'switch'
 
-/** The value type each fillable control takes. */
-export type FillValue<C extends FillableControl> = C extends 'number' ? number : string
+/** The value type each fillable control takes. Pass the schema value, not the visible label. */
+export type FillValue<C extends FillableControl> = C extends 'number'
+  ? number
+  : C extends 'switch'
+    ? boolean
+    : C extends 'multi-select'
+      ? readonly string[]
+      : string
 
 /**
  * One form mutation. Opaque to configs — build it with `fill()` below, whose
@@ -66,13 +75,14 @@ export type FillValue<C extends FillableControl> = C extends 'number' ? number :
  */
 export interface FillStep {
   readonly field: FieldDef<FillableControl>
-  readonly value: number | string
+  readonly value: number | string | boolean | readonly string[]
 }
 
 /**
  * Fill-step factory: `fill(FIELDS.video.sampleStep, 4)` ✓,
- * `fill(FIELDS.video.sampleStep, '4')` ✗ (compile error), and a field whose
- * control has no setter (select/switch/…) fails the generic bound.
+ * `fill(FIELDS.video.sampleStep, '4')` ✗ (compile error). A control outside
+ * FillableControl fails the generic bound. Select values are schema values
+ * (`'info'`), mapped to the visible label via `field.options` when they differ.
  */
 export function fill<C extends FillableControl>(
   field: FieldDef<C>,
@@ -94,6 +104,14 @@ export async function applyFill(page: Page, step: FillStep): Promise<void> {
       return setNumberField(page, field, value as number)
     case 'text':
       return setTextField(page, field, value as string)
+    case 'select':
+      return setSelectField(page, field, value as string)
+    case 'combobox':
+      return setComboboxField(page, field, value as string)
+    case 'multi-select':
+      return setMultiSelectField(page, field, value as readonly string[])
+    case 'switch':
+      return setSwitchField(page, field, value as boolean)
     default: {
       const unhandled: never = field.control
       throw new Error(`applyFill: no setter for control '${unhandled}'`)
