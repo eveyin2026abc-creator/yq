@@ -76,6 +76,14 @@ def test_missing_suite_is_infra_and_does_not_run_npm(tmp_path: Path) -> None:
     assert "package.json is missing" in result.note
 
 
+def test_no_specs_skips_before_npm(tmp_path: Path) -> None:
+    e2e_dir = tmp_path / "tests" / "e2e" / "web_ui"
+    e2e_dir.mkdir(parents=True)
+    (e2e_dir / "package.json").write_text("{}", encoding="utf-8")
+    result = run_web_ui_e2e(logging.getLogger("nightly-test"), skip=False, repo_root=tmp_path)
+    assert result == WebUiE2EResult(exit_code=0, passed=0, failed=0, ran=False, note="")
+
+
 def test_skip_does_not_touch_the_tree(tmp_path: Path) -> None:
     result = run_web_ui_e2e(logging.getLogger("nightly-test"), skip=True, repo_root=tmp_path)
     assert result == WebUiE2EResult(

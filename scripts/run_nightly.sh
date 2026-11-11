@@ -21,7 +21,8 @@
 # Wave B: tests/ -m "not npu and (benchmark or network)" (serial pytest — Hub cache-safe; separate coverage).
 # Waves share one MSMODELING_NIGHTLY_TIMEOUT_SECONDS budget; coverage is combined after both finish.
 # Non-blocking: config drift check (skipped when already timed out).
-# Web UI e2e: tests/e2e/web_ui npm run test, own 900s budget, skipped when pytest timed out.
+# Web UI e2e: tests/e2e/web_ui npm run test, own 900s budget.
+# Skipped when pytest timed out, and when that directory has no *.e2e.ts specs.
 #
 # Optional (defaults below):
 #   MSMODELING_TEST_WEIGHTS_PRUNE           session weight cleanup (default: 0)

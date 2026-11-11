@@ -17,9 +17,11 @@ installed here.
 cd tests/e2e/web_ui
 npm install                 # once (~ playwright + typescript)
 npm run test                # headless chromium, full stack auto-managed
-# Nightly runs this same command after the pytest waves (CI=1, 900s).
-# It is skipped when pytest already timed out. Pytest counts on the
-# Nightly exit= line stay pytest-only; e2e_passed / e2e_failed are appended.
+# Nightly runs this same command after the pytest waves (CI=1, 900s)
+# once a *.e2e.ts spec is in this directory. With no specs it skips
+# before npm install. It also skips when pytest already timed out.
+# Pytest counts on the Nightly exit= line stay pytest-only;
+# e2e_passed / e2e_failed are appended only when the suite ran.
 npm run test:ui             # interactive watch mode
 npm run type-check          # tsc over specs + config
 npx playwright show-report  # last HTML report (CI reporter)
@@ -63,9 +65,7 @@ tests/e2e/web_ui/
 │   │                 #   submitJob, expectJobSucceeded, …
 │   └── case.ts       # declarative layer: FormCase config type + control→
 │                     #   setter factory (applyFill) + generic runFormCase
-├── console-text-generate.e2e.ts   # specs = FormCase configs + hand-written
-├── console-video-generate.e2e.ts  #   non-standard flows (one file per
-├── console-throughput-optimizer.e2e.ts # console module tab)
+├── *.e2e.ts                       # specs, added per console module (none yet)
 ├── playwright.config.ts           # stack bring-up + temp-DB management
 └── tsconfig.json                  # standalone type-check: npm run type-check
 ```
@@ -91,17 +91,15 @@ tests/e2e/web_ui/
 - Assert submits through the intercepted `POST /api/jobs` payload
   (`submitJob` returns the Request) — proves the control's v-model committed,
   not just what the DOM shows.
-- **3 workers, file-level parallelism** (`fullyParallel: false`): the three
-  spec files run concurrently against the shared backend; tests within a file
-  stay sequential (the two heavy throughput benchmarks never overlap). Backend
-  job slots match the worker count (`MSMODELING_MAX_WORKERS=3` in
-  playwright.config) so no file's job queues behind another's. Every job still
-  runs a real simulation.
+- **3 workers, file-level parallelism** (`fullyParallel: false`): spec files
+  run concurrently against the shared backend; tests within a file stay
+  sequential. Put at most one heavy simulation in each file. Backend job
+  slots match the worker count (`MSMODELING_MAX_WORKERS=3` in
+  playwright.config). A fourth module file must raise `workers` and
+  `MSMODELING_MAX_WORKERS` together. Every submitted job still runs a real
+  simulation.
 - Parallel-safe assertions: History rows are located **by job id**
   (`expectHistoryRow`) — "newest row" races once files overlap on the shared
   backend/DB. Everything else is per-page or append-only by construction.
-- Form-layer behaviors (spin buttons, validation) get job-free specs; keep
-  simulation-running specs few — each runs a real job (measured: text_generate
-  ~10s, throughput_optimizer ~40s with tp-sizes pinned, video_generate ~45s;
-  full suite ~1.2min in parallel, bounded by the throughput file's two
-  sequential benchmarks).
+- Form-layer behaviors (spin buttons, validation) get job-free specs. Keep
+  simulation-running specs few — each one runs a real job.

@@ -81,12 +81,12 @@ const venvPython =
 export default defineConfig({
   testDir: '.',
   testMatch: '**/*.e2e.ts',
-  // File-level parallelism: the 3 spec files run concurrently against the
-  // shared backend; tests within a file stay sequential (the two throughput
-  // benchmarks are the heaviest jobs — never run them against each other).
-  // Keep workers == MSMODELING_MAX_WORKERS (below) so no file's job queues
-  // behind another file's, and assert History rows BY JOB ID (expectHistoryRow)
-  // — "newest row" races once files overlap.
+  // File-level parallelism: spec files run concurrently against the shared
+  // backend; tests within a file stay sequential. Keep workers ==
+  // MSMODELING_MAX_WORKERS (below) so no file's job queues behind another
+  // file's, and assert History rows BY JOB ID (expectHistoryRow) — "newest
+  // row" races once files overlap. Raise both together when a fourth spec
+  // file needs its own slot.
   fullyParallel: false,
   workers: 3,
   // Cold vite compile + schema fetch + a ~20s simulation job, with headroom.

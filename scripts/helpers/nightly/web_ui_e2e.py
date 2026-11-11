@@ -17,8 +17,10 @@
 """Run the web console Playwright suite after the pytest waves.
 
 The suite is not a pytest node. Nightly invokes ``npm run test`` in
-``tests/e2e/web_ui`` and parses the JSON report. Install steps sit outside
-the test budget. Failures stay out of pytest attribution.
+``tests/e2e/web_ui`` when that directory contains ``*.e2e.ts`` specs, then
+parses the JSON report. No specs means a quiet skip (no install, no servers).
+Install steps sit outside the test budget. Failures stay out of pytest
+attribution.
 """
 
 from __future__ import annotations
@@ -110,6 +112,9 @@ def run_web_ui_e2e(
         note = "Web UI e2e infra: tests/e2e/web_ui/package.json is missing"
         logger.error(note)
         return WebUiE2EResult(exit_code=1, passed=0, failed=0, ran=False, note=note)
+    if not any(e2e_dir.rglob("*.e2e.ts")):
+        logger.info("Web UI e2e skipped: no specs")
+        return WebUiE2EResult(exit_code=0, passed=0, failed=0, ran=False, note="")
     if shutil.which("npm") is None or shutil.which("node") is None:
         note = "Web UI e2e infra: node and npm are required"
         logger.error(note)

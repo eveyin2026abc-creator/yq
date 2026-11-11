@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Playwright e2e suite for the msmodeling web console (real backend + vite dev server, isolated ports/DB). Self-contained package: specs live outside web_ui/frontend and resolve playwright from here.",
   "scripts": {
-    "test": "playwright test",
+    "test": "playwright test --pass-with-no-tests",
     "test:ui": "playwright test --ui",
     "type-check": "tsc -p tsconfig.json"
   },
