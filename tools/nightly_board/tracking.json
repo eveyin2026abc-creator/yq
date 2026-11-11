@@ -90,6 +90,11 @@
       "commit": "413889b5",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261112-0530.log": {
+      "commit": "afdbb206",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

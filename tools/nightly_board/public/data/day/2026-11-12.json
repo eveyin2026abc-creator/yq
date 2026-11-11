@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-12",
+  "today": "2026-11-12",
+  "runs": [
+    {
+      "log": "nightly-master-20261112-0530.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-12",
+      "started": "2026-11-12 05:30",
+      "exit_code": 0,
+      "passed": 11478,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3465,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.6
+      },
+      "failures": [],
+      "commit": "afdbb206",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
