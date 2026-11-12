@@ -95,6 +95,11 @@
       "commit": "afdbb206",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261113-0530.log": {
+      "commit": "e82d37cb",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
