@@ -34,7 +34,7 @@ from cli.registry.modules import get_spec
 # ── Module metadata ─────────────────────────────────────────────
 
 MODULE_ID = "text_generate"
-VERSION = "2.9.19"
+VERSION = "2.9.20"
 TITLE = I18nText("文本生成", "Text Generation")
 RUNNER = "ModelRunner"
 
@@ -684,6 +684,7 @@ UI: dict[str, UIFieldProps] = {
         default=False,
         group={"zh": "多模态", "en": "Multimodal"},
         control="switch",
+        hidden=True,
     ),
     "image-batch-size": UIFieldProps(
         label=I18nText("图像批大小", "Image Batch Size"),
