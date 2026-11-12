@@ -23,6 +23,13 @@ import serving_cast.stime as stime
 
 logger = stime.get_logger(__name__)
 
+# Safety-net timeout (seconds). A failing worker aborts the barrier so the
+# parent is released immediately. This bound only covers a worker that dies
+# without aborting (for example OOM). Without it, bare barrier.wait() blocks
+# the CI full suite until the job is killed.
+_BARRIER_INIT_TIMEOUT_S = 600
+_TASK_WAIT_TIMEOUT_S = 600
+
 
 @dataclass
 class InterpolationPoint:
@@ -406,7 +413,13 @@ class CompletionEventManager:
 
     def wait_completion_event(self, event_id):
         """main process call this func: wait event by event_id"""
-        self.event_dict[event_id].wait()
+        event = self.event_dict[event_id]
+        if event.wait(timeout=_TASK_WAIT_TIMEOUT_S):
+            return
+        raise RuntimeError(
+            f"wait_completion_event {event_id} timed out after {_TASK_WAIT_TIMEOUT_S}s "
+            "without completion; see worker logs for the root cause."
+        )
 
     def set_completion_event(self, event_id):
         """child process call this func: put completion message into queue and wait thread in main process to deal"""
@@ -525,8 +538,16 @@ class AsyncTaskManager:
                     common_config, parallel_config, device_type
                 )
                 barrier.wait()  # ensure all processes have built the model
+            except threading.BrokenBarrierError:
+                logger.error("Worker exiting: init barrier broken by another worker's failure")
+                return
             except Exception:
                 logger.exception("Worker initialization failed")
+                self.stop_event.set()
+                try:
+                    barrier.abort()
+                except Exception:
+                    logger.exception("Worker barrier abort failed")
                 return
 
             while not self.stop_event.is_set():
@@ -554,4 +575,20 @@ class AsyncTaskManager:
             p = mp.Process(target=worker, args=(barrier,), daemon=True)
             p.start()
             self.workers.append(p)
-        barrier.wait()
+        try:
+            barrier.wait(timeout=_BARRIER_INIT_TIMEOUT_S)
+        except threading.BrokenBarrierError as exc:
+            self.stop_event.set()
+            try:
+                barrier.abort()
+            except Exception:
+                logger.debug("barrier.abort() raised during init cleanup", exc_info=True)
+            try:
+                self.shutdown()
+            except Exception:
+                logger.exception("AsyncTaskManager: cleanup after init failure raised")
+            raise RuntimeError(
+                "AsyncTaskManager init failed: multi-process init barrier did not "
+                f"complete within {_BARRIER_INIT_TIMEOUT_S}s — a worker crashed or "
+                "failed to initialize. See worker logs for the root cause."
+            ) from exc

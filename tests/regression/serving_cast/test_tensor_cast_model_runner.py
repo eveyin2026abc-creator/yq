@@ -6,6 +6,7 @@ import unittest
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 from serving_cast.config import Config, ParallelConfig
 from serving_cast.model_runner import (
     AsyncTask,
@@ -1019,8 +1020,13 @@ class TestModelRunnerWithInterpolation(unittest.TestCase):
         runner.shutdown()
 
 
+@pytest.mark.network
 class TestAsyncTaskManagerFull(unittest.TestCase):
-    """Tests for AsyncTaskManager actual initialization with Config."""
+    """Tests for AsyncTaskManager actual initialization with Config.
+
+    These tests build Qwen/Qwen3-32B inside worker processes. PR gates exclude
+    the network marker; running them there deadlocks on model init.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -1098,6 +1104,54 @@ class TestAsyncTaskManagerFull(unittest.TestCase):
         result = task_manager.find_result(batch)
         self.assertIsNone(result)
         task_manager.shutdown()
+
+
+class TestAsyncTaskManagerInitFailure(unittest.TestCase):
+    """Worker init failures must release the parent instead of blocking."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp_dir, cls.common_path, cls.instance_path = create_test_config_files()
+        Config._instance = None
+        Config._initialized = False
+        cls.config = Config(
+            MockParsedArgs(
+                instance_config_path=cls.instance_path,
+                common_config_path=cls.common_path,
+            )
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+
+        Config._instance = None
+        Config._initialized = False
+        shutil.rmtree(cls.tmp_dir, ignore_errors=True)
+
+    def test_init_releases_when_worker_model_build_fails(self):
+        from unittest.mock import patch
+
+        parallel_config = ParallelConfig(
+            world_size=1,
+            tp_size=1,
+            moe_dp_size=1,
+        )
+        with (
+            patch("serving_cast.model_runner._BARRIER_INIT_TIMEOUT_S", 5),
+            patch.object(
+                ModelRunner,
+                "init_tensor_cast_model_runner",
+                side_effect=RuntimeError("model init failed"),
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                AsyncTaskManager(
+                    device_type="TEST_DEVICE",
+                    parallel_config=parallel_config,
+                    num_workers=2,
+                )
+        self.assertIn("AsyncTaskManager init failed", str(ctx.exception))
 
 
 if __name__ == "__main__":
