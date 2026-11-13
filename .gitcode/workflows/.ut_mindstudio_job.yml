@@ -59,4 +59,70 @@ jobs:
           export MSMODELING_TEST_WEIGHTS_PRUNE=${{ inputs.MSMODELING_TEST_WEIGHTS_PRUNE }}
           export MSMODELING_TEST_MAP_PATH=${{ inputs.MSMODELING_TEST_MAP_PATH }}
           export MSMODELING_TEST_BASE_BRANCH=${{ inputs.TARGET_BRANCH }}
+          # 流水线定义来自 master，被测代码仍是 PR head。UT 作业的 .msmodeling_cache
+          # 每次都是空的，随后 pytest -n 32 会同时拉取 Hub 文件。huggingface_hub 默认
+          # 读超时 10 秒，Ling-1T / Kimi-K2.5 / GLM-5.2 的正文会超时；Kimi 的
+          # forward 过滤补丁也因此装不上，attention_meta 会进到原始 forward。
+          # 在 32 个进程启动前，由一个进程把配置和远程建模代码逐个下进同一缓存。
+          export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+          export MSMODELING_CACHE="${PWD}/.msmodeling_cache"
+          export HF_HOME="${MSMODELING_CACHE}"
+          export HUGGINGFACE_HUB_CACHE="${MSMODELING_CACHE}/hub"
+          export TORCH_HOME="${MSMODELING_CACHE}"
+          export MODELSCOPE_CACHE="${MSMODELING_CACHE}"
+          export MSMODELING_OFFLINE=0
+          export HF_HUB_OFFLINE=0
+          export TRANSFORMERS_OFFLINE=0
+          export HF_HUB_DOWNLOAD_TIMEOUT=180
+          export HF_HUB_ETAG_TIMEOUT=60
+          mkdir -p "${HUGGINGFACE_HUB_CACHE}"
+          if ! python3 -c 'import huggingface_hub' >/dev/null 2>&1; then
+            python3 -m pip install --disable-pip-version-check -q \
+              -i https://repo.huaweicloud.com/repository/pypi/simple \
+              'huggingface_hub>=0.26' \
+              || python3 -m pip install --disable-pip-version-check --break-system-packages -q \
+              -i https://repo.huaweicloud.com/repository/pypi/simple \
+              'huggingface_hub>=0.26'
+          fi
+          python3 -c 'import textwrap; exec(textwrap.dedent("""
+          import time
+          from huggingface_hub import snapshot_download
+          models = (
+              "inclusionAI/Ling-1T",
+              "moonshotai/Kimi-K2.5",
+              "zai-org/GLM-5.2",
+          )
+          patterns = (
+              "config.json",
+              "**/config.json",
+              "configuration_*.py",
+              "**/configuration_*.py",
+              "modeling_*.py",
+              "**/modeling_*.py",
+              "preprocessor_config.json",
+              "**/preprocessor_config.json",
+          )
+          failures = []
+          for model_id in models:
+              last_error = None
+              for attempt in range(1, 5):
+                  try:
+                      path = snapshot_download(
+                          repo_id=model_id,
+                          allow_patterns=patterns,
+                          max_workers=1,
+                      )
+                  except Exception as exc:
+                      last_error = exc
+                      print(f"prefetch {model_id} attempt {attempt} failed: {exc}", flush=True)
+                      time.sleep(5 * attempt)
+                      continue
+                  print(f"prefetched {model_id} -> {path}", flush=True)
+                  last_error = None
+                  break
+              if last_error is not None:
+                  failures.append(f"{model_id}: {last_error}")
+          if failures:
+              raise SystemExit("CI hub prefetch failed:\\n" + "\\n".join(failures))
+          """))'
           cd MindStudio-CI && bash build.sh msmodeling
