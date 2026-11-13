@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-14",
+  "today": "2026-11-14",
+  "runs": [
+    {
+      "log": "nightly-master-20261114-0530.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-14",
+      "started": "2026-11-14 05:30",
+      "exit_code": 1,
+      "passed": 11870,
+      "failed": 1,
+      "errors": 0,
+      "duration_sec": 3426,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.7
+      },
+      "failures": [
+        {
+          "node_id": "tests/benchmark/ops/perf_database/test_empirical_metrics.py::TestModelRunnerProfilingMetrics::test_consecutive_non_pipeline_runs_isolate_empirical_records",
+          "status": "Root cause found",
+          "commit": "c81710cc",
+          "author": "stormchasingg",
+          "subject": "weight calibration for ling",
+          "error": "AttributeError: <module 'tensor_cast.core.model_runner' from '/home/yinqian/msmodeling-nightly/tensor_cast/core/model_runner.py'> has no attribute 'get_visual'"
+        }
+      ],
+      "commit": "c1a00a0b",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
