@@ -1,6 +1,16 @@
 {
   "today": "2026-11-13",
-  "issues": [],
+  "issues": [
+    {
+      "number": 648,
+      "title": "[Bug] c81710cc 移除 model_runner.get_visual 后 Nightly 实证用例失败",
+      "html_url": "https://gitcode.com/Ascend/msmodeling/issues/648",
+      "assignees": [
+        "stormchasingg"
+      ],
+      "introduced": "2026-11-13 09:11"
+    }
+  ],
   "sync_ok": true,
   "sync_errors": []
 }
