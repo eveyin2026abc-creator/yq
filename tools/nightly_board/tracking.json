@@ -107,6 +107,11 @@
       "commit": "c1a00a0b",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261115-0530.log": {
+      "commit": "c1a00a0b",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
