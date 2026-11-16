@@ -5,81 +5,193 @@
   "days": {
     "2026-11-01": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-02": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-03": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-04": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 3
+        }
+      ],
       "runs": 1,
       "failed": 3
     },
     "2026-11-05": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-06": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-07": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-08": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-09": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-10": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-11": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-12": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-11-13": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 1
+        }
+      ],
       "runs": 1,
       "failed": 1
     },
     "2026-11-14": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 1
+        }
+      ],
       "runs": 1,
       "failed": 1
     },
     "2026-11-15": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 1
+        }
+      ],
       "runs": 1,
       "failed": 1
     },
     "2026-11-16": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 1
+        }
+      ],
       "runs": 1,
       "failed": 1
     }

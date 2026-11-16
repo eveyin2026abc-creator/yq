@@ -18,6 +18,24 @@ class NightlyBoardTests(unittest.TestCase):
         runs = [{"branch": "master", "label": "master", "started": "2026-11-02 01:00", "exit_code": 3, "failed": 2, "errors": 0}]
         self.assertEqual(server.day_status(runs), "fail")
 
+    def test_day_status_includes_every_branch(self):
+        runs = [
+            {"branch": "master", "label": "master", "started": "2026-11-02 05:30", "exit_code": 0, "failed": 0, "errors": 0},
+            {"branch": "26.2.0", "label": "26.2.0", "started": "2026-11-02 05:40", "exit_code": 1, "failed": 1, "errors": 0},
+        ]
+        self.assertEqual(server.day_status(runs), "fail")
+        self.assertEqual(
+            server.day_branches(runs),
+            [
+                {"branch": "master", "status": "pass", "failed": 0},
+                {"branch": "26.2.0", "status": "fail", "failed": 1},
+            ],
+        )
+
+    def test_log_label_is_the_branch_name(self):
+        self.assertEqual(server.LOG_NAME.match("nightly-26.1.0-20261116-0530.log").group("label"), "26.1.0")
+        self.assertEqual(server.LOG_NAME.match("nightly-develop-20261116-0530.log").group("label"), "develop")
+
     @mock.patch.object(server, "issue_state")
     @mock.patch.object(server, "load_runs")
     def test_issue_sync_failure_is_explicit(self, load_runs, issue_state):
@@ -64,6 +82,17 @@ class NightlyBoardTests(unittest.TestCase):
         self.assertNotIn("repeat_kind", day["failures"][0])
         self.assertEqual(day["issues"], [])
         self.assertEqual(day["loop"], "未建 issue")
+
+    def test_same_failure_on_another_branch_is_not_a_repeat(self):
+        node = "tests/example.py::test_case"
+        runs = [
+            {"date": "2026-11-13", "branch": "master", "label": "master", "started": "2026-11-13 05:30", "issue_numbers": [648], "failures": [{"node_id": node, "commit": "c81710cc"}]},
+            {"date": "2026-11-14", "branch": "26.2.0", "label": "26.2.0", "started": "2026-11-14 05:30", "issue_numbers": [], "failures": [{"node_id": node, "commit": "c81710cc"}]},
+        ]
+        day = server.day_payload("2026-11-14", runs)["runs"][0]
+        self.assertNotIn("repeat_kind", day["failures"][0])
+        self.assertEqual(day["issues"], [])
+        self.assertEqual(day["branch"], "26.2.0")
 
 
 if __name__ == "__main__":

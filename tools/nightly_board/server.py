@@ -100,7 +100,7 @@ def parse_log(path: Path) -> dict | None:
     if match is None:
         return None
     label = match.group("label")
-    branch = "26.2.0" if label.startswith("26.2.0") else "master" if label.startswith("master") else label
+    branch = label
     ymd = match.group("ymd")
     date = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:8]}"
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -219,19 +219,19 @@ def issue_first_seen(runs: list[dict]) -> dict[int, str]:
     return first_seen
 
 
-def failure_key(failure: dict) -> tuple[str, str]:
-    """Same case and same attributed commit. A later bug on the same node stays separate."""
-    return (failure.get("node_id") or "", failure.get("commit") or "")
+def failure_key(run: dict, failure: dict) -> tuple[str, str, str]:
+    """Same branch, case, and attributed commit. Another branch stays a separate incident."""
+    return (run.get("branch") or "", failure.get("node_id") or "", failure.get("commit") or "")
 
 
 def failure_history(runs: list[dict]) -> dict[str, dict]:
-    """Earliest date and linked issues for each failed node and root-cause commit."""
-    first_seen: dict[tuple[str, str], str] = {}
-    issues: dict[tuple[str, str], list[int]] = {}
+    """Earliest date and linked issues for each branch, failed node, and root-cause commit."""
+    first_seen: dict[tuple[str, str, str], str] = {}
+    issues: dict[tuple[str, str, str], list[int]] = {}
     for run in runs:
         for failure in run.get("failures") or []:
-            key = failure_key(failure)
-            if not key[0]:
+            key = failure_key(run, failure)
+            if not key[1]:
                 continue
             seen = first_seen.get(key)
             if seen is None or run["date"] < seen:
@@ -259,9 +259,9 @@ def annotate_repeated_failures(run: dict, history: dict[str, dict]) -> dict:
     inherited: list[int] = []
     for failure in run.get("failures") or []:
         item = dict(failure)
-        key = failure_key(item)
+        key = failure_key(run, item)
         introduced = history["first_seen"].get(key)
-        if key[0] and introduced and introduced < run["date"]:
+        if key[1] and introduced and introduced < run["date"]:
             item["first_seen_date"] = introduced
             item["repeat_kind"] = repeat_kind_for(introduced, run["date"])
             for number in history["issues"].get(key, []):
@@ -298,16 +298,40 @@ def attach_issues(run: dict, first_seen: dict[int, str] | None = None) -> dict:
     return run
 
 
-def day_status(runs: list[dict]) -> str:
-    master = [run for run in runs if run["branch"] == "master" and run["label"] == "master"]
-    chosen = master or [run for run in runs if run["branch"] == "master"] or runs
-    latest = max(chosen, key=lambda run: run["started"])
-    code = latest["exit_code"]
-    if code == 0 and latest["failed"] == 0 and latest["errors"] == 0:
+def run_status(run: dict) -> str:
+    code = run["exit_code"]
+    if code == 0 and run["failed"] == 0 and run["errors"] == 0:
         return "pass"
     if code == 124:
         return "timeout"
     return "fail"
+
+
+def day_branches(runs: list[dict]) -> list[dict]:
+    """Latest run of each branch decides that branch's status for the day."""
+    latest: dict[str, dict] = {}
+    for run in runs:
+        current = latest.get(run["branch"])
+        if current is None or run["started"] > current["started"]:
+            latest[run["branch"]] = run
+    names = sorted(latest, key=lambda name: (name != "master", name))
+    return [
+        {
+            "branch": name,
+            "status": run_status(latest[name]),
+            "failed": latest[name]["failed"],
+        }
+        for name in names
+    ]
+
+
+def day_status(runs: list[dict]) -> str:
+    statuses = [item["status"] for item in day_branches(runs)]
+    if "fail" in statuses:
+        return "fail"
+    if "timeout" in statuses:
+        return "timeout"
+    return "pass"
 
 
 def month_payload(year: int, month: int, runs: list[dict] | None = None) -> dict:
@@ -320,6 +344,7 @@ def month_payload(year: int, month: int, runs: list[dict] | None = None) -> dict
     days = {
         date: {
             "status": day_status(items),
+            "branches": day_branches(items),
             "runs": len(items),
             "failed": sum(item["failed"] for item in items),
         }

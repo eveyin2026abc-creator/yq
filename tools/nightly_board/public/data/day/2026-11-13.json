@@ -36,8 +36,8 @@
       "issues": [
         {
           "number": 648,
-          "state": "open",
-          "closed": false,
+          "state": "closed",
+          "closed": true,
           "title": "[Bug] c81710cc 移除 model_runner.get_visual 后 Nightly 实证用例失败",
           "html_url": "https://gitcode.com/Ascend/msmodeling/issues/648",
           "assignees": [
@@ -47,7 +47,7 @@
           "error": ""
         }
       ],
-      "loop": "未闭环"
+      "loop": "已闭环"
     }
   ]
 }

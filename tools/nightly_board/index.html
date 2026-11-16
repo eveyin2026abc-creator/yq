@@ -50,7 +50,7 @@
     .week, .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
     .week { margin: 14px 0 8px; color: var(--muted); font-size: 12px; text-align: center; }
     .day {
-      min-height: 64px;
+      min-height: 78px;
       border-radius: 10px;
       border: 1px solid transparent;
       background: #f3efe8;
@@ -68,11 +68,12 @@
     .day.selected { outline: 2px solid var(--ink); }
     .day.today { box-shadow: inset 0 0 0 1px var(--ink); }
     .num { font-weight: 650; }
-    .mark { font-size: 11px; }
+    .mark { font-size: 10px; line-height: 1.35; }
     .legend { display: flex; gap: 12px; margin-top: 14px; color: var(--muted); font-size: 12px; }
     .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
     .summary span { padding: 8px; border-radius: 8px; background: #f3efe8; text-align: center; font-size: 12px; }
     .summary strong { display: block; font-size: 17px; color: var(--ink); }
+    .summary-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
     .sync-warning { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: #fff3cd; color: #713f12; font-size: 12px; }
     .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
     h2 { margin: 0; font-size: 22px; }
@@ -207,6 +208,7 @@
         <button id="next" type="button">下个月</button>
       </div>
       <div id="summary" class="summary"></div>
+      <p class="summary-note">以上统计不含周六、周日。日历仍显示周末。</p>
       <div class="week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
       <div id="grid" class="grid"></div>
       <div class="legend">
@@ -252,11 +254,23 @@
         .replaceAll("'", "&#039;");
     }
 
+    function isWeekend(date) {
+      const [year, month, day] = date.split("-").map(Number);
+      const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+      return weekday === 0 || weekday === 6;
+    }
+
     function statusText(status) {
       if (status === "pass") return "通过";
       if (status === "fail") return "有失败";
       if (status === "timeout") return "超时";
       return "无记录";
+    }
+
+    function dayMark(info) {
+      const branches = info.branches || [];
+      if (!branches.length) return statusText(info.status);
+      return branches.map((item) => `${escapeHtml(item.branch)} ${statusText(item.status)}`).join("<br>");
     }
 
     async function renderFreshness() {
@@ -317,7 +331,9 @@
       monthLabel.textContent = `${year} 年 ${month} 月`;
       const payload = await fetchMonth(year, month);
       today = payload.today;
-      const infos = Object.values(payload.days || {});
+      const infos = Object.entries(payload.days || {})
+        .filter(([date]) => !isWeekend(date))
+        .map(([, info]) => info);
       summary.innerHTML = `
         <span><strong>${infos.reduce((sum, item) => sum + item.runs, 0)}</strong>本月运行</span>
         <span><strong>${infos.filter((item) => item.status === "fail").length}</strong>失败日</span>
@@ -339,7 +355,7 @@
         button.type = "button";
         button.dataset.date = date;
         button.className = `day ${info ? info.status : "none"}${date === selected ? " selected" : ""}${date === today ? " today" : ""}`;
-        button.innerHTML = `<span class="num">${day}</span><span class="mark">${info ? statusText(info.status) : ""}</span>`;
+        button.innerHTML = `<span class="num">${day}</span><span class="mark">${info ? dayMark(info) : ""}</span>`;
         button.addEventListener("click", () => openDay(date));
         grid.appendChild(button);
       }

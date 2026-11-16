@@ -4,82 +4,229 @@
   "today": "2026-11-16",
   "days": {
     "2026-10-10": {
-      "status": "timeout",
+      "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "timeout",
+          "failed": 19
+        },
+        {
+          "branch": "26.2.0",
+          "status": "fail",
+          "failed": 23
+        }
+      ],
       "runs": 3,
       "failed": 64
     },
     "2026-10-12": {
       "status": "timeout",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "timeout",
+          "failed": 2
+        },
+        {
+          "branch": "26.2.0",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 3,
       "failed": 6
     },
     "2026-10-13": {
       "status": "timeout",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "timeout",
+          "failed": 1
+        },
+        {
+          "branch": "26.2.0",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 2,
       "failed": 1
     },
     "2026-10-14": {
-      "status": "pass",
+      "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        },
+        {
+          "branch": "26.2.0",
+          "status": "fail",
+          "failed": 1
+        }
+      ],
       "runs": 2,
       "failed": 1
     },
     "2026-10-15": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        },
+        {
+          "branch": "26.2.0",
+          "status": "pass",
+          "failed": 0
+        },
+        {
+          "branch": "master-mr991",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 3,
       "failed": 0
     },
     "2026-10-16": {
-      "status": "pass",
+      "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        },
+        {
+          "branch": "26.2.0",
+          "status": "fail",
+          "failed": 2
+        }
+      ],
       "runs": 2,
       "failed": 2
     },
     "2026-10-20": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-21": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 9
+        }
+      ],
       "runs": 1,
       "failed": 9
     },
     "2026-10-22": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-23": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-26": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-27": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-28": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-29": {
       "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
       "runs": 1,
       "failed": 0
     },
     "2026-10-30": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 3
+        }
+      ],
       "runs": 1,
       "failed": 3
     },
     "2026-10-31": {
       "status": "fail",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 3
+        }
+      ],
       "runs": 1,
       "failed": 3
     }
