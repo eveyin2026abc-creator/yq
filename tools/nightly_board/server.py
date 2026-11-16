@@ -219,6 +219,61 @@ def issue_first_seen(runs: list[dict]) -> dict[int, str]:
     return first_seen
 
 
+def failure_key(failure: dict) -> tuple[str, str]:
+    """Same case and same attributed commit. A later bug on the same node stays separate."""
+    return (failure.get("node_id") or "", failure.get("commit") or "")
+
+
+def failure_history(runs: list[dict]) -> dict[str, dict]:
+    """Earliest date and linked issues for each failed node and root-cause commit."""
+    first_seen: dict[tuple[str, str], str] = {}
+    issues: dict[tuple[str, str], list[int]] = {}
+    for run in runs:
+        for failure in run.get("failures") or []:
+            key = failure_key(failure)
+            if not key[0]:
+                continue
+            seen = first_seen.get(key)
+            if seen is None or run["date"] < seen:
+                first_seen[key] = run["date"]
+            linked = issues.setdefault(key, [])
+            for number in run.get("issue_numbers") or []:
+                if number not in linked:
+                    linked.append(number)
+    return {"first_seen": first_seen, "issues": issues}
+
+
+def repeat_kind_for(introduced: str, run_date: str) -> str:
+    previous_date = (datetime.fromisoformat(run_date).date() - timedelta(days=1)).isoformat()
+    return "previous_day" if introduced == previous_date else "historical"
+
+
+def annotate_repeated_failures(run: dict, history: dict[str, dict]) -> dict:
+    """Mark a failed node that already failed on an earlier day.
+
+    A later log often leaves ``issues`` empty. The issue filed for that same
+    node stays attached, so the day is not shown as untracked.
+    """
+    run = dict(run)
+    failures = []
+    inherited: list[int] = []
+    for failure in run.get("failures") or []:
+        item = dict(failure)
+        key = failure_key(item)
+        introduced = history["first_seen"].get(key)
+        if key[0] and introduced and introduced < run["date"]:
+            item["first_seen_date"] = introduced
+            item["repeat_kind"] = repeat_kind_for(introduced, run["date"])
+            for number in history["issues"].get(key, []):
+                if number not in inherited:
+                    inherited.append(number)
+        failures.append(item)
+    run["failures"] = failures
+    if not run.get("issue_numbers") and inherited:
+        run["issue_numbers"] = inherited
+    return run
+
+
 def attach_issues(run: dict, first_seen: dict[int, str] | None = None) -> dict:
     issues = []
     previous_date = (datetime.fromisoformat(run["date"]).date() - timedelta(days=1)).isoformat()
@@ -305,7 +360,12 @@ def open_issues_payload(runs: list[dict] | None = None) -> dict:
 def day_payload(date: str, runs: list[dict] | None = None) -> dict:
     source = load_runs() if runs is None else runs
     first_seen = issue_first_seen(source)
-    runs = [attach_issues(run, first_seen) for run in source if run["date"] == date]
+    history = failure_history(source)
+    runs = [
+        attach_issues(annotate_repeated_failures(run, history), first_seen)
+        for run in source
+        if run["date"] == date
+    ]
     runs.sort(key=lambda run: (run["branch"] != "master", run["label"] != "master", run["started"]))
     return {"date": date, "today": beijing_today(), "runs": runs}
 

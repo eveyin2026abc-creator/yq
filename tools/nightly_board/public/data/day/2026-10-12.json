@@ -25,7 +25,9 @@
           "commit": "b4fe8c10",
           "author": "ChenHuiwen",
           "subject": "feat(tensor-cast): MLAPO 默认关闭开关与 DSA indexer 拆分",
-          "error": "AssertionError:"
+          "error": "AssertionError:",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         },
         {
           "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_group_precision_judgment_0_glm5_2_group_profiling",
@@ -33,7 +35,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "AssertionError:"
+          "error": "AssertionError:",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         }
       ],
       "commit": "",
@@ -65,7 +69,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files.",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         },
         {
           "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_gate_returns_precomputed_topk_2_MiniMaxAI_MiniMax_M2",
@@ -73,7 +79,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files.",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         },
         {
           "node_id": "tests/benchmark/models/test_model_regression.py::TestPerformanceRegression::test_performance_regression_09_minimax_m2_7_prefill",
@@ -81,7 +89,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files.",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         },
         {
           "node_id": "tests/regression/tensor_cast/test_text_generate.py::TestTextGenerate::test_ling_basic_1_inclusionAI_Ling_flash_2_0",
@@ -89,7 +99,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files."
+          "error": "OSError: We couldn't connect to 'https://hf-mirror.com' to load the files, and couldn't find them in the cached files.",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         }
       ],
       "commit": "",

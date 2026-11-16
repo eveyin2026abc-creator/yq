@@ -25,14 +25,33 @@
           "commit": "c81710cc",
           "author": "stormchasingg",
           "subject": "weight calibration for ling",
-          "error": "AttributeError: <module 'tensor_cast.core.model_runner' from '/home/yinqian/msmodeling-nightly/tensor_cast/core/model_runner.py'> has no attribute 'get_visual'"
+          "error": "AttributeError: <module 'tensor_cast.core.model_runner' from '/home/yinqian/msmodeling-nightly/tensor_cast/core/model_runner.py'> has no attribute 'get_visual'",
+          "first_seen_date": "2026-11-13",
+          "repeat_kind": "previous_day"
         }
       ],
       "commit": "c1a00a0b",
       "ci_miss_reason": "",
-      "issue_numbers": [],
-      "issues": [],
-      "loop": "未建 issue"
+      "issue_numbers": [
+        648
+      ],
+      "issues": [
+        {
+          "number": 648,
+          "state": "open",
+          "closed": false,
+          "title": "[Bug] c81710cc 移除 model_runner.get_visual 后 Nightly 实证用例失败",
+          "html_url": "https://gitcode.com/Ascend/msmodeling/issues/648",
+          "assignees": [
+            "stormchasingg"
+          ],
+          "created_at": "2026-11-13 09:11",
+          "error": "",
+          "first_seen_date": "2026-11-13",
+          "repeat_kind": "previous_day"
+        }
+      ],
+      "loop": "未闭环"
     }
   ]
 }

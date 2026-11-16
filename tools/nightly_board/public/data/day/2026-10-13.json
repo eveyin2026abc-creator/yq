@@ -25,7 +25,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "AssertionError:"
+          "error": "AssertionError:",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         }
       ],
       "commit": "",

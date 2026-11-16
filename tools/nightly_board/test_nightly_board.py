@@ -35,6 +35,36 @@ class NightlyBoardTests(unittest.TestCase):
         self.assertEqual(result["issues"][0]["repeat_kind"], "previous_day")
         self.assertEqual(result["issues"][0]["first_seen_date"], "2026-10-30")
 
+    def test_same_failed_node_is_a_repeat_and_keeps_its_issue(self):
+        node = "tests/benchmark/ops/perf_database/test_empirical_metrics.py::TestModelRunnerProfilingMetrics::test_consecutive_non_pipeline_runs_isolate_empirical_records"
+        runs = [
+            {"date": "2026-10-21", "branch": "master", "label": "master", "started": "2026-10-21 02:40", "issue_numbers": [500], "failures": [{"node_id": node, "commit": "2509db59", "error": "engram"}]},
+            {"date": "2026-11-13", "branch": "master", "label": "master", "started": "2026-11-13 05:30", "issue_numbers": [648], "failures": [{"node_id": node, "commit": "c81710cc", "error": "get_visual"}]},
+            {"date": "2026-11-14", "branch": "master", "label": "master", "started": "2026-11-14 05:30", "issue_numbers": [], "failures": [{"node_id": node, "commit": "c81710cc", "error": "get_visual"}]},
+            {"date": "2026-11-16", "branch": "master", "label": "master", "started": "2026-11-16 05:30", "issue_numbers": [], "failures": [{"node_id": node, "commit": "c81710cc", "error": "get_visual"}]},
+        ]
+        with mock.patch.object(server, "issue_state", return_value={"number": 648, "closed": False, "html_url": "https://example/648", "assignees": ["stormchasingg"], "title": "get_visual"}):
+            day14 = server.day_payload("2026-11-14", runs)["runs"][0]
+            day16 = server.day_payload("2026-11-16", runs)["runs"][0]
+        self.assertEqual(day14["failures"][0]["repeat_kind"], "previous_day")
+        self.assertEqual(day14["failures"][0]["first_seen_date"], "2026-11-13")
+        self.assertEqual(day14["issues"][0]["number"], 648)
+        self.assertEqual(day14["issues"][0]["repeat_kind"], "previous_day")
+        self.assertEqual(day16["failures"][0]["repeat_kind"], "historical")
+        self.assertEqual(day16["failures"][0]["first_seen_date"], "2026-11-13")
+        self.assertEqual(day16["issues"][0]["number"], 648)
+        self.assertEqual(day16["issues"][0]["first_seen_date"], "2026-11-13")
+
+    def test_new_failed_node_stays_untracked(self):
+        runs = [
+            {"date": "2026-11-13", "branch": "master", "label": "master", "started": "2026-11-13 05:30", "issue_numbers": [648], "failures": [{"node_id": "tests/a.py::test_old"}]},
+            {"date": "2026-11-14", "branch": "master", "label": "master", "started": "2026-11-14 05:30", "issue_numbers": [], "failures": [{"node_id": "tests/b.py::test_new"}]},
+        ]
+        day = server.day_payload("2026-11-14", runs)["runs"][0]
+        self.assertNotIn("repeat_kind", day["failures"][0])
+        self.assertEqual(day["issues"], [])
+        self.assertEqual(day["loop"], "未建 issue")
+
 
 if __name__ == "__main__":
     unittest.main()

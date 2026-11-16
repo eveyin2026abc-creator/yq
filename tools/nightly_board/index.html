@@ -348,7 +348,10 @@
 
     function failureItem(item) {
       const bits = [item.status, item.author, item.commit, item.subject].filter(Boolean).join(" · ");
-      return `<li><code>${escapeHtml(item.node_id)}</code><div>${escapeHtml(bits)}</div><div class="reason">${escapeHtml(item.error)}</div></li>`;
+      const repeat = item.repeat_kind
+        ? `<div class="repeat-note">🔁 ${item.repeat_kind === "previous_day" ? "前一日重复用例" : "历史重复用例"}，首次出现于 ${escapeHtml(item.first_seen_date)}</div>`
+        : "";
+      return `<li><code>${escapeHtml(item.node_id)}</code><div>${escapeHtml(bits)}</div><div class="reason">${escapeHtml(item.error)}</div>${repeat}</li>`;
     }
 
     function issueItem(issue) {

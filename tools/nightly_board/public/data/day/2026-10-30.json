@@ -25,7 +25,9 @@
           "commit": "",
           "author": "",
           "subject": "",
-          "error": "ValueError: max_batched_tokens (100) cannot hold the per-request image token budget (2042); raise instead of straddling the image placeholders across chunks"
+          "error": "ValueError: max_batched_tokens (100) cannot hold the per-request image token budget (2042); raise instead of straddling the image placeholders across chunks",
+          "first_seen_date": "2026-10-10",
+          "repeat_kind": "historical"
         },
         {
           "node_id": "tests/smoke/test_throughput_optimizer_smoke.py::TestThroughputOptimizerSmoke::test_vl_moe_aggregation_compile_smoke",
