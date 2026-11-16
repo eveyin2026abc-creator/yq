@@ -190,9 +190,14 @@
           "branch": "master",
           "status": "fail",
           "failed": 1
+        },
+        {
+          "branch": "master-pr1097",
+          "status": "pass",
+          "failed": 0
         }
       ],
-      "runs": 1,
+      "runs": 2,
       "failed": 1
     }
   }
