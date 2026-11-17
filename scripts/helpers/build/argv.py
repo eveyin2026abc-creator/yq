@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 _VALID_TOKENS = frozenset({"local", "test"})
 _TEST_EXTRA_KEYS = frozenset({"test_map_path", "base_branch", "offline", "weights_prune"})
+_SUITE_CHOICES = ("ci_gate",)
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class BuildOptions:
     version: str | None
     version_explicit: bool
     extras: Mapping[str, str]
+    suite: str | None = None
 
 
 def _parse_extras(raw_extras: Sequence[str], parser: argparse.ArgumentParser) -> dict[str, str]:
@@ -89,6 +91,12 @@ def parse_argv(argv: Sequence[str] | None = None) -> BuildOptions:
         ),
     )
     parser.add_argument(
+        "--suite",
+        choices=_SUITE_CHOICES,
+        default=None,
+        help="test suite to run; CI calls: python build.py test --suite ci_gate",
+    )
+    parser.add_argument(
         "tokens",
         nargs="*",
         metavar="COMMAND",
@@ -96,6 +104,8 @@ def parse_argv(argv: Sequence[str] | None = None) -> BuildOptions:
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
     is_test, is_local = _parse_tokens(args.tokens, parser)
+    if args.suite is not None and not is_test:
+        parser.error("--suite is only supported with the test command")
     extras = _parse_extras(args.extra, parser)
     _validate_extras(is_test, extras, parser)
     return BuildOptions(
@@ -104,4 +114,5 @@ def parse_argv(argv: Sequence[str] | None = None) -> BuildOptions:
         version=args.version,
         version_explicit=args.version is not None,
         extras=extras,
+        suite=args.suite,
     )

@@ -6,8 +6,11 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
+from urllib.parse import quote
 
 from scripts.helpers._paths import REPO_ROOT
 from scripts.helpers.build.bootstrap import bootstrap
@@ -20,6 +23,10 @@ if TYPE_CHECKING:
 _CI_GATE_SCRIPT: Final = REPO_ROOT / "scripts" / "run_ci_gate.sh"
 _TEST_REPORTS_DIR: Final = REPO_ROOT / "artifacts" / "test-reports"
 _SHELL_TIMEOUT_SECONDS: Final = 36000
+_TEST_MAP_URL_TEMPLATE: Final = (
+    "https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/{branch}"
+)
+_TEST_MAP_DOWNLOAD_TIMEOUT_SECONDS: Final = 60
 
 logger: Final = setup_logger("build")
 
@@ -27,12 +34,55 @@ logger: Final = setup_logger("build")
 def run_test(options: BuildOptions) -> int:
     """Run full ``pytest tests``, or CI gate when test_map is provided."""
     raw = options.extras.get("test_map_path") or os.environ.get("MSMODELING_TEST_MAP_PATH")
+    if options.suite == "ci_gate":
+        return _run_requested_ci_gate(options, (raw or "").strip())
     if not raw or not raw.strip():
         logger.warning(
             "MSMODELING_TEST_MAP_PATH not set; falling back to full pytest suite. Set it explicitly to use CI gate.",
         )
         return _run_full_suite(options)
     return _run_ci_gate(options, raw.strip())
+
+
+def _run_requested_ci_gate(options: BuildOptions, raw: str) -> int:
+    """Run the gate for ``--suite ci_gate``, downloading the map when it is absent."""
+    if raw and Path(raw).is_file():
+        return _run_ci_gate(options, raw)
+    base_branch = options.extras.get("base_branch") or os.environ.get("MSMODELING_TEST_BASE_BRANCH", "master")
+    dest = Path(raw) if raw else _TEST_REPORTS_DIR / "test_map.json"
+    if _download_test_map(dest, base_branch) != 0:
+        return 1
+    return _run_ci_gate(options, str(dest))
+
+
+def _download_test_map(dest: Path, base_branch: str) -> int:
+    branch = base_branch.strip().strip("/")
+    if not branch or branch in {".", ".."} or ".." in branch.split("/"):
+        logger.error("invalid base branch for test_map download: %r", base_branch)
+        return 1
+    url = _TEST_MAP_URL_TEMPLATE.format(branch=quote(branch, safe="/"))
+    logger.info("downloading test_map from %s", url)
+    try:
+        with urllib.request.urlopen(url, timeout=_TEST_MAP_DOWNLOAD_TIMEOUT_SECONDS) as response:
+            body = response.read()
+        payload = json.loads(body.decode("utf-8"))
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        OSError,
+    ) as exc:
+        logger.error("failed to download test_map: %s", exc)
+        return 1
+    if not isinstance(payload, dict) or not body:
+        logger.error("test_map JSON root must be an object")
+        return 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(body)
+    tmp.replace(dest)
+    return 0
 
 
 def _run_teed(cmd: list[str], *, env: dict[str, str], log_path: Path) -> int:

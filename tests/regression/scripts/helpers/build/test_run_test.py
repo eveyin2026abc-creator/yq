@@ -236,6 +236,39 @@ def test_run_test_syncs_ci_group_not_build(
     assert "build" not in sync_cmd[sync_cmd.index("--group") :]
 
 
+def test_run_test_suite_ci_gate_downloads_missing_map(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    subprocess_capture: SubprocessRunCapture,
+) -> None:
+    """CI passes --suite ci_gate with a path that is not on disk yet."""
+    dest = repo_root / "downloaded_map.json"
+    monkeypatch.delenv("MSMODELING_TEST_MAP_PATH", raising=False)
+    monkeypatch.setenv("MSMODELING_TEST_BASE_BRANCH", "develop")
+
+    class _Response:
+        def read(self) -> bytes:
+            return b'{"nodes":{}}'
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        run_test_mod.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: _Response(),
+    )
+    assert run_test(build_options(is_test=True, suite="ci_gate", extras={"test_map_path": str(dest)})) == 0
+    assert dest.is_file()
+    call = subprocess_capture.merged_output_calls[0]
+    assert call["cmd"] == ["bash", str(repo_root / "scripts" / "run_ci_gate.sh")]
+    assert call["env"]["MSMODELING_TEST_MAP_PATH"] == str(dest)
+    assert call["env"]["MSMODELING_TEST_BASE_BRANCH"] == "develop"
+
+
 def test_run_test_missing_test_map_file_returns_1(
     repo_root: Path,
     with_uv: None,
