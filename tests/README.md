@@ -27,7 +27,7 @@ tests/
 
 Layering by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (long-running), `npu` (hardware), `network` (live Hub).
 
-Rules and the two approvals still required before any test moves are in [`docs/design/ut_refactor_implementation_plan.md`](../docs/design/ut_refactor_implementation_plan.md). Regenerate a local node inventory with `scripts/helpers/export_test_inventory.py` when collection changes; that workbook is not part of this change.
+The active layering, watcher, and approval rules are in [`spec/testing/test-architecture.md`](../spec/testing/test-architecture.md). Regenerate a local node inventory with `scripts/helpers/export_test_inventory.py` when collection changes; that workbook is not committed.
 
 ## Marker Semantics
 
