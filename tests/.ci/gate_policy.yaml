@@ -30,7 +30,7 @@ impact_rules:
       - "tools/perf_data_collection/op_replay/**/*_run.py"
       - "tools/perf_data_collection/op_microbench/adapters.py"
     tests:
-      - "tests/regression/cli/test_run_op_microbench.py::test_registered_adapters_reference_existing_op_replay_scripts"
+      - "tests/regression/cli/module/test_run_op_microbench.py::test_registered_adapters_reference_existing_op_replay_scripts"
     reason: "Replay scripts and ADAPTERS must remain consistent."
 
   - id: cli-web-ui-schema-consistency
