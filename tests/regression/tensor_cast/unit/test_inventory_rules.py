@@ -16,7 +16,7 @@
 
 """Layer rules stay in the order the register documents."""
 
-from tests.helpers.inventory_rules import NodeRecord, classify
+from tests.architecture.inventory_rules import NodeRecord, classify
 
 
 def test_rules_apply_in_order_and_do_not_label_the_rest_l2():

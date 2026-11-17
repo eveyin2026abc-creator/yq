@@ -20,7 +20,7 @@ import unittest
 
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 
-from tests.helpers.l1_qwen import qwen3_32b_input, run_qwen
+from tests.scenarios.l1.l1_qwen import qwen3_32b_input, run_qwen
 from tests.helpers.l1_scenario import L1ScenarioExecutor
 
 

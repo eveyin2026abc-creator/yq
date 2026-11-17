@@ -16,7 +16,7 @@
 
 """The L2 scanner reports model construction and stays silent on a clean module."""
 
-from tests.helpers.layer_guard import find_l2_model_violations
+from tests.architecture.layer_guard import find_l2_model_violations
 
 
 def test_scanner_reports_model_construction():

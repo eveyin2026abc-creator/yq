@@ -63,10 +63,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/lib/common.sh"
 
 architecture_status=0
-run_py "${HELPERS_DIR}/test_architecture.py" check-assertions || architecture_status=$?
-run_py "${HELPERS_DIR}/test_architecture.py" check-scenarios --budget 180 || architecture_status=$?
-run_py "${HELPERS_DIR}/test_architecture.py" check-l2-layers || architecture_status=$?
-run_py "${HELPERS_DIR}/test_architecture.py" check-new-tests \
+run_py "${HELPERS_DIR}/architecture/main.py" check-assertions || architecture_status=$?
+run_py "${HELPERS_DIR}/architecture/main.py" check-scenarios --budget 180 || architecture_status=$?
+run_py "${HELPERS_DIR}/architecture/main.py" check-l2-layers || architecture_status=$?
+run_py "${HELPERS_DIR}/architecture/main.py" check-new-tests \
   --base "origin/${MSMODELING_TEST_BASE_BRANCH}" || architecture_status=$?
 
 ci_gate_status=0
@@ -74,11 +74,11 @@ run_py "${HELPERS_DIR}/ci_gate/main.py" || ci_gate_status=$?
 
 l1_watcher_status=0
 if [[ ${architecture_status} -eq 0 && ${ci_gate_status} -eq 0 ]]; then
-  run_py "${HELPERS_DIR}/l1_watcher_gate.py" \
+  run_py "${HELPERS_DIR}/architecture/l1_watchers.py" \
     --output "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
     || l1_watcher_status=$?
   if [[ ${l1_watcher_status} -eq 0 ]]; then
-    run_py "${HELPERS_DIR}/test_architecture.py" check-watchers \
+    run_py "${HELPERS_DIR}/architecture/main.py" check-watchers \
       --test-map "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
       || l1_watcher_status=$?
   fi

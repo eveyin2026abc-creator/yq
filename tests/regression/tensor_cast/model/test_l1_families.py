@@ -19,7 +19,7 @@
 import pytest
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 
-from tests.helpers.l1_families import FAMILY_MODEL_IDS, family_input, run_family
+from tests.scenarios.l1.l1_families import FAMILY_MODEL_IDS, family_input, run_family
 from tests.helpers.l1_scenario import L1ScenarioExecutor
 
 

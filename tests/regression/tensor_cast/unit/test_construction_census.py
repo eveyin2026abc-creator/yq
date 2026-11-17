@@ -16,7 +16,7 @@
 
 """The construction census sees real calls and ignores the guard's string fixtures."""
 
-from tests.helpers.construction_census import iter_sites, render_census, sites_in
+from tests.architecture.construction_census import iter_sites, render_census, sites_in
 
 
 def test_executor_and_direct_sites_are_both_visible():

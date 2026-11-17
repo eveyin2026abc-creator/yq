@@ -47,7 +47,7 @@ manifest 守恒、build/forward 计数、test_map watcher 不缩水，以及适�
 
 ## 7. 机械执行
 
-`scripts/helpers/test_architecture.py` 校验断言 manifest、场景预算、新增测试路由与清单对账。
+`scripts/helpers/architecture/` 统一承载断言 manifest、场景预算、watcher、新增测试路由与清单对账门禁。
 `scripts/run_ci_gate.sh` 在 pytest 前运行这些门禁。例外沿用 `tests/.ci/gate_policy.yaml`
 exemptions，必须填写 reason、applicant、approver、deadline。
 

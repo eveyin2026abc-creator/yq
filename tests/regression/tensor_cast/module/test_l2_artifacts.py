@@ -31,7 +31,7 @@ from tests.helpers.l2_artifacts import (
     replay_artifact,
     runtime_event_artifact,
 )
-from tests.helpers.layer_guard import find_l2_model_violations_in_file
+from tests.architecture.layer_guard import find_l2_model_violations_in_file
 
 
 def test_seven_kinds_are_the_l2_set():

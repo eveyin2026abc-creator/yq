@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.helpers.test_architecture import (
+from scripts.helpers.architecture.main import (
     GateError,
     _changed_test_files,
     _classify_file,
@@ -180,7 +180,7 @@ def test_changed_test_files_keeps_only_added_existing_python_tests(
     test_file.write_text("def test_case(): pass\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "scripts.helpers.test_architecture.subprocess.run",
+        "scripts.helpers.architecture.main.subprocess.run",
         lambda *_args, **_kwargs: argparse.Namespace(
             stdout="tests/new/test_case.py\ntests/new/readme.md\ntests/missing.py\n"
         ),
@@ -205,7 +205,7 @@ def test_check_new_tests_accepts_registered_executor_test(tmp_path: Path, monkey
     )
     registry = tmp_path / "families.json"
     registry.write_text(json.dumps({"families": {"qwen": {}}}), encoding="utf-8")
-    monkeypatch.setattr("scripts.helpers.test_architecture._changed_test_files", lambda _base: [test_file])
+    monkeypatch.setattr("scripts.helpers.architecture.main._changed_test_files", lambda _base: [test_file])
 
     check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
 
@@ -222,7 +222,7 @@ def test_check_new_tests_accepts_documented_non_tensor_cast_runner_exemption(
     )
     registry = tmp_path / "families.json"
     registry.write_text(json.dumps({"families": {"qwen": {}}}), encoding="utf-8")
-    monkeypatch.setattr("scripts.helpers.test_architecture._changed_test_files", lambda _base: [test_file])
+    monkeypatch.setattr("scripts.helpers.architecture.main._changed_test_files", lambda _base: [test_file])
 
     check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
 
@@ -260,7 +260,7 @@ def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest
     parser = argparse.Namespace(
         parse_args=lambda: argparse.Namespace(func=lambda _args: (_ for _ in ()).throw(GateError("boom")))
     )
-    monkeypatch.setattr("scripts.helpers.test_architecture.build_parser", lambda: parser)
+    monkeypatch.setattr("scripts.helpers.architecture.main.build_parser", lambda: parser)
 
     assert main() == 1
     assert "test architecture gate: boom" in capsys.readouterr().err

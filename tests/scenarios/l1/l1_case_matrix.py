@@ -31,10 +31,10 @@ from pathlib import Path
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
-from tests.helpers.l1_families import FAMILY_MODEL_IDS
+from tests.scenarios.l1.l1_families import FAMILY_MODEL_IDS
 from tests.helpers.l1_scenario import L1BuildSignature
 
-_REPO = Path(__file__).resolve().parents[2]
+_REPO = Path(__file__).resolve().parents[3]
 
 
 @dataclass(frozen=True)

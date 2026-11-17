@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.helpers import l1_watcher_gate
+from scripts.helpers.architecture import l1_watchers as l1_watcher_gate
 
 
 def _write_watchers(path: Path, *, omit: str | None = None) -> None:

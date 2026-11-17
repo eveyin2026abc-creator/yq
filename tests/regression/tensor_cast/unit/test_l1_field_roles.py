@@ -20,7 +20,7 @@ from dataclasses import fields
 
 from tensor_cast.core.user_config import UserInputConfig
 
-from tests.helpers.l1_field_roles import FIELD_NOTES, field_role
+from tests.architecture.l1_field_roles import FIELD_NOTES, field_role
 from tests.helpers.l1_scenario import OBSERVABILITY_FIELDS, RUN_FIELDS, build_field_names
 
 

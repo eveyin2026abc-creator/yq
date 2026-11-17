@@ -18,7 +18,7 @@
 
 from pathlib import Path
 
-from tests.helpers.l1_case_matrix import (
+from tests.scenarios.l1.l1_case_matrix import (
     FIXTURE_ROWS,
     build_probes,
     read_model_type,

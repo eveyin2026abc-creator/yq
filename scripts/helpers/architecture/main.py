@@ -27,7 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
-from tests.helpers.layer_guard import find_l2_model_violations_in_file
+from tests.architecture.layer_guard import find_l2_model_violations_in_file
 
 ASSERTION_GROUPS = {"numeric", "structural", "capability"}
 INVENTORY_FIELDS = ("node_id", "current_file", "current_layer", "target_layer", "target_file", "status")

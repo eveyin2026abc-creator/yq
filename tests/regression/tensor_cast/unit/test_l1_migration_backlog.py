@@ -18,8 +18,8 @@
 
 from collections import Counter
 
-from tests.helpers.construction_census import iter_sites
-from tests.helpers.l1_migration_backlog import DIRECT_SITES
+from tests.architecture.construction_census import iter_sites
+from tests.architecture.l1_migration_backlog import DIRECT_SITES
 
 
 def test_backlog_matches_the_census_and_keeps_the_executor():
