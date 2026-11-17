@@ -70,7 +70,7 @@ When adding a new `@pytest.mark.nightly` case, a smoke counterpart should be add
 
 Model identity belongs to L1. One L1 scenario should carry numeric, structural, and capability assertions together when they activate the same graph and workload; that path is `tests/helpers/l1_scenario.py`. L2 never repeats an L1 output. L3 checks a smaller pure contract.
 
-The executable migration record is [`ut_refactor_implementation_plan.md`](ut_refactor_implementation_plan.md), with its generated node inventory in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx). The workbook is regenerated from current pytest collection by `scripts/helpers/export_test_inventory.py`; code, build/forward counters, assertion manifests and watcher conservation remain the acceptance evidence. The physical hierarchy is component first and responsibility second: `tests/regression/<component>/{model,module,unit}/`.
+The executable migration record is [`ut_refactor_implementation_plan.md`](ut_refactor_implementation_plan.md). Regenerate a local node inventory from the current pytest collection with `scripts/helpers/export_test_inventory.py`; that workbook is not committed. Code, build/forward counters, assertion manifests and watcher conservation remain the acceptance evidence. The physical hierarchy is component first and responsibility second: `tests/regression/<component>/{model,module,unit}/`.
 
 **Subsequent Maintenance**
 

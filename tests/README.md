@@ -27,7 +27,7 @@ tests/
 
 Layering by directory (`smoke`/`regression`/`benchmark`). Markers: `nightly` (long-running), `npu` (hardware), `network` (live Hub).
 
-The collected-node register for the later L1/L2/L3 migration is [`docs/design/l1_l2_l3_test_inventory.xlsx`](../docs/design/l1_l2_l3_test_inventory.xlsx). Rules and the two approvals still required before any test moves are in [`docs/design/ut_refactor_implementation_plan.md`](../docs/design/ut_refactor_implementation_plan.md).
+Rules and the two approvals still required before any test moves are in [`docs/design/ut_refactor_implementation_plan.md`](../docs/design/ut_refactor_implementation_plan.md). Regenerate a local node inventory with `scripts/helpers/export_test_inventory.py` when collection changes; that workbook is not part of this change.
 
 ## Marker Semantics
 

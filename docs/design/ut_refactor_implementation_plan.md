@@ -1,6 +1,6 @@
 # L1 / L2 / L3 migration implementation and acceptance record
 
-This document is the executable migration contract and final acceptance record. The inventory workbook is generated from the current checkout by `scripts/helpers/export_test_inventory.py`; it is routing evidence, while code, collect results, build/forward counters, assertion manifests and `test_map` watcher checks are completion evidence.
+This document is the executable migration contract and final acceptance record. `scripts/helpers/export_test_inventory.py` can write a local inventory workbook; that file is routing evidence and is not committed. Code, collect results, build/forward counters, assertion manifests and `test_map` watcher checks are completion evidence.
 
 The current register was collected on the refactor branch with:
 
@@ -8,7 +8,7 @@ The current register was collected on the refactor branch with:
 python -m pytest tests -o addopts= --collect-only -q
 ```
 
-Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The 2026-10-30 post-dedup refresh collected **10,277 node ids**. The same rows are in [`l1_l2_l3_test_inventory.xlsx`](l1_l2_l3_test_inventory.xlsx), one row per collected node id. Re-run the exporter whenever collection changes; a count mismatch means the workbook is stale. The historical 6,943/7,626/9,154 counts are not acceptance baselines.
+Clearing `addopts` keeps `nightly`, `npu`, and `network` nodes in the register. The 2026-10-30 post-dedup refresh collected **10,277 node ids**. Re-run `scripts/helpers/export_test_inventory.py` locally whenever collection changes. The historical 6,943/7,626/9,154 counts are not acceptance baselines.
 
 ## Final implementation status
 

@@ -76,9 +76,7 @@ Only two markers: `@pytest.mark.nightly` (>300s compile), `@pytest.mark.npu` (NP
 the product object under test, and cannot be the sole watcher for security, precision, or
 performance paths.
 
-Do not place a new case by copying a row out of
-[`docs/design/l1_l2_l3_test_inventory.xlsx`](../docs/design/l1_l2_l3_test_inventory.xlsx).
-That workbook registers existing node ids for migration; new cases follow the decision trees below.
+Do not place a new case by copying an existing collected node. New cases follow the decision trees below.
 
 ### Execution Decision Tree
 
