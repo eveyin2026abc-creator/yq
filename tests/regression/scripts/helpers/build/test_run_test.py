@@ -238,13 +238,17 @@ def test_run_test_syncs_ci_group_not_build(
 
 def test_run_test_suite_ci_gate_downloads_missing_map(
     repo_root: Path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     subprocess_capture: SubprocessRunCapture,
 ) -> None:
     """CI passes --suite ci_gate with a path that is not on disk yet."""
-    dest = repo_root / "downloaded_map.json"
+    missing = repo_root / "missing_ci_map.json"
+    cache = tmp_path / "cache"
     monkeypatch.delenv("MSMODELING_TEST_MAP_PATH", raising=False)
     monkeypatch.setenv("MSMODELING_TEST_BASE_BRANCH", "develop")
+    monkeypatch.setenv("MSMODELING_CACHE", str(cache))
+    seen: list[str] = []
 
     class _Response:
         def read(self) -> bytes:
@@ -256,13 +260,19 @@ def test_run_test_suite_ci_gate_downloads_missing_map(
         def __exit__(self, *_args: object) -> None:
             return None
 
+    def _urlopen(url: str, timeout: float = 0) -> _Response:
+        del timeout
+        seen.append(url)
+        return _Response()
+
     monkeypatch.setattr(
-        run_test_mod.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: _Response(),
+        "scripts.helpers.build.test_map_fetch.urllib.request.urlopen",
+        _urlopen,
     )
-    assert run_test(build_options(is_test=True, suite="ci_gate", extras={"test_map_path": str(dest)})) == 0
+    assert run_test(build_options(is_test=True, suite="ci_gate", extras={"test_map_path": str(missing)})) == 0
+    dest = cache / "test_map" / "develop" / "test_map.json"
     assert dest.is_file()
+    assert seen == ["https://gitcode.com/api/v5/repos/eveyin1/msmodeling_pr/raw/test_map.json?ref=test-map/develop"]
     call = subprocess_capture.merged_output_calls[0]
     assert call["cmd"] == ["bash", str(repo_root / "scripts" / "run_ci_gate.sh")]
     assert call["env"]["MSMODELING_TEST_MAP_PATH"] == str(dest)
