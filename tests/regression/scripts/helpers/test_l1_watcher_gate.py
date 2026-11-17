@@ -53,6 +53,47 @@ def test_required_nodes_rejects_incomplete_contract(tmp_path: Path) -> None:
         l1_watcher_gate.required_nodes(watchers)
 
 
+def test_pytest_command_selects_non_nightly_nodes() -> None:
+    command = l1_watcher_gate.pytest_command(("tests/l1.py::test_qwen",))
+    assert command[:3] == [l1_watcher_gate.sys.executable, "-m", "pytest"]
+    assert "tests/l1.py::test_qwen" in command
+    assert command[command.index("-m", 3) + 1] == "not nightly"
+    assert "--cov-context=test" in command
+
+
+def test_build_parser_accepts_all_artifact_paths() -> None:
+    args = l1_watcher_gate.build_parser().parse_args(
+        [
+            "--watchers",
+            "watchers.csv",
+            "--output",
+            "candidate.json",
+            "--coverage-file",
+            "coverage.data",
+        ]
+    )
+    assert args.watchers == Path("watchers.csv")
+    assert args.output == Path("candidate.json")
+    assert args.coverage_file == Path("coverage.data")
+
+
+def test_main_routes_paths_to_candidate_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    watchers = tmp_path / "watchers.csv"
+    output = tmp_path / "candidate.json"
+    coverage = tmp_path / "coverage.data"
+    parsed = SimpleNamespace(watchers=watchers, output=output, coverage_file=coverage)
+    monkeypatch.setattr(l1_watcher_gate, "build_parser", lambda: SimpleNamespace(parse_args=lambda: parsed))
+    calls: list[tuple[Path, Path, Path]] = []
+    monkeypatch.setattr(
+        l1_watcher_gate,
+        "generate_candidate",
+        lambda watchers_path, output_path, coverage_path: calls.append((watchers_path, output_path, coverage_path))
+        or 0,
+    )
+    assert l1_watcher_gate.main() == 0
+    assert calls == [(watchers, output, coverage)]
+
+
 def test_generate_candidate_runs_non_nightly_and_writes_observed_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
