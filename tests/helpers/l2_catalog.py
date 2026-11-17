@@ -28,25 +28,9 @@ from dataclasses import dataclass
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 
 from tests.helpers.l2_artifacts import (
+    L2_BUILDERS,
     L2_KINDS,
-    diagnostics_artifact,
-    fx_artifact,
-    microbench_artifact,
-    parallel_artifact,
-    quant_artifact,
-    replay_artifact,
-    runtime_event_artifact,
 )
-
-BUILDERS = {
-    "quant": quant_artifact,
-    "parallel": parallel_artifact,
-    "fx": fx_artifact,
-    "runtime_event": runtime_event_artifact,
-    "diagnostics": diagnostics_artifact,
-    "replay": replay_artifact,
-    "microbench": microbench_artifact,
-}
 
 
 @dataclass(frozen=True)
@@ -202,7 +186,7 @@ def cases_for(kind: str) -> tuple[CatalogCase, ...]:
 def run_catalog_case(case: CatalogCase):
     """Build one catalog row, or raise the builder's error for a rejected row."""
 
-    builder = BUILDERS[case.kind]
+    builder = L2_BUILDERS[case.kind]
     if not case.valid:
         try:
             builder(**case.arguments())

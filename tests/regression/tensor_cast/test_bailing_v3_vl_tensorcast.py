@@ -26,6 +26,7 @@ from tensor_cast.layers.rotary_embedding import CachingMRotaryEmb
 from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo
 from tensor_cast.transformers.custom_model_registry import get_model_profile
 from tensor_cast.transformers.module_omission import LanguageModelOnlyModule, omit_model_parts
+from tests.helpers.l1_scenario import isolated_l1_executor
 from tests.helpers.model_assets import vendored_model_config_path
 
 
@@ -33,21 +34,22 @@ def test_text_only_request_keeps_full_vl_weight(tmp_path, monkeypatch):
     import transformers.dynamic_module_utils as dynamic_module_utils
 
     monkeypatch.setattr(dynamic_module_utils, "HF_MODULES_CACHE", str(tmp_path / "transformers_modules"))
-    runner = ModelRunner(
-        UserInputConfig(
-            device="TEST_DEVICE",
-            model_id=vendored_model_config_path("inclusionAI/Ling-3.0-flash-VL"),
-            num_queries=1,
-            query_len=8,
-            num_hidden_layers_override=1,
-            quantize_linear_action=QuantizeLinearAction.DISABLED,
-        )
+    user_input = UserInputConfig(
+        device="TEST_DEVICE",
+        model_id=vendored_model_config_path("inclusionAI/Ling-3.0-flash-VL"),
+        num_queries=1,
+        query_len=8,
+        num_hidden_layers_override=1,
+        quantize_linear_action=QuantizeLinearAction.DISABLED,
     )
-    full_vl_weight_size_gb = runner.model_weight_size_gb
+    with isolated_l1_executor() as executor:
+        runner = executor.runner(user_input)
+        full_vl_weight_size_gb = runner.model_weight_size_gb
+        artifact = executor.run(user_input)
 
-    result = runner.run_inference()
-
-    assert result.model_weight_size_gb == pytest.approx(full_vl_weight_size_gb)
+        assert artifact.metrics.model_weight_size_gb == pytest.approx(full_vl_weight_size_gb)
+        assert executor.counters.build_miss == 1
+        assert executor.counters.forward_count == 1
 
 
 def test_vl_model_rejects_invalid_visual_profile_path(tmp_path, monkeypatch):
@@ -57,17 +59,18 @@ def test_vl_model_rejects_invalid_visual_profile_path(tmp_path, monkeypatch):
     profile = get_model_profile("bailing_moe_v3_vl")
     monkeypatch.setattr(profile, "visual_module_path", "model.missing_visual")
 
-    with pytest.raises(ValueError, match="Visual module path 'model.missing_visual'.*bailing_moe_v3_vl"):
-        ModelRunner(
-            UserInputConfig(
-                device="TEST_DEVICE",
-                model_id=vendored_model_config_path("inclusionAI/Ling-3.0-flash-VL"),
-                num_queries=1,
-                query_len=8,
-                num_hidden_layers_override=1,
-                quantize_linear_action=QuantizeLinearAction.DISABLED,
+    with isolated_l1_executor() as executor:
+        with pytest.raises(ValueError, match="Visual module path 'model.missing_visual'.*bailing_moe_v3_vl"):
+            executor.runner(
+                UserInputConfig(
+                    device="TEST_DEVICE",
+                    model_id=vendored_model_config_path("inclusionAI/Ling-3.0-flash-VL"),
+                    num_queries=1,
+                    query_len=8,
+                    num_hidden_layers_override=1,
+                    quantize_linear_action=QuantizeLinearAction.DISABLED,
+                )
             )
-        )
 
 
 def test_language_model_only_omits_exact_model_paths():

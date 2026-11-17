@@ -159,3 +159,33 @@ def microbench_artifact(*, op_name: str, shape: tuple[int, ...], dtype: str, **r
     if not op_name or not shape or any(dim < 1 for dim in shape):
         raise ValueError("microbench case needs an op name and a positive shape")
     return MicrobenchArtifact("microbench", op_name, shape, dtype)
+
+
+@dataclass(frozen=True)
+class L2BuilderContract:
+    """Public interface and result type for one canonical L2 builder."""
+
+    kind: str
+    builder: object
+    artifact_type: type
+    required_parameters: tuple[str, ...]
+    optional_parameters: tuple[str, ...] = ()
+
+
+L2_CONTRACTS = (
+    L2BuilderContract("quant", quant_artifact, QuantArtifact, ("linear_action",), ("attention_action",)),
+    L2BuilderContract(
+        "parallel",
+        parallel_artifact,
+        ParallelArtifact,
+        ("world_size", "tensor_parallel"),
+        ("expert_parallel",),
+    ),
+    L2BuilderContract("fx", fx_artifact, FxArtifact, ()),
+    L2BuilderContract("runtime_event", runtime_event_artifact, RuntimeEventArtifact, ("op_name", "duration_us")),
+    L2BuilderContract("diagnostics", diagnostics_artifact, DiagnosticsArtifact, ("region_id", "status")),
+    L2BuilderContract("replay", replay_artifact, ReplayArtifact, ("num_queries", "query_len"), ("decode",)),
+    L2BuilderContract("microbench", microbench_artifact, MicrobenchArtifact, ("op_name", "shape", "dtype")),
+)
+
+L2_BUILDERS = {contract.kind: contract.builder for contract in L2_CONTRACTS}

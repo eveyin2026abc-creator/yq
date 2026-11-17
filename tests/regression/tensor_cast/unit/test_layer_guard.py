@@ -37,3 +37,9 @@ def test_scanner_reports_build_model_and_transformer_model():
     violations = find_l2_model_violations(source)
     assert any("build_model" in item for item in violations)
     assert any("TransformerModel" in item for item in violations)
+
+
+def test_scanner_rejects_forbidden_constructor_imports():
+    source = "from tensor_cast.core.model_runner import ModelRunner as Runner\n"
+    violations = find_l2_model_violations(source)
+    assert any("imports ModelRunner" in item for item in violations)

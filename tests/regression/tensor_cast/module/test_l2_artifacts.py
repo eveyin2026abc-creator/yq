@@ -16,12 +16,15 @@
 
 """The seven L2 artifact builders stay free of a model identity."""
 
+import inspect
 from pathlib import Path
 
 import pytest
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 
 from tests.helpers.l2_artifacts import (
+    L2_BUILDERS,
+    L2_CONTRACTS,
     L2_KINDS,
     diagnostics_artifact,
     fx_artifact,
@@ -45,6 +48,43 @@ def test_seven_kinds_are_the_l2_set():
         microbench_artifact(op_name="aten.mm", shape=(2, 4), dtype="bfloat16"),
     )
     assert tuple(artifact.kind for artifact in artifacts) == L2_KINDS
+
+
+def test_contract_registry_is_complete_and_matches_python_signatures():
+    assert tuple(contract.kind for contract in L2_CONTRACTS) == L2_KINDS
+    assert tuple(L2_BUILDERS) == L2_KINDS
+    for contract in L2_CONTRACTS:
+        signature = inspect.signature(contract.builder)
+        public = tuple(
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        )
+        assert public == contract.required_parameters + contract.optional_parameters
+        for name in contract.required_parameters:
+            assert signature.parameters[name].default is inspect.Parameter.empty
+        for name in contract.optional_parameters:
+            assert signature.parameters[name].default is not inspect.Parameter.empty
+
+
+@pytest.mark.parametrize("contract", L2_CONTRACTS, ids=lambda contract: contract.kind)
+def test_every_builder_rejects_model_identity(contract):
+    required_values = {
+        "linear_action": QuantizeLinearAction.DISABLED,
+        "world_size": 1,
+        "tensor_parallel": 1,
+        "op_name": "aten.mm",
+        "duration_us": 1,
+        "region_id": "language",
+        "status": "PASS",
+        "num_queries": 1,
+        "query_len": 1,
+        "shape": (1,),
+        "dtype": "fp16",
+    }
+    kwargs = {name: required_values[name] for name in contract.required_parameters}
+    with pytest.raises(TypeError, match="model identity"):
+        contract.builder(**kwargs, model_id="forbidden/model")
 
 
 def test_builders_reject_a_model_identity():

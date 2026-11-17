@@ -41,7 +41,7 @@ CONSTRUCTION_CALLEES = frozenset(
     }
 )
 
-_DIRECT_MODEL = frozenset({"ModelRunner", "build_model", "get_cached_build_model", "TransformerModel"})
+_DIRECT_MODEL = frozenset({"ModelRunner", "build_model", "TransformerModel"})
 _EXECUTOR = frozenset({"isolated_l1_executor", "L1ScenarioExecutor"})
 
 

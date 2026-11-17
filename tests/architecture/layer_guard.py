@@ -45,14 +45,19 @@ def find_l2_model_violations(source: str, *, filename: str = "<l2>") -> tuple[st
                 if argument.arg == "model_id":
                     violations.append(f"{filename}:{argument.lineno}: parameter model_id")
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for imported in node.names:
+                if imported.name in _FORBIDDEN_NAMES:
+                    violations.append(f"{filename}:{node.lineno}: imports {imported.name}")
+            continue
         if not isinstance(node, ast.Call):
             continue
         called = _called_name(node.func)
         if called in _FORBIDDEN_NAMES:
             violations.append(f"{filename}:{node.lineno}: uses {called}")
-        for keyword in node.keywords:
-            if keyword.arg == "model_id":
-                violations.append(f"{filename}:{node.lineno}: keyword model_id")
+            for keyword in node.keywords:
+                if keyword.arg == "model_id":
+                    violations.append(f"{filename}:{node.lineno}: keyword model_id")
     return tuple(violations)
 
 

@@ -23,11 +23,12 @@ from typing import Optional
 import torch
 from parameterized import parameterized
 from tensor_cast.core.input_generator import generate_inputs
-from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
+from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import (
     QuantizeLinearAction,
 )
 from tensor_cast.core.user_config import UserInputConfig
+from tests.helpers.l1_scenario import isolated_l1_executor
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,12 @@ def _parse_total_time_s(table_result: str, performance_model_name: str = "analyt
 
 def _run_single(user_input: UserInputConfig) -> float:
     torch.compiler.reset()
-    model_runner = ModelRunner(user_input)
-    result = model_runner.run_inference(generate_inputs_func=generate_inputs)
-    if isinstance(result, ModelRunnerMetrics):
-        return _parse_total_time_s(result.table_result)
-    raise TypeError(f"Unexpected result type: {type(result)}")
+    with isolated_l1_executor() as executor:
+        artifact = executor.run(user_input, generate_inputs_func=generate_inputs)
+        result = artifact.metrics
+        if isinstance(result, ModelRunnerMetrics):
+            return _parse_total_time_s(result.table_result)
+        raise TypeError(f"Unexpected result type: {type(result)}")
 
 
 def run_auto_baseline(

@@ -41,4 +41,3 @@ def test_backlog_matches_the_census_and_keeps_the_executor():
         assert row["reason"]
     executor = listed[("tests/helpers/l1_scenario.py", "runner", "ModelRunner")]
     assert executor["disposition"] == "keep"
-    assert any(row["disposition"] == "later" for row in rows)
