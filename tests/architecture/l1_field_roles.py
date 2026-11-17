@@ -97,6 +97,8 @@ FIELD_NOTES: dict[str, str] = {
     "image_batch_size": "Image batch is a run input to an already built visual tower.",
     "image_height": "Image height is a run input. The visual tower is already built.",
     "image_width": "Image width is a run input. The visual tower is already built.",
+    "language_model_only": "Language-only mode removes the visual tower from the built graph.",
+    "multistream_overlap_shared_expert": "Shared-expert overlap changes the built multistream schedule.",
     "performance_model": "The performance model is rebound on a reused runner.",
     "profiling_database": "The profiling database is rebound on a reused runner.",
     "disable_profiling_interpolation": "Interpolation is a performance-model switch, not a new graph.",

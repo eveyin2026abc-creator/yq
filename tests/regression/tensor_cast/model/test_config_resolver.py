@@ -253,7 +253,7 @@ class ModelQuantConfigResolutionTestCase(unittest.TestCase):
 class DsaCpStructureTestCase(unittest.TestCase):
     @staticmethod
     def _v4_user(**overrides):
-        root = Path(__file__).resolve().parents[3]
+        root = Path(__file__).resolve().parents[4]
         options = dict(
             model_id=str(root / "tests/assets/model_config/deepseek_v4_flash"),
             device="TEST_DEVICE",

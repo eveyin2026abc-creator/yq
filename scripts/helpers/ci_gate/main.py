@@ -132,7 +132,12 @@ def build_hard_blocking_plan(
     blocking.extend(gate_exemption_drift(policy, changes, rename_pairs))
 
     if changes.del_test:
-        blocking.extend(gate_deleted_tests(changes, test_map).errors)
+        renamed_test_paths = frozenset(
+            old_path
+            for old_path, new_path in rename_pairs
+            if old_path in changes.del_test and new_path in changes.new_test
+        )
+        blocking.extend(gate_deleted_tests(changes, test_map, renamed_test_paths).errors)
 
     if _product_paths(changes.del_source, roots):
         step = deleted_source_step if deleted_source_step is not None else gate_deleted_source(changes, test_map, roots)

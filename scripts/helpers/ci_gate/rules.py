@@ -368,11 +368,14 @@ def gate_deleted_source(
 def gate_deleted_tests(
     changes: ChangeSet,
     test_map: dict[str, dict[str, list[str]]],
+    renamed_test_paths: frozenset[str] = frozenset(),
 ) -> GateStepResult:
     errors: list[GateError] = []
     deleted_source_set = set(changes.del_source)
     index = build_test_map_index(test_map)
     for deleted_path in changes.del_test:
+        if deleted_path in renamed_test_paths:
+            continue
         deleted_nodes = nodes_for_test_file(test_map, deleted_path)
         sole_coverage: list[str] = []
         for node in deleted_nodes:

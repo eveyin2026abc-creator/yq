@@ -340,6 +340,14 @@ def test_gate_deleted_test_sole_coverage_reports_error() -> None:
     assert result.errors[0].path == "tests/smoke/test_only.py"
 
 
+def test_gate_renamed_test_is_not_treated_as_deleted() -> None:
+    old_path = "tests/regression/cli/test_old.py"
+    cs = ChangeSet.build(del_test=(old_path,), new_test=("tests/regression/cli/module/test_old.py",))
+    test_map = {f"{old_path}::test_x": {"cli/main.py": ["run"]}}
+    result = gate_deleted_tests(cs, test_map, frozenset({old_path}))
+    assert result.errors == ()
+
+
 def test_gate_deleted_test_not_sole_coverage_returns_no_errors() -> None:
     cs = ChangeSet.build(del_test=("tests/smoke/test_a.py",))
     test_map = {
