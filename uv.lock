@@ -1493,6 +1493,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+build = [
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
 ci = [
     { name = "pathspec" },
     { name = "pydantic" },
@@ -1539,6 +1542,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+build = [{ name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" }]
 ci = [
     { name = "pathspec", specifier = ">=0.12" },
     { name = "pydantic", specifier = ">=2" },
