@@ -161,6 +161,7 @@ Defaults below come from [`scripts/defaults.env`](defaults.env) (not shipped in 
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
 | `MSMODELING_TEST_MAP_PATH` | ci_gate (auto-download if missing) | `{MSMODELING_CACHE}/test_map/{base_branch}/test_map.json` | gate, nightly, sync, `build.py test` | External test_map JSON path |
+| `MSMODELING_L1_CANDIDATE_MAP_PATH` | `run_ci_gate.sh` | `artifacts/l1_test_map.json` | PR CI | Dynamically generated four-family L1 watcher evidence; uploaded as a CI artifact, not committed |
 | `MSMODELING_TEST_MAP_TARGET_BRANCH` | Optional | `MSMODELING_TEST_BASE_BRANCH` | sync | Sync target (e.g. `develop`) |
 | `MSMODELING_TEST_MAP_SYNC_INTERVAL` | Optional | `60` | sync `--watch` | Poll interval (seconds) |
 | `MSMODELING_TEST_BASE_BRANCH` | Optional | `master` | ci_gate, sync, download URL | Merge-base branch; OBS path segment + cache subdirectory for test_map |

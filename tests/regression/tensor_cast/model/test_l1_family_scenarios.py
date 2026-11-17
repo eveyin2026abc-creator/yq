@@ -77,7 +77,7 @@ SCENARIOS = (
     ),
 )
 
-INCREMENTAL_SCENARIOS = frozenset({"qwen25-7b", "dense-qwen3-06b", "moe-qwen3-30b", "multimodal-qwen3vl-8b"})
+INCREMENTAL_SCENARIOS = frozenset({"qwen25-7b", "dense-qwen3-06b", "moe-deepseek-v3", "multimodal-qwen3vl-8b"})
 
 PARAMETERS = tuple(
     pytest.param(

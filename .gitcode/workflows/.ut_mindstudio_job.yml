@@ -60,3 +60,8 @@ jobs:
           export MSMODELING_TEST_MAP_PATH=${{ inputs.MSMODELING_TEST_MAP_PATH }}
           export MSMODELING_TEST_BASE_BRANCH=${{ inputs.TARGET_BRANCH }}
           cd MindStudio-CI && bash build.sh msmodeling
+      - name: Upload L1 watcher evidence
+        uses: upload-artifact
+        with:
+          name: ${{ format('msmodeling-l1-watcher-map-{0}', atomgit.run_number) }}
+          path: "code/artifacts/l1_test_map.json"

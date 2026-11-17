@@ -26,6 +26,8 @@
 #   MSMODELING_OFFLINE                 Hub offline mode (default: 0)
 #   MSMODELING_CACHE                   optional repo-local Hub cache (unset = use ~/.cache like develop)
 #   MSMODELING_TEST_BASE_BRANCH        merge-base branch (default: master)
+#   MSMODELING_L1_CANDIDATE_MAP_PATH   generated L1 evidence artifact
+#                                      (default: artifacts/l1_test_map.json)
 #   PYTHON                             absolute path to interpreter; if unset, uses uv or python3
 #
 # Optional (defaults from scripts/defaults.env when unset):
@@ -54,6 +56,7 @@ fi
 export MSMODELING_TEST_WEIGHTS_PRUNE="${MSMODELING_TEST_WEIGHTS_PRUNE:-0}"
 export MSMODELING_OFFLINE="${MSMODELING_OFFLINE:-0}"
 export MSMODELING_TEST_BASE_BRANCH="${MSMODELING_TEST_BASE_BRANCH:-master}"
+export MSMODELING_L1_CANDIDATE_MAP_PATH="${MSMODELING_L1_CANDIDATE_MAP_PATH:-artifacts/l1_test_map.json}"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -62,7 +65,6 @@ source "${SCRIPT_DIR}/lib/common.sh"
 architecture_status=0
 run_py "${HELPERS_DIR}/test_architecture.py" check-assertions || architecture_status=$?
 run_py "${HELPERS_DIR}/test_architecture.py" check-scenarios --budget 180 || architecture_status=$?
-run_py "${HELPERS_DIR}/test_architecture.py" check-watchers || architecture_status=$?
 run_py "${HELPERS_DIR}/test_architecture.py" check-l2-layers || architecture_status=$?
 run_py "${HELPERS_DIR}/test_architecture.py" check-new-tests \
   --base "origin/${MSMODELING_TEST_BASE_BRANCH}" || architecture_status=$?
@@ -70,13 +72,25 @@ run_py "${HELPERS_DIR}/test_architecture.py" check-new-tests \
 ci_gate_status=0
 run_py "${HELPERS_DIR}/ci_gate/main.py" || ci_gate_status=$?
 
+l1_watcher_status=0
+if [[ ${architecture_status} -eq 0 && ${ci_gate_status} -eq 0 ]]; then
+  run_py "${HELPERS_DIR}/l1_watcher_gate.py" \
+    --output "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
+    || l1_watcher_status=$?
+  if [[ ${l1_watcher_status} -eq 0 ]]; then
+    run_py "${HELPERS_DIR}/test_architecture.py" check-watchers \
+      --test-map "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
+      || l1_watcher_status=$?
+  fi
+fi
+
 skill_tests_status=0
 run_pytest "${PROJECT_DIR}/.agents/skills/optix-assistant/scripts/" \
   -q \
   --tb=short \
   || skill_tests_status=$?
 
-if [[ ${architecture_status} -ne 0 || ${ci_gate_status} -ne 0 || ${skill_tests_status} -ne 0 ]]; then
-  echo "Error: architecture=${architecture_status}, ci_gate=${ci_gate_status}, skill tests=${skill_tests_status}" >&2
+if [[ ${architecture_status} -ne 0 || ${ci_gate_status} -ne 0 || ${l1_watcher_status} -ne 0 || ${skill_tests_status} -ne 0 ]]; then
+  echo "Error: architecture=${architecture_status}, ci_gate=${ci_gate_status}, l1_watchers=${l1_watcher_status}, skill tests=${skill_tests_status}" >&2
   exit 1
 fi

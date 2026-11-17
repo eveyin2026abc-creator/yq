@@ -57,8 +57,9 @@ exemptions，必须填写 reason、applicant、approver、deadline。
 `module/`、`unit/`。四个 L1 family 的离线真实场景位于
 `tests/regression/tensor_cast/model/test_l1_family_scenarios.py`，覆盖 Qwen2.5、Qwen3 Dense、
 Qwen3 MoE、DeepSeek V3/V3.2、Kimi K2、MiniMax M2、Qwen3-VL 与 GLM-4.5V。
-`tests/.ci/l1_test_map.json` 是这些场景用 `--cov-context=test` 生成的 watcher 证据；
-`l1_watchers.csv` 中的必要产品符号必须继续出现在对应 family 的映射中。
+`l1_watchers.csv` 是人工评审并入库的最小 watcher 契约。PR CI 真实执行四个增量 family，
+用 `--cov-context=test` 动态生成 `artifacts/l1_test_map.json` 候选证据，再校验必要产品符号
+是否继续出现在对应 family 的映射中；候选 JSON 作为流水 artifact 留存，不提交 Git。
 
 不在本轮责任分层范围的 4758 条基线节点不表示“不重要”。其维护边界记录在
 `tests/.ci/out_of_scope_boundaries.csv`：web_ui、optix、serving_cast 保持各自子系统语义；

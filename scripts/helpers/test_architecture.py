@@ -370,7 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     scenarios.set_defaults(func=check_scenarios)
     watchers = sub.add_parser("check-watchers")
     watchers.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
-    watchers.add_argument("--test-map", type=Path, default=Path("tests/.ci/l1_test_map.json"))
+    watchers.add_argument("--test-map", type=Path, default=Path("artifacts/l1_test_map.json"))
     watchers.set_defaults(func=check_watchers)
     new_tests = sub.add_parser("check-new-tests")
     new_tests.add_argument("--base", default="origin/master")
