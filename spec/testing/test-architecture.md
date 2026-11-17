@@ -61,7 +61,6 @@ Qwen3 MoE、DeepSeek V3/V3.2、Kimi K2、MiniMax M2、Qwen3-VL 与 GLM-4.5V。
 用 `--cov-context=test` 动态生成 `artifacts/l1_test_map.json` 候选证据，再校验必要产品符号
 是否继续出现在对应 family 的映射中；候选 JSON 作为流水 artifact 留存，不提交 Git。
 
-不在本轮责任分层范围的 4758 条基线节点不表示“不重要”。其维护边界记录在
-`tests/.ci/out_of_scope_boundaries.csv`：web_ui、optix、serving_cast 保持各自子系统语义；
+不在本轮责任分层范围的 4758 条基线节点不表示“不重要”。web_ui、optix、serving_cast 保持各自子系统语义；
 scripts 与 helpers 由测试基础设施维护；smoke 继续作为跨层发布守卫；Operator-DB 继续作为
 ST 数据基线。它们不会因本轮重构被移动或降级，后续由对应维护者单独评审。
