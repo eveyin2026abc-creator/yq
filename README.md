@@ -166,6 +166,7 @@ msModeling 提供模型推理性能仿真、服务化性能仿真和服务化实
 |---------|--------|
 | [**模型推理性能仿真**](./docs/zh/user_guide/msmodeling_tensor_cast_user_guide.md) | 模型仿真模块，拦截 PyTorch 计算图，在指定设备画像上模拟推理过程，输出算子级性能分解、内存占用、算子 shape 及 Chrome Trace。 |
 | [**服务化性能仿真**](./docs/zh/user_guide/msmodeling_throughput_optimizer_user_guide.md) | 吞吐优化仿真模块，在 SLO 约束下自动搜索最优并行策略与 batch 配置，支持 PD 混部、PD 分离、PD 配比三种模式。 |
+| [**模型模板图**](./template_engine/README.md) | 通过 Skill 或 CLI 采集样本、构建模板，供吞吐寻优和 `text_generate` 自动使用。在模板覆盖范围内直接生成计算图，减少 forward 和 compile 取图开销；未覆盖配置回退原生仿真。支持路由日志及关闭模板对照。 |
 | [**服务化实测寻优**](docs/zh/user_guide/msmodeling_optix_user_guide.md) | 服务化实测寻优，基于 PSO 粒子寻优算法在 vLLM、MindIE 等真实服务框架上自动搜索满足时延约束的最优部署参数。msmodeling / OptiX 应安装在 uv 虚拟环境中，vLLM、MindIE 和测评工具默认使用系统部署环境。 |
 
 ## 🚀 快速入门
@@ -179,6 +180,10 @@ msModeling 提供模型推理性能仿真、服务化性能仿真和服务化实
 ## 📘 使用指南
 
 各工具的详细使用说明请参阅其源码仓库中的 README 文件，也可通过上方功能介绍表格中的链接直接跳转。
+
+## 🌐 在线体验
+
+msModeling 在 GitCode 上提供 Web UI 在线体验环境，可直接在浏览器中进行可视化仿真与吞吐寻优，无需本地安装，点击 [在线体验](https://gitcode.com/ascend-model-ecosystem/msModeling) 即可开始体验。
 
 ## 💡 典型案例
 

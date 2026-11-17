@@ -21,7 +21,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from enum import Enum
 from inspect import isfunction  # pylint: disable=no-name-in-module
-from math import isclose, isinf, isnan
+from math import isclose, isfinite, isinf, isnan
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
@@ -65,7 +65,7 @@ class PerformanceConfig(BaseModel):
     time_per_output_token: MetricAlgorithm = MetricAlgorithm(metric="TPOT", algorithm="average")
 
 
-dtype_func = {"int": int, "float": float, "str": str}
+dtype_func = {"int": int, "float": float, "str": str, "bool": bool}
 
 
 class ErrorSeverity(Enum):
@@ -1049,7 +1049,11 @@ class DeployConfig(BaseModel):
 
 
 class PdDisaggPhaseConfig(BaseModel):
-    """Configuration shared by one PD disaggregation tuning phase."""
+    """Configuration shared by one PD disaggregation tuning phase.
+
+    Range fields require a positive integer dtype_param (not a string, float or
+    bool) and finite min/max bounds that can be converted to integers.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1078,6 +1082,29 @@ class PdDisaggPhaseConfig(BaseModel):
             raise ValueError("plugin and field names must be non-empty tokens")
         return value
 
+    @field_validator("target_field")
+    @classmethod
+    def validate_range_fields(cls, fields: list[OptimizerConfigField]) -> list[OptimizerConfigField]:
+        for field in fields:
+            if field.dtype != "range":
+                continue
+            if type(field.dtype_param) is not int or field.dtype_param <= 0:
+                raise ValueError(
+                    f"Invalid range step for field {field.name!r}: "
+                    f"dtype_param must be a positive integer, got {field.dtype_param!r}"
+                )
+            if not isfinite(field.min) or not isfinite(field.max):
+                raise ValueError(
+                    f"Invalid range bounds for field {field.name!r}: min and max must be finite numbers "
+                    f"convertible to integers, got min={field.min!r}, max={field.max!r}"
+                )
+        return fields
+
+    @model_validator(mode="after")
+    def normalize_target_fields(self):
+        range_to_enum(self.target_field)
+        return self
+
 
 def _default_prefill_phase() -> PdDisaggPhaseConfig:
     return PdDisaggPhaseConfig(
@@ -1095,6 +1122,40 @@ def _default_decode_phase() -> PdDisaggPhaseConfig:
     )
 
 
+class PdFullServiceConfig(PdDisaggPhaseConfig):
+    """Optional automatic deployment and end-to-end load refinement."""
+
+    enabled: bool = Field(default=False, description="Automatically deploy and benchmark the full PD service")
+
+    engine: Literal["vllm_pd"] = "vllm_pd"
+    benchmark_policy: Literal["vllm_benchmark", "ais_bench"] = "vllm_benchmark"
+    fine_tune_mode: Literal["pd_mixed"] = "pd_mixed"
+    benchmark_run_count: int = Field(
+        default=2, ge=1, description="Full-service passes: warm up on preceding passes and score only the final pass"
+    )
+    prefill_others: str | None = Field(default=None, description="Replace Prefill serve arguments for deployment only")
+    decode_others: str | None = Field(default=None, description="Replace Decode serve arguments for deployment only")
+    prefill_additional_config: dict[str, Any] = Field(default_factory=dict)
+    decode_additional_config: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_load_fields(self):
+        if not self.enabled:
+            return self
+        if self.simulator_command_overrides:
+            raise ValueError("full_service inherits serving commands from the P/D search phases")
+        names = [field.name for field in self.target_field]
+        if len(names) != len(set(names)):
+            raise ValueError("full_service target_field names must be unique")
+        if "CONCURRENCY" not in names or "REQUESTRATE" not in names:
+            raise ValueError("full_service requires CONCURRENCY and REQUESTRATE load fields")
+        if any(name not in {"CONCURRENCY", "REQUESTRATE", "NUM_PROMPTS"} for name in names):
+            raise ValueError("full_service may tune only CONCURRENCY, REQUESTRATE and NUM_PROMPTS")
+        if any(field.config_position != "env" for field in self.target_field):
+            raise ValueError("full_service load fields must use config_position='env'")
+        return self
+
+
 class PdDisaggConfig(BaseModel):
     """Built-in P/D service parameter search and ratio recommendation settings."""
 
@@ -1108,6 +1169,7 @@ class PdDisaggConfig(BaseModel):
     phase_output_dir: str = "pd_disagg"
     prefill: PdDisaggPhaseConfig = Field(default_factory=_default_prefill_phase)
     decode: PdDisaggPhaseConfig = Field(default_factory=_default_decode_phase)
+    full_service: PdFullServiceConfig | None = None
 
     @field_validator("phase_output_dir")
     @classmethod
@@ -1129,6 +1191,8 @@ class PdDisaggConfig(BaseModel):
                 "total_devices, prefill_devices_per_instance and decode_devices_per_instance "
                 "must be configured together"
             )
+        if self.full_service is not None and self.full_service.enabled and not all(device_fields):
+            raise ValueError("full_service requires total_devices and both devices_per_instance values")
         if self.prefill.engine != "vllm" or self.decode.engine != "vllm":
             raise ValueError("built-in pd_disagg supports only the 'vllm' engine for prefill and decode")
         return self
@@ -1344,6 +1408,7 @@ class Settings(BaseSettings):
     mem_coefficient: float = 0.8
     max_fine_tune: int = 30
     use_request_rate_calibration: bool = True
+    benchmark_run_count: int = Field(default=1, ge=1)
     manage_simulator_lifecycle: bool = True
     scaling_coefficient: float = 1.3
     step_size: float = 0.6
@@ -1379,9 +1444,12 @@ class Settings(BaseSettings):
     pd_disagg: PdDisaggConfig = Field(default_factory=PdDisaggConfig)
 
     @model_validator(mode="after")
-    def validate_pso_settings(self):
+    def validate_settings(self):
         if self.fine_tune_mode not in {"pd_mixed", "pd_disaggregation"}:
             raise ValueError("fine_tune_mode must be 'pd_mixed' or 'pd_disaggregation'.")
+        benchmark_errors = []
+        if self.use_request_rate_calibration and self.benchmark_run_count > 1:
+            benchmark_errors.append("benchmark_run_count > 1 requires use_request_rate_calibration=false.")
         repeated_pd_phases = [
             phase_name
             for phase_name in ("prefill", "decode")
@@ -1389,10 +1457,12 @@ class Settings(BaseSettings):
         ]
         if self.use_request_rate_calibration and repeated_pd_phases:
             invalid_phases = ", ".join(repeated_pd_phases)
-            raise ValueError(
+            benchmark_errors.append(
                 "pd_disagg benchmark_run_count > 1 requires use_request_rate_calibration=false; "
                 f"invalid phases: {invalid_phases}."
             )
+        if benchmark_errors:
+            raise ValueError(" ".join(benchmark_errors))
         if not self.manage_simulator_lifecycle and not self.skip_pso:
             raise ValueError("manage_simulator_lifecycle=false requires skip_pso=true.")
         if self.skip_pso:

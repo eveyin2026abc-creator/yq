@@ -605,6 +605,47 @@ def _param_to_cli_flag(name: str) -> str:
 # Main validation function — SINGLE SOURCE OF TRUTH
 # ---------------------------------------------------------------------------
 
+SWEEP_TRIAL_TYPE = "concurrency_sweep"
+SWEEP_MIN_LEVELS = 2
+SWEEP_MAX_LEVELS = 8
+_SWEEP_MANAGED_PARAMS = {"CONCURRENCY", "REQUESTRATE"}
+
+
+def _validate_sweep_candidate(candidate: Dict[str, Any], schema_items: List[Dict[str, Any]], errors: List[str]) -> None:
+    params = candidate.get("params") or {}
+    for name in params:
+        if str(name).upper() in _SWEEP_MANAGED_PARAMS:
+            errors.append(f"{name}: managed by concurrency_levels for a {SWEEP_TRIAL_TYPE} candidate")
+    conc_item = next((i for i in schema_items if str(i.get("name", "")).upper() == "CONCURRENCY"), None)
+    if conc_item is None:
+        errors.append(f"{SWEEP_TRIAL_TYPE} requires CONCURRENCY registered in search_space with a [min, max] range")
+        return
+    try:
+        minimum = float(conc_item.get("min"))
+        maximum = float(conc_item.get("max"))
+    except (TypeError, ValueError):
+        errors.append(f"CONCURRENCY range not numeric: min={conc_item.get('min')!r}, max={conc_item.get('max')!r}")
+        return
+    if conc_item.get("constant") is not None:
+        errors.append(f"CONCURRENCY is frozen at {conc_item.get('constant')!r} (constant): nothing left to sweep")
+        return
+    if isclose(minimum, maximum, rel_tol=1e-5):
+        errors.append(f"CONCURRENCY is pinned at {conc_item.get('min')} (min == max): no range left to sweep")
+        return
+    levels = candidate.get("concurrency_levels")
+    if levels is None:
+        return
+    if not isinstance(levels, list) or any(isinstance(level, bool) or not isinstance(level, int) for level in levels):
+        errors.append(f"concurrency_levels must be a list of integers, got {levels!r}")
+        return
+    if not SWEEP_MIN_LEVELS <= len(levels) <= SWEEP_MAX_LEVELS:
+        errors.append(f"concurrency_levels requires {SWEEP_MIN_LEVELS}~{SWEEP_MAX_LEVELS} levels, got {len(levels)}")
+    if len(set(levels)) != len(levels) or levels != sorted(levels):
+        errors.append(f"concurrency_levels must be strictly ascending without duplicates, got {levels!r}")
+    for level in levels:
+        if level < minimum or level > maximum:
+            errors.append(f"concurrency_levels level {level} is outside CONCURRENCY range [{minimum:g}, {maximum:g}]")
+
 
 def validate_candidate(context: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
     """Validate a single candidate against the context's search space and constraints.
@@ -627,8 +668,15 @@ def validate_candidate(context: Dict[str, Any], candidate: Dict[str, Any]) -> Di
         errors.append("Topology facts belong in context.hardware, not search_space")
     try:
         validate_topology_snapshot(context)
+        if (context.get("deployment") or {}).get("type") == "pd":
+            from .pd import validate_snapshot
+
+            validate_snapshot(context)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         errors.append(str(exc))
+
+    if str(candidate.get("type") or "").strip().lower() == SWEEP_TRIAL_TYPE:
+        _validate_sweep_candidate(candidate, schema_items, errors)
 
     # 1. Check for unknown parameter names
     for name in params:
@@ -723,9 +771,38 @@ def validate_candidate(context: Dict[str, Any], candidate: Dict[str, Any]) -> Di
             errors.append(f"Constraint failed: {expr.replace('$', '')} ({exc})")
 
     # 6. Combo safety checks
-    combo_errors, combo_warnings = check_combo_safety(full_params, context)
+    if (context.get("deployment") or {}).get("type") == "pd":
+        from .pd import merge_role_params, validate_resources
+
+        try:
+            validate_resources(context["deployment"]["plugin_config"], full_params)
+            manifest = context["deployment"].get("round_manifest")
+            if manifest:
+                if candidate.get("candidate_id", candidate.get("id")) != manifest["candidate_id"]:
+                    errors.append("PD candidate does not match its generated deployment manifest")
+                for name, value in manifest["params"].items():
+                    if name not in full_params or not _values_equal(full_params[name], value):
+                        errors.append(f"PD parameter {name} changed after deployment configuration generation")
+        except (ValueError, KeyError, TypeError) as exc:
+            errors.append(str(exc))
+        combo_errors, combo_warnings = [], []
+        for role in ("prefill", "decode"):
+            role_params = merge_role_params(full_params, role)
+            role_errors, role_warnings = check_combo_safety(role_params, context)
+            combo_errors.extend(f"{role}: {error}" for error in role_errors)
+            combo_warnings.extend(f"{role}: {warning}" for warning in role_warnings)
+    else:
+        combo_errors, combo_warnings = check_combo_safety(full_params, context)
     errors.extend(combo_errors)
     warnings.extend(combo_warnings)
+
+    # Semantic service validation uses the same planner as runtime launch.
+    from .parameters import validate_service_parameters
+
+    try:
+        validate_service_parameters(context, full_params)
+    except (OSError, ValueError, TypeError) as exc:
+        errors.append(str(exc))
 
     # 7. Runtime CLI support check — only candidate-explicit params
     supported_flags = context.get("_supported_cli_flags")
@@ -734,7 +811,15 @@ def validate_candidate(context: Dict[str, Any], candidate: Dict[str, Any]) -> Di
             value = params.get(name)
             if value is None or value == "":
                 continue
-            flag = _param_to_cli_flag(name)
+            flag_name = name
+            if (context.get("deployment") or {}).get("type") == "pd":
+                from .pd import split_role, TOPOLOGY_FIELDS
+
+                flag_name, _ = split_role(name)
+                item = schema.get(name, {})
+                if item.get("config_position", "run") != "run" or flag_name in TOPOLOGY_FIELDS:
+                    continue
+            flag = _param_to_cli_flag(flag_name)
             if flag not in supported_flags:
                 errors.append(
                     f"{name}: --{flag} is not supported by the current {context.get('engine', 'vllm')} runtime"

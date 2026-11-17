@@ -24,10 +24,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from tensor_cast.core.config_resolver import ConfigResolver, _resolve_model_dtype, _resolve_text_config
+from tensor_cast.core.config_resolver import (
+    ConfigResolver,
+    _resolve_model_dtype,
+    _resolve_model_quant_config,
+    _resolve_text_config,
+)
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
-from tensor_cast.model_config import ParallelConfig
+from tensor_cast.model_config import ParallelConfig, QuantConfig
 
 
 def _make_resolver(
@@ -169,7 +174,7 @@ class ModelDtypeResolutionTestCase(unittest.TestCase):
     @patch("tensor_cast.core.config_resolver.AutoModelConfigLoader")
     def test_config_resolver_passes_declared_dtype_to_model_config(self, loader_cls):
         loader = loader_cls.return_value
-        loader.load_config.return_value = SimpleNamespace(torch_dtype="bfloat16")
+        loader.load_config.return_value = SimpleNamespace(torch_dtype="bfloat16", model_type="deepseek_v4")
         loader.is_transformers_natively_supported = True
         user_input = MagicMock()
         user_input.model_id = "test-model"
@@ -183,6 +188,9 @@ class ModelDtypeResolutionTestCase(unittest.TestCase):
                 resolver = ConfigResolver(user_input=user_input)
                 self.assertIs(resolver.model_config.dtype, torch.bfloat16)
                 self.assertIs(resolver.model_config.is_compile_enabled, do_compile)
+
+        self.assertEqual(user_input.get_quant_config.call_count, 2)
+        user_input.get_quant_config.assert_called_with(model_type="deepseek_v4")
 
 
 class TextConfigResolutionTestCase(unittest.TestCase):
@@ -201,7 +209,160 @@ class TextConfigResolutionTestCase(unittest.TestCase):
         self.assertIs(_resolve_text_config(config), config)
 
 
+class ModelQuantConfigResolutionTestCase(unittest.TestCase):
+    @patch("tensor_cast.core.config_resolver.get_model_profile")
+    def test_applies_model_profile_quant_config_resolver(self, get_profile):
+        quant_config = QuantConfig()
+        resolved_config = QuantConfig()
+        resolver = MagicMock(return_value=resolved_config)
+        get_profile.return_value = SimpleNamespace(quant_config_resolver=resolver)
+
+        result = _resolve_model_quant_config("deepseek_v4", quant_config)
+
+        resolver.assert_called_once_with(quant_config)
+        self.assertIs(result, resolved_config)
+
+    @patch("tensor_cast.core.config_resolver.get_model_profile", return_value=None)
+    def test_keeps_config_when_model_has_no_profile_override(self, _get_profile):
+        quant_config = QuantConfig()
+
+        self.assertIs(_resolve_model_quant_config("qwen3", quant_config), quant_config)
+
+    @patch("tensor_cast.core.config_resolver.get_model_profile")
+    @patch("tensor_cast.core.config_resolver.AutoModelConfigLoader")
+    def test_direct_quant_config_applies_model_profile_resolver(self, loader_cls, get_profile):
+        loader = loader_cls.return_value
+        loader.load_config.return_value = SimpleNamespace(model_type="deepseek_v4")
+        loader.is_transformers_natively_supported = True
+        source_config = QuantConfig()
+        resolved_config = QuantConfig()
+        profile_resolver = MagicMock(return_value=resolved_config)
+        get_profile.return_value = SimpleNamespace(quant_config_resolver=profile_resolver)
+
+        resolver = ConfigResolver(
+            model_id="test-model",
+            parallel_config=ParallelConfig(),
+            quant_config=source_config,
+        )
+
+        loader.load_config.assert_called_once_with("test-model")
+        profile_resolver.assert_called_once_with(source_config)
+        self.assertIs(resolver.model_config.quant_config, resolved_config)
+
+
 class DsaCpStructureTestCase(unittest.TestCase):
+    @staticmethod
+    def _v4_user(**overrides):
+        root = Path(__file__).resolve().parents[3]
+        options = dict(
+            model_id=str(root / "tests/assets/model_config/deepseek_v4_flash"),
+            device="TEST_DEVICE",
+            performance_model="profiling",
+            profiling_database=str(root / "tests/assets/profiling/v4_paged_w8a8"),
+            num_queries=1,
+            query_len=4096,
+        )
+        options.update(overrides)
+        return UserInputConfig(**options)
+
+    def test_v4_quantized_dispatch_depends_on_operator_contract_and_phase(self):
+        for device, decode, enabled in (
+            ("ATLAS_800_A3_752T_128G_DIE", False, True),
+            ("TEST_DEVICE", False, True),
+            ("ATLAS_800_A3_752T_128G_DIE", True, False),
+        ):
+            with self.subTest(device=device, decode=decode):
+                user = self._v4_user(device=device, decode=decode, query_len=1 if decode else 4096)
+                config = ConfigResolver(user_input=user).resolve()
+                self.assertEqual(config.moe_config.dispatch_with_quant, enabled)
+                self.assertEqual(config.moe_config.swiglu_limit, 10.0 if enabled else None)
+
+    def test_v4_paged_cache_contract_is_independent_of_device(self):
+        for device in ("TEST_DEVICE", "ATLAS_800_A3_752T_128G_DIE", "ATLAS_800_A2_280T_64G"):
+            with self.subTest(device=device):
+                user = self._v4_user(device=device)
+                config = ConfigResolver(user_input=user).resolve().mla_config
+                self.assertTrue(config.use_paged_kv_cache)
+                self.assertEqual(config.mla_cls.__name__, "DeepseekV4AscendSparseAttention")
+
+    def test_v4_backend_keeps_reference_graph_outside_verified_modes(self):
+        for options in (
+            {"performance_model": "analytic"},
+            {"profiling_database": None},
+            {"enable_sequence_parallel": True},
+            {"num_mtp_tokens": 1},
+            {"num_queries": 2},
+            {"block_size": 64},
+            {"prefix_cache_hit_rate": 0.5},
+            {"context_length": 128},
+            {"decode": True, "query_len": 3},
+            {"quantize_linear_action": QuantizeLinearAction.W4A8_DYNAMIC},
+            {"quantize_attention_action": QuantizeAttentionAction.FP8},
+        ):
+            with self.subTest(options=str(options)):
+                resolver = ConfigResolver(user_input=self._v4_user(**options))
+                resolver.update_mla_config()
+                resolver.update_moe_config()
+                self.assertFalse(resolver.model_config.mla_config.use_paged_kv_cache)
+                self.assertFalse(resolver.model_config.moe_config.dispatch_with_quant)
+
+    def test_v4_contract_ignores_environment_labels_and_database_location(self):
+        import yaml
+
+        source = Path(self._v4_user().profiling_database) / "op_mapping.yaml"
+        metadata = yaml.safe_load(source.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "op_mapping.yaml"
+            for changed in (
+                {},
+                {"runtime_recipes": {"deepseek_v4": "unrelated"}},
+                {"version": "unrelated-framework-version"},
+                {"device": "other-device"},
+                {"cann_version": "other-cann"},
+                {"pytorch_version": "other-pytorch"},
+            ):
+                with self.subTest(changed=changed):
+                    path.write_text(yaml.safe_dump({**metadata, **changed}), encoding="utf-8")
+                    resolver = ConfigResolver(user_input=self._v4_user(profiling_database=directory))
+                    self.assertTrue(resolver._v4_paged_runtime)
+
+    def test_v4_contract_requires_compatible_operator_mappings(self):
+        import copy
+        import yaml
+
+        source = Path(self._v4_user().profiling_database) / "op_mapping.yaml"
+        metadata = yaml.safe_load(source.read_text(encoding="utf-8"))
+        required_ops = (
+            "compressor.default",
+            "sparse_attn_sharedkv.default",
+            "scatter_nd_update_mla.default",
+            "quant_lightning_indexer.default",
+            "grouped_matmul_quant.packed",
+            "grouped_matmul_quant_swiglu.quantized",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "op_mapping.yaml"
+            for op in required_ops:
+                for field in ("missing", "kernel_type", "query_mode", "physical_projection"):
+                    with self.subTest(op=op, field=field):
+                        changed = copy.deepcopy(metadata)
+                        mappings = changed["operator_mappings"]
+                        key = f"tensor_cast.{op}"
+                        if field == "missing":
+                            del mappings[key]
+                        elif field == "physical_projection":
+                            if field not in mappings[key]:
+                                continue
+                            mappings[key][field] = {"contract": "incompatible-abi"}
+                        else:
+                            mappings[key][field] = "incompatible"
+                        path.write_text(yaml.safe_dump(changed), encoding="utf-8")
+                        resolver = ConfigResolver(user_input=self._v4_user(profiling_database=directory))
+                        resolver.update_mla_config()
+                        resolver.update_moe_config()
+                        self.assertFalse(resolver.model_config.mla_config.use_paged_kv_cache)
+                        self.assertFalse(resolver.model_config.moe_config.dispatch_with_quant)
+
     def test_has_dsa_structure_matches_index_topk(self):
         resolver = _make_resolver()
         resolver.hf_config = SimpleNamespace(hf_text_config=SimpleNamespace(index_topk=8))

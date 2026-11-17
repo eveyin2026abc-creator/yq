@@ -349,7 +349,19 @@ HOST_EXTERNAL_SHARED_EXPERTS = Param(
     cli_help="Whether to have the current device host the external shared experts [default: off]",
 )
 
-# MultiModal Options (3 params)
+# MultiModal Options
+LANGUAGE_MODEL_ONLY = Param(
+    name="language-model-only",
+    data_type="boolean",
+    default=False,
+    cli_action="store_true",
+    group="Multimodal",
+    cli_help=(
+        "Disable multimodal inputs and exclude the vision tower and registered "
+        "multimodal connectors from device-resident model weights. [default: off]"
+    ),
+)
+
 IMAGE_BATCH_SIZE = Param(
     name="image-batch-size",
     data_type="integer",
@@ -421,6 +433,7 @@ SPEC = ModuleSpec(
         DISABLE_REPETITION,
         # Optimization Options
         S.COMPILE,
+        S.TEMPLATE_GRAPH_OPTIMIZATION,
         S.COMPILE_ALLOW_GRAPH_BREAK,
         S.COMPILATION_CONFIG,
         FUSION_PLUGIN,
@@ -457,6 +470,7 @@ SPEC = ModuleSpec(
         HOST_EXTERNAL_SHARED_EXPERTS,
         VISION_TP_SIZE,
         # MultiModal Options
+        LANGUAGE_MODEL_ONLY,
         IMAGE_BATCH_SIZE,
         IMAGE_HEIGHT,
         IMAGE_WIDTH,

@@ -15,6 +15,7 @@
 # -------------------------------------------------------------------------
 
 from abc import ABC, abstractmethod
+import math
 
 from serving_cast import stime
 from serving_cast.request import Request, RequestState
@@ -62,15 +63,23 @@ class FixedLengthLoadGen(LoadGen):
         num_input_tokens: int,
         num_output_tokens: int,
         request_rate: float,
+        images: tuple = (),
     ):
         super().__init__(model_name)
-        if request_rate < 0:
-            raise ValueError("request_rate must be non-negative")
+        if not math.isfinite(request_rate) or request_rate <= 0:
+            raise ValueError(f"request_rate must be a finite positive number, got {request_rate}")
         self.request_rate = request_rate
         self.requests: dict[int, Request] = {}
         self.num_requests = num_requests
+        # P1-42: attach the multimodal payload so the DES path simulates image
+        # requests (and their H2D bytes) instead of text-only ones.
+        self.images = tuple(images or ())
         for _ in range(num_requests):
-            request = Request(num_input_tokens=num_input_tokens, num_output_tokens=num_output_tokens)
+            request = Request(
+                num_input_tokens=num_input_tokens,
+                num_output_tokens=num_output_tokens,
+                images=self.images,
+            )
             self.requests[request.id] = request
         self.finished_requests = {}
 
@@ -83,7 +92,7 @@ class FixedLengthLoadGen(LoadGen):
         first_key = next(iter(self.requests))
         request = self.requests.pop(first_key)
         request.decode_done_signal.connect(self._decode_done_callback)
-        interval = 0 if self.request_rate == 0 else 1 / self.request_rate
+        interval = 1 / self.request_rate
         return request, interval
 
     def has_request(self) -> bool:

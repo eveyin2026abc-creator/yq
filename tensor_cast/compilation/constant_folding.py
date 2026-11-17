@@ -12,6 +12,8 @@ import torch.utils._pytree as pytree
 from torch._inductor.freezing_utils import maybe_set_is_frozen_param
 from torch.fx import GraphModule, Node
 
+from .memory_registration import inherit_static_weight_origin
+
 
 def replace_node_with_constant(
     gm: torch.fx.GraphModule,
@@ -146,6 +148,8 @@ class MetaConstantFolder(torch.fx.Interpreter):
             if isinstance(o, torch.Tensor) and o.device.type != "meta":
                 # The op produced a non-meta tensor. Don't fold.
                 return self.unknown_value
+
+        inherit_static_weight_origin(node)
 
         # 8. Success! This node is a constant. Record it for replacement.
         # We only need to replace 'call_function' nodes.

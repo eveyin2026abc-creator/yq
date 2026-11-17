@@ -474,10 +474,13 @@ def _validate_gqa_dcp_kv_heads(model: "ModelWrapperBase", dcp_group) -> None:
     head to read and the configuration is illegal on vllm-ascend. We raise here so
     such a config errors at model-build time instead of being silently modeled with
     a degenerate single KV head and reported as optimal. No-op when DCP is disabled
-    or ``num_key_value_heads`` is unavailable (e.g. MLA-style configs).
+    or when the model uses MLA, whose shared latent KV is not split into
+    GQA heads. MLA configs may still expose a nominal num_key_value_heads.
     """
     dcp_size = getattr(dcp_group, "world_size", 1) or 1
     if dcp_size <= 1:
+        return
+    if getattr(model.model_config, "mla_config", None) is not None:
         return
     parallel_config = model.model_config.parallel_config
     tp_size = parallel_config.tensor_parallel_size
@@ -528,7 +531,7 @@ def patch_attention(model: "ModelWrapperBase") -> "ModelWrapperBase":
 
     visual_model = get_visual(model)
     if visual_model is not None:
-        pattern = "blocks.*.attn"
+        pattern = "layers.*.self_attn" if model.hf_config.model_type == "minimax_m3_vl" else "blocks.*.attn"
         depth_layer_idx = len(model.attention_by_layers)
         for name, module in visual_model.named_modules():
             if fnmatch.fnmatchcase(strip_module_name(name), pattern):
@@ -831,7 +834,11 @@ def shard_model_by_tp(
                     "tp_group": tp_group,
                     "shard_mode": embedding_parallel,
                 }
-                tp_plan.update({"embed_tokens": (PARALLEL_EMBEDDING, params)})
+                embedding_paths = ["embed_tokens"]
+                model_profile = get_model_profile(self.hf_config.model_type)
+                if model_profile is not None and model_profile.embedding_module_path:
+                    embedding_paths.append(model_profile.embedding_module_path)
+                tp_plan.update({path: (PARALLEL_EMBEDDING, params) for path in embedding_paths})
 
             params = {
                 "tp_group": tp_group,

@@ -29,6 +29,7 @@ from torch._inductor.fx_passes.post_grad import decompose_auto_functionalized
 from .. import config, ops  # noqa: F401
 from . import patterns
 from .constant_folding import fold_meta_constants, replace_node_with_constant
+from .memory_registration import mark_frozen_weight_origins, register_graph_weight_aliases
 from .freezing_passes import patterns as freezing_patterns
 from .freezing_passes.dispatch_ffn_combine_pass import DispatchFFNCombinePass
 from .freezing_passes.grouped_matmul_swiglu_pass import GroupedMatmulSwigluPass
@@ -40,6 +41,7 @@ from .passes.multistream_pass import MultiStreamSchedulePass
 from .passes.peep_hole_pass import PeepHolePass
 from .passes.redundant_node_elimination_pass import ReduandantNodeEliminationPass
 from .passes.sequence_parallel_pass import SequenceParallelPass
+from .passes.shared_expert_lane_pass import SharedExpertLanePass
 from .topo_sort import stable_topo_sort
 
 
@@ -78,8 +80,9 @@ class CompilerBackend:
         def freezing_compile(compile_inner, aot_autograd_gm, example_inputs):
             # Freeze the graph first before passing to AOT Autograd.
             frozen_gm, preserved_arg_indices = freeze(gm, aot_autograd_gm, example_inputs)
+            mark_frozen_weight_origins(frozen_gm)
             example_inputs = [example_inputs[ind] for ind in preserved_arg_indices]
-            optimized_function = compile_inner(frozen_gm, example_inputs)
+            optimized_function = register_graph_weight_aliases(compile_inner(frozen_gm, example_inputs))
 
             def wrapper(args: list[object]) -> Sequence[torch.Tensor]:
                 args_new = [args[i] for i in preserved_arg_indices]
@@ -98,7 +101,7 @@ class CompilerBackend:
             if config.compilation.enable_freezing:
                 return freezing_compile(self.rewrite_after_freezing, fx_graph, inputs)
             else:
-                return self.rewrite_after_freezing(fx_graph, inputs)
+                return register_graph_weight_aliases(self.rewrite_after_freezing(fx_graph, inputs))
 
         # Use the default decomposition table to decompose operators.
         decompositions = select_decomp_table()
@@ -119,6 +122,10 @@ class CompilerBackend:
         self.apply_redundant_node_elimination_pass(fx_graph, inputs)
         self.apply_quantization_passes(fx_graph, inputs)
         self.apply_pattern_match_passes(fx_graph, inputs)
+        # Multi-output norm fusion may move a consumer ahead of a computed
+        # Gemma weight (1 + weight). Freezing's CSE requires topological order.
+        stable_topo_sort(fx_graph)
+        fx_graph.graph.lint()
         self.apply_sequence_parallel_pass(fx_graph, inputs)
         return fx_graph
 
@@ -129,6 +136,7 @@ class CompilerBackend:
         self.apply_freezing_passes(fx_graph, inputs)
         # Schedule the functional graph before lowering mutation wrappers.
         self.apply_multistream_pass(fx_graph, inputs)
+        self.apply_shared_expert_lane_pass(fx_graph, inputs)
         self.apply_decompose_auto_functionalized_pass(fx_graph)
         logger.debug("Graph after compiling:")
         if logger.isEnabledFor(logging.DEBUG):
@@ -151,13 +159,14 @@ class CompilerBackend:
         gm.recompile()
         inputs = example_inputs[num_frozen_inputs:]
         frozen, indices = freeze(gm, gm, inputs)
+        mark_frozen_weight_origins(frozen)
         if indices != list(range(len(inputs))):
             raise RuntimeError("Static meta capture unexpectedly froze request inputs")
         result = self.rewrite_after_freezing(frozen, inputs)
         # make_fx gives us an eager GraphModule. Unlike AOT's lazy module, its
         # code must be regenerated after the final functionalization rewrite.
         result.recompile()
-        return result
+        return register_graph_weight_aliases(result)
 
     def apply_redundant_node_elimination_pass(self, gm: fx.GraphModule, inputs):
         GraphTransformObserver = functools.partial(
@@ -222,6 +231,28 @@ class CompilerBackend:
             logger.debug("Graph after sequence parallel pass:")
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(gm.print_readable(print_output=False))
+
+    def apply_shared_expert_lane_pass(self, gm: fx.GraphModule, inputs):
+        """Bind the shared-expert branch of each MoE layer to its own stream.
+
+        Independent of ``compilation.multistream.enable``: this pass owns the lane
+        region and lowers it on its own, so it is scheduled right after the global
+        multistream pass only to keep a stable order when both are enabled (the global
+        pass then skips lane regions). Runs before mutation-wrapper lowering and only
+        inserts control ops: wait/record anchors and overflow-wait (spill) events. See
+        ``SharedExpertLanePass`` for the contract.
+        """
+        if not config.compilation.multistream_overlap_shared_expert.enable:
+            return
+        GraphTransformObserver = functools.partial(
+            torch.fx.passes.graph_transform_observer.GraphTransformObserver,
+            subsystem="shared_expert_lane_pass",
+            log_url=config.compilation.debug.graph_log_url,
+        )
+        GraphTransformObserver(gm, "shared_expert_lane_pass").apply_gm_pass(SharedExpertLanePass())
+        logger.debug("Graph after shared-expert lane pass:")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(gm.print_readable(print_output=False))
 
     def apply_decompose_auto_functionalized_pass(self, gm: fx.GraphModule):
         GraphTransformObserver = functools.partial(

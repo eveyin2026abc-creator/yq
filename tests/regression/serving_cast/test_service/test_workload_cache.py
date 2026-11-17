@@ -24,7 +24,7 @@ import torch
 
 from serving_cast.service.workload_cache import RuntimeWorkload, WorkloadCache, WorkloadReuseModelRunner
 from tensor_cast.core.input_generator import RequestInfo, generate_inputs
-from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo, Region
+from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo, Region, RegionIdentityRegistry
 from tensor_cast.runtime_workload import (
     _MAX_FROZEN_TENSOR_VALUE_ELEMENTS,
     _MAX_FROZEN_TRACE_VALUE_ELEMENTS,
@@ -268,7 +268,7 @@ class TestWorkloadCache(TestCase):
         real_input = torch.empty((2, 4), dtype=torch.float16, device="meta")
         real_output = torch.empty((2, 4), dtype=torch.float16, device="meta")
         op = OpInvokeInfo(torch.ops.aten.add.Tensor, (logical_input, logical_input), {}, logical_output)
-        region = Region(None)
+        region = Region(None, RegionIdentityRegistry())
         region.mark_begin = SimpleNamespace(args=(logical_input,))
         region.mark_end = SimpleNamespace(out=logical_output)
         region.real_input_tensor = real_input
@@ -277,15 +277,31 @@ class TestWorkloadCache(TestCase):
         source = SimpleNamespace(op_info_group=[region], _iter_flat_invocations=lambda: [(op, 1)])
 
         trace = RuntimeWorkloadTrace.from_runtime(source)
-        target = MagicMock()
-        parent_before = Region.equivalent_tensor_id_manager.parent.copy()
-        root_order_before = Region.equivalent_tensor_id_manager.root_order.copy()
+        runtime_registry = RegionIdentityRegistry()
+        target = SimpleNamespace(
+            ensure_identity_registry=MagicMock(return_value=runtime_registry),
+        )
+        replay_alias_counts = []
+        alias_manager = runtime_registry.equivalent_tensor_id_manager
+
+        def replay_flat_op_invoke_infos(invocations):
+            replay_alias_counts.append(len(alias_manager._state()[0]))
+
+        target.replay_flat_op_invoke_infos = MagicMock(side_effect=replay_flat_op_invoke_infos)
+        other_registry = RegionIdentityRegistry()
+        parent_before = other_registry.equivalent_tensor_id_manager.parent.copy()
+        root_order_before = other_registry.equivalent_tensor_id_manager.root_order.copy()
+        trace.replay(target)
         trace.replay(target)
 
         self.assertEqual(len(trace.region_aliases), 1)
+        self.assertEqual(target.ensure_identity_registry.call_count, 2)
         self.assertEqual(target.replay_flat_op_invoke_infos.call_args.args[0][0][1], 1)
-        self.assertEqual(Region.equivalent_tensor_id_manager.parent, parent_before)
-        self.assertEqual(Region.equivalent_tensor_id_manager.root_order, root_order_before)
+        self.assertEqual(len(replay_alias_counts), 2)
+        self.assertTrue(all(replay_alias_counts))
+        self.assertFalse(alias_manager.parent)
+        self.assertEqual(other_registry.equivalent_tensor_id_manager.parent, parent_before)
+        self.assertEqual(other_registry.equivalent_tensor_id_manager.root_order, root_order_before)
 
     def test_cli_does_not_expose_reuse_controls(self):
         from cli.inference import throughput_optimizer
@@ -322,8 +338,8 @@ class TestWorkloadCache(TestCase):
     def test_lru_eviction_keeps_most_recent_workload(self):
         cache = WorkloadCache(max_entries=1)
         trace = RuntimeWorkloadTrace(tensors=(), invocations=())
-        first = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
-        second = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        first = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
+        second = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1)
 
         cache.set_workload("first", first)
         cache.set_workload("second", second)
@@ -335,8 +351,8 @@ class TestWorkloadCache(TestCase):
 
     def test_serialized_size_limit_evicts_oldest_workload(self):
         trace = RuntimeWorkloadTrace(tensors=(), invocations=())
-        first = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
-        second = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        first = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
+        second = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1)
         cache = WorkloadCache(max_entries=2, max_bytes=len(pickle.dumps(first)))
 
         cache.set_workload("first", first)
@@ -348,7 +364,7 @@ class TestWorkloadCache(TestCase):
 
     def test_oversized_workload_is_not_cached(self):
         trace = RuntimeWorkloadTrace(tensors=(), invocations=())
-        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
         cache = WorkloadCache(max_bytes=len(pickle.dumps(workload)) - 1)
 
         cache.set_workload("oversized", workload)
@@ -383,17 +399,58 @@ class TestWorkloadCache(TestCase):
         runtime.get_breakdowns.return_value = {}
         runtime.event_list = []
         trace = MagicMock()
-        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
 
         metrics = runner._estimate(workload)
 
         self.assertEqual(metrics.run_time_s, 0.25)
         trace.replay.assert_called_once_with(runtime)
 
+    @patch("serving_cast.service.workload_cache.Runtime")
+    def test_replay_keeps_direct_peak_across_target_devices(self, runtime_cls):
+        runner = WorkloadReuseModelRunner.__new__(WorkloadReuseModelRunner)
+        runner.perf_models = []
+        runner.device_profile = MagicMock()
+        runner.model_weight_size_gb = 5.0
+        runner.user_input = SimpleNamespace(
+            chrome_trace=None,
+            reserved_memory_gb=0.0,
+            dump_input_shapes=False,
+            dump_op_bound_results=False,
+        )
+        runtime_cls.return_value.total_execution_time_s.return_value = {}
+        runtime_cls.return_value.memory_tracker.peak_mem_usage.return_value = 0
+        summary = runtime_cls.return_value.memory_tracker.get_forward_memory_summary.return_value
+        summary.activation_peak_bytes = 10 * 1024**3
+        summary.request_input_bytes = 0
+        summary.peak_memory_bytes.return_value = 17 * 1024**3
+        runtime_cls.return_value.event_list = []
+        workload = RuntimeWorkload(
+            MagicMock(),
+            5.0,
+            2.0,
+            0.0,
+            0.0,
+            0.0,
+            2,
+        )
+        requests = [RequestInfo(1, 1, is_decode=False), RequestInfo(2, 2, is_decode=False)]
+
+        runner.total_device_memory_gb = 16.0
+        result = runner._estimate(workload, requests=requests)
+        self.assertEqual(result.peak_memory_usage_gb, 17.0)
+        self.assertEqual(result.device_memory_available_gb, -1.0)
+        self.assertEqual(result.model_activation_size_gb, 10.0)
+
+        runner.total_device_memory_gb = 32.0
+        second = runner._estimate(workload, requests=requests)
+        self.assertEqual(second.peak_memory_usage_gb, 17.0)
+        self.assertEqual(second.device_memory_available_gb, 15.0)
+
     def test_claim_wait_and_publish_are_single_flight(self):
         cache = WorkloadCache()
         trace = RuntimeWorkloadTrace(tensors=(), invocations=())
-        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
 
         state, _, owner_token = cache.claim_workload("key")
         self.assertEqual(state, "owner")
@@ -437,8 +494,8 @@ class TestWorkloadCache(TestCase):
     def test_expired_owner_cannot_publish_or_abandon_new_owner_lease(self):
         cache = WorkloadCache(inflight_timeout_s=0.01)
         trace = RuntimeWorkloadTrace(tensors=(), invocations=())
-        old_workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
-        new_workload = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        old_workload = RuntimeWorkload(trace, 1.0, 0.0, 0.0, 0.0, 0.0, 1)
+        new_workload = RuntimeWorkload(trace, 2.0, 0.0, 0.0, 0.0, 0.0, 1)
 
         state, _, old_token = cache.claim_workload("key")
         self.assertEqual(state, "owner")
@@ -464,7 +521,7 @@ class TestWorkloadCache(TestCase):
         cache.set_template("model", runner)
         self.assertIsNotNone(cache.get_template("model"))
 
-        workload = RuntimeWorkload(RuntimeWorkloadTrace(tensors=(), invocations=()), 1.0, 0.0, 0.0, 0.0, 0.0, 1, False)
+        workload = RuntimeWorkload(RuntimeWorkloadTrace(tensors=(), invocations=()), 1.0, 0.0, 0.0, 0.0, 0.0, 1)
         cache.set_workload("workload", workload)
 
         self.assertIsNone(cache.get_template("model"))

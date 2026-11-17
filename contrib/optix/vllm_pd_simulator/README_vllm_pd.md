@@ -66,7 +66,7 @@
 在开始部署前，请逐项确认以下环境已就绪：
 
 - 各节点 SSH 服务已启动，且可从主节点连通
-- 各节点已安装 NPU 驱动，CANN 环境已加载（对应环境变量 `PD_CANN_HOME`）
+- 各节点已安装 NPU 驱动，CANN 环境已加载
 - 各节点已安装 vLLM 与 vllm-ascend，模型文件已就位
 - 主节点已安装 Python 3.10+ 与 fabric（>= 2.0）
 - 节点间 HCCL / RDMA 链路正常，KV 传输端口（`kv_port`）互通
@@ -129,9 +129,9 @@ PD 分离部署依赖两个 Proxy 负载均衡脚本（来自 [vllm-ascend](http
 
 脚本获取方式（三种，按需选用）：
 
-- **方式一（自动，需外网）**：寻优运行时（Stage 0 生成启动脚本阶段）自动检查，本地缺失则从 vllm-ascend GitHub 仓下载；下载失败但有本地缓存时降级使用缓存。需服务器可连外网。
-- **方式二（手动下载）**：运行 `scripts/pd/download_proxy_scripts.sh`，默认仅下载缺失文件；加 `--download` 强制重新下载并覆盖已有文件；加 `--check` 仅检查存在状态不下载。
-- **方式三（离线上传）**：在可连外网的机器上从 [vllm-ascend/examples/disaggregated_prefill_v1/](https://github.com/vllm-project/vllm-ascend/tree/main/examples/disaggregated_prefill_v1) 下载上述脚本，上传到插件安装目录下的 `scripts/pd/` 子目录。
+- **Agent 环境准备（需外网）**：OptiX Agent 检查实际使用的插件目录，缺失时调用 `scripts/pd/download_proxy_scripts.sh` 并复检；参见 optix-assistant 的 `workflows/environment-preparation.md`。插件本身只检查并提示，不会自动下载。
+- **手动下载**：运行插件目录下的 `scripts/pd/download_proxy_scripts.sh`，默认仅下载缺失文件；加 `--download` 强制重新下载并覆盖已有文件；加 `--check` 仅检查存在状态不下载。需要目标目录可写、GitHub 可访问以及 `wget` 或 `curl`。
+- **离线上传**：在可连外网的机器上从 [vllm-ascend/examples/disaggregated_prefill_v1/](https://github.com/vllm-project/vllm-ascend/tree/main/examples/disaggregated_prefill_v1) 获取与部署环境兼容的两个脚本，上传到控制节点的插件安装目录 `scripts/pd/`，并执行 `--check`。下载脚本使用上游 `main`，其内容可能变化；请记录实际版本或文件 SHA-256。
 
 > **TLS 证书**：默认启用证书验证。如内网环境证书有问题，可通过 `export WGET_OPTS=--no-check-certificate` 或 `export CURL_OPTS=-k` 临时绕过 TLS 验证。
 
@@ -355,7 +355,6 @@ SSH agent 或标准默认密钥完成免密认证；`Host` 别名、`ProxyJump` 
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PD_CANN_HOME` | `/usr/local/Ascend/cann-9.0.0` | 远端 CANN 安装路径 |
 | `PD_CONDA_NAME` | - | 远端 Conda 环境名 |
 | `PD_CONDA_HOME` | - | 远端 Conda 安装路径 |
 | `PD_KV_CONNECTOR` | `MooncakeLayerwiseConnector` | KV Connector 类型 |
@@ -368,7 +367,7 @@ SSH agent 或标准默认密钥完成免密认证；`Host` 别名、`ProxyJump` 
 | `MooncakeLayerwiseConnector` | `load_balance_proxy_layerwise_server_example.py` | 按层传输 KV Cache（默认） |
 | `MooncakeConnectorV1` | `load_balance_proxy_server_example.py` | 整体传输 KV Cache |
 
-此外，`[vllm_pd.env]` 配置公共环境变量，`[vllm_pd.env.prefill]` / `[vllm_pd.env.decode]` 配置角色专属环境变量（覆盖同名公共变量）。
+此外，`[vllm_pd.env]` 配置公共环境变量（P/D/proxy 共享），`[vllm_pd.env.prefill]` / `[vllm_pd.env.decode]` / `[vllm_pd.env.proxy]` 配置角色专属环境变量（覆盖同名公共变量，只影响该角色）；proxy 节点自身还可写 `[vllm_pd.proxy] env = { … }`，优先级高于角色环境变量。
 
 ### 寻优参数 `[[vllm_pd.target_field]]`
 

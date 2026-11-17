@@ -717,7 +717,9 @@ class TestBaseBackend(unittest.TestCase):
         self.assertEqual(record.profiling_miss_reasons, {"shape_not_found": 2})
         request = fake_runner.requests[0]
         self.assertEqual((request.query_len, request.seq_len, request.concurrency), (6, 12, 5))
-        self.assertEqual((request.image_batch_size, request.image_height, request.image_width), (2, 224, 336))
+        # Issue #586: image_batch_size defaults to 1 per request (not the
+        # search batch_size=2) on fixed-length inputs.
+        self.assertEqual((request.image_batch_size, request.image_height, request.image_width), (1, 224, 336))
 
     def test_select_latency_s_prefers_empirical_over_analytic(self):
         self.assertEqual(
@@ -848,7 +850,9 @@ class TestBaseBackend(unittest.TestCase):
         requests = self.backend.model_runner.run_inference.call_args.args[0]
         self.assertEqual(requests[0].image_batch_size, 1)
 
-    def test_get_forward_info_falls_back_to_batch_size_for_image_batch_size(self):
+    def test_get_forward_info_defaults_image_batch_size_to_one(self):
+        # Issue #586: the fixed-length path no longer falls back to the search
+        # batch_size; both paths default to one image per request.
         self.backend.model_runner = Mock()
         optimizer_data = OptimizerData(
             input_length=32,
@@ -862,7 +866,7 @@ class TestBaseBackend(unittest.TestCase):
         self.backend._get_forward_info(8, optimizer_data, is_decode=False)
 
         requests = self.backend.model_runner.run_inference.call_args.args[0]
-        self.assertEqual(requests[0].image_batch_size, 8)
+        self.assertEqual(requests[0].image_batch_size, 1)
 
     def test_exponential_search_acc_search_clamps_right_boundary_on_early_stop(self):
         optimizer_data = OptimizerData(
@@ -959,6 +963,74 @@ class TestBaseBackend(unittest.TestCase):
         )
 
         self.assertEqual(estimated, 14)
+
+    def test_estimate_right_boundary_uses_measured_incremental_slope(self):
+        # PR #906 review #2: the two-probe available-memory difference captures
+        # the true marginal per-request cost (KV pool, persistent states) that
+        # account-name classification misses.  stored=0.5 would allow a far
+        # larger batch; the measured slope (10-2)/(8-1)~1.143 must win via max().
+        optimizer_data = OptimizerData(tpot_limits=None, ttft_limits=None)
+
+        estimated = self.backend._estimate_right_boundary(
+            {"batch_size": 1, "device_memory_available_gb": 10.0},
+            {
+                "batch_size": 8,
+                "per_request_memory_gb": 0.5,
+                "device_memory_available_gb": 2.0,
+            },
+            optimizer_data,
+        )
+
+        # per_req = max(0.5, 8/7) = 8/7;  8 + 2 / (8/7) = 9.75 -> round+1 = 11
+        self.assertEqual(estimated, 11)
+
+    def test_estimate_right_boundary_negative_slope_keeps_stored_bound(self):
+        # Non-positive measured slope (paged-block quantization noise across a
+        # small bs_diff) must not lower the stored bound.
+        optimizer_data = OptimizerData(tpot_limits=None, ttft_limits=None)
+
+        estimated = self.backend._estimate_right_boundary(
+            {"batch_size": 7, "device_memory_available_gb": 2.0},
+            {
+                "batch_size": 8,
+                "per_request_memory_gb": 2.0,
+                "device_memory_available_gb": 10.0,
+            },
+            optimizer_data,
+        )
+
+        # slope = (2-10)/1 = -8 <= 0 -> per_req stays stored 2.0: 8 + 10/2 = 13
+        self.assertEqual(estimated, 14)
+
+    def test_estimate_right_boundary_measured_slope_oom_right_probe(self):
+        # An OOM right probe (negative available) yields a larger slope and a
+        # boundary below bs_right: conservative shrink, never an expansion.
+        optimizer_data = OptimizerData(tpot_limits=None, ttft_limits=None)
+
+        estimated = self.backend._estimate_right_boundary(
+            {"batch_size": 4, "device_memory_available_gb": 8.0},
+            {
+                "batch_size": 8,
+                "per_request_memory_gb": 0.5,
+                "device_memory_available_gb": -8.0,
+            },
+            optimizer_data,
+        )
+
+        # per_req = max(0.5, 16/4=4) = 4;  8 + (-8)/4 = 6 -> max(1, round(6)+1) = 7
+        self.assertEqual(estimated, 7)
+
+    def test_compute_per_request_memory_gb_uses_direct_non_weight_cost(self):
+        self.assertEqual(
+            self.backend._compute_per_request_memory_gb(
+                total_device_memory_gb=64,
+                model_weight_size_gb=20,
+                reserved_memory_gb=10,
+                memory_left_gb=12,
+                batch_size=4,
+            ),
+            5.5,
+        )
 
     def test_exponential_search_without_acc_search_doubles_until_max_iterations(self):
         optimizer_data = OptimizerData(concurrency_search_strategy="exponential")
@@ -1145,6 +1217,161 @@ class TestBaseBackend(unittest.TestCase):
         metrics, _ = chunk_results[0]
         self.assertEqual(metrics.device_memory_available_gb, -1.0)
         self.assertEqual(metrics.offload_mode, "prefill")
+
+    def test_image_tokens_per_request_fails_closed_on_budget_resolution_failure(self):
+        # Review (stormchasingg round 4 -> zhangzhenyu round 6): when a
+        # fully configured image geometry cannot resolve its token budget,
+        # the planner must fail closed instead of silently degrading the
+        # chunk plan to text-only while the chunk rows still declare
+        # image_tokens_included=True (which under-counts every image).
+        optimizer_data = OptimizerData(
+            input_length=100,
+            output_length=8,
+            batch_size=1,
+            image_batch_size=1,
+            image_height=224,
+            image_width=224,
+        )
+        self.backend.model_runner = Mock()
+
+        with patch(
+            "tensor_cast.core.input_generator.resolve_multimodal_token_budget",
+            side_effect=ValueError("bad processor budget"),
+        ):
+            with self.assertRaisesRegex(ValueError, "under-counts image tokens"):
+                self.backend._image_tokens_per_request(optimizer_data)
+
+    def test_resolve_image_batch_size_decouples_from_search_batch(self):
+        # Review (Hudingyi/zhangzhenyu round 6): image_batch_size is the
+        # per-request image count and must not follow the concurrency
+        # search's batch_size. Both the distribution and the fixed-length
+        # paths default to one image per request (issue #586: the surviving
+        # fixed-length fallback broke the fail-fast image-budget guard).
+        distribution = LengthDistribution(bins=[LengthBin(min_tokens=0, max_tokens=100, weight=1.0)])
+        data = OptimizerData(
+            batch_size=2,
+            length_distribution=distribution,
+            image_height=224,
+            image_width=224,
+        )
+        self.assertEqual(self.backend._resolve_image_batch_size(data), 1)
+        # Explicit value always wins on both paths.
+        data.image_batch_size = 3
+        self.assertEqual(self.backend._resolve_image_batch_size(data), 3)
+        # No image geometry at all: no images.
+        data.image_height = None
+        self.assertEqual(self.backend._resolve_image_batch_size(data), None)
+
+    def test_resolve_image_batch_size_scalar_fallback_warns_once(self):
+        # The fixed-length path defaults to one image per request and warns
+        # once globally so search loops do not flood the log.
+        data = OptimizerData(
+            input_length=100,
+            output_length=8,
+            batch_size=2,
+            image_height=224,
+            image_width=224,
+        )
+        from serving_cast.service import base_throughput_optimizer as bto
+
+        bto._IMAGE_BATCH_DEFAULT_WARNED = False
+        try:
+            with self.assertLogs("serving_cast.service.base_throughput_optimizer", level="WARNING") as captured:
+                self.assertEqual(self.backend._resolve_image_batch_size(data), 1)
+                self.assertEqual(self.backend._resolve_image_batch_size(data), 1)
+            fallback_lines = [line for line in captured.output if "image_batch_size defaults" in line]
+            self.assertEqual(len(fallback_lines), 1)
+        finally:
+            bto._IMAGE_BATCH_DEFAULT_WARNED = False
+
+    def test_image_tokens_per_request_ignores_image_params_on_non_vl_models(self):
+        # Stray image parameters on a text model are configuration noise:
+        # the planner budget stays 0 (no raise) and the generators keep the
+        # historical "ignored + warning" behaviour (PR-1 review round 6).
+        runner = Mock()
+        runner.model.is_vl_model = False
+        self.backend.model_runner = runner
+        data = OptimizerData(
+            input_length=100,
+            output_length=8,
+            batch_size=2,
+            image_batch_size=2,
+            image_height=224,
+            image_width=224,
+        )
+        self.assertEqual(self.backend._image_tokens_per_request(data), 0)
+
+    def test_profile_pp_microbatch_forwards_image_contract_and_separates_cache(self):
+        # Review round 3 (zhangzhenyu P1), PP chunk pipeline: chunk
+        # microbatches forward the length contract (image_tokens_included)
+        # and the per-chunk image state to _get_forward_info, and profiles of
+        # the same (query_len, seq_len, microbatch) with different image
+        # state are cached separately — the first chunk (vision tower runs)
+        # and a text-only chunk of equal shape are distinct profiles.
+        optimizer_data = OptimizerData(input_length=10, output_length=3, batch_size=1, max_batched_tokens=512)
+        captured_calls = []
+
+        class DummyPPMetrics:
+            execution_time_s = {"analytic": 0.01}
+            device_memory_available_gb = 2.0
+            breakdowns = {}
+            pipeline_profile = SimpleNamespace(name="dummy-pipeline-profile")
+
+        def fake_forward(
+            concurrency,
+            optimizer_data,
+            is_decode,
+            *,
+            query_len=None,
+            seq_len=None,
+            forward_image=None,
+            image_tokens_included=False,
+        ):
+            captured_calls.append((query_len, seq_len, forward_image, image_tokens_included))
+            return DummyPPMetrics()
+
+        with patch.object(self.backend, "_get_forward_info", side_effect=fake_forward):
+            self.backend.dp = 1
+            first = self.backend._profile_pp_microbatch(
+                1,
+                optimizer_data,
+                is_decode=False,
+                query_len=512,
+                seq_len=512,
+                forward_image=(1, 224, 224),
+                image_tokens_included=True,
+            )
+            text_only = self.backend._profile_pp_microbatch(
+                1,
+                optimizer_data,
+                is_decode=False,
+                query_len=512,
+                seq_len=512,
+                forward_image=(None, None, None),
+                image_tokens_included=True,
+            )
+            cached_hit = self.backend._profile_pp_microbatch(
+                1,
+                optimizer_data,
+                is_decode=False,
+                query_len=512,
+                seq_len=512,
+                forward_image=(1, 224, 224),
+                image_tokens_included=True,
+            )
+
+        # The contract kwargs are forwarded verbatim.
+        self.assertEqual(
+            captured_calls,
+            [
+                (512, 512, (1, 224, 224), True),
+                (512, 512, (None, None, None), True),
+            ],
+        )
+        # Distinct image states produce distinct cached profiles; a repeat of
+        # the first state is a cache hit (no extra forward).
+        self.assertIsNot(first, text_only)
+        self.assertIs(first, cached_hit)
 
 
 if __name__ == "__main__":

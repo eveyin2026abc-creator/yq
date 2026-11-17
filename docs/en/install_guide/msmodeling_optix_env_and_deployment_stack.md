@@ -25,7 +25,7 @@ vllm --help
 For MindIE scenarios, confirm that `mindieservice_daemon` is available, or that the installation pointed to by `MIES_INSTALL_PATH` is correct.
 
 > [!NOTE]
-> For the full deployment of the deployment stack, see [VLLM Server](https://docs.vllm.ai/projects/ascend/en/latest/quick_start.html), [MindIE Service](https://gitcode.com/Ascend/MindIE-Motor/blob/master/docs/en/user_guide/quick_start.md), and [AISBench Benchmark Tool Deployment](https://gitee.com/aisbench/benchmark/blob/master/README.md).
+> For the full deployment of the deployment stack, see [VLLM Server](https://docs.vllm.ai/projects/ascend/en/latest/quick_start.html), [MindIE Service](https://atomgit.com/Ascend/MindIE-Motor/blob/master/docs/en/user_guide/quick_start.md), and [AISBench Benchmark Tool Deployment](https://gitee.com/aisbench/benchmark/blob/master/README.md).
 
 **3. Optional: Specify the Deployment Root Directory**
 
@@ -35,7 +35,7 @@ Configure this only when the system PATH cannot find the correct command:
 export OPTIX_DEPLOY_PATH=/path/to/custom-deploy-root
 ```
 
-You can also write it into `optix/config.toml`. For field descriptions, see [Configuration File Description](../user_guide/msmodeling_optix_user_guide.md#7-configuration-file-description) in the *User Guide*, specifically "Advanced Configuration → Deployment Environment `[deploy]`":
+You can also write it into `optix/config.toml`. For field descriptions, see [Configuration File Description](../user_guide/optix/configuration.md#7-configuration-file-description) in the *User Guide*, specifically "Advanced Configuration → Deployment Environment `[deploy]`":
 
 ```toml
 [deploy]

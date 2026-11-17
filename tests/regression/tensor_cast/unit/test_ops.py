@@ -140,6 +140,122 @@ def test_dynamic_quantize_mxfp4_uses_per_row_block_scales_and_costs():
     assert properties.compute_ops[torch.bfloat16].gp_ops == 2 * x.numel() + scale.numel()
 
 
+def test_dynamic_quantize_symmetric_per_sample_models_scale_and_reduction_costs():
+    x = torch.empty((4, 32), device="meta", dtype=torch.bfloat16)
+    op = torch.ops.tensor_cast.dynamic_quantize_symmetric.default
+    kwargs = {"scale_dtype": torch.float32, "out_dtype": torch.int8}
+    out = op(x, [-1], **kwargs)
+    payload, scale = out
+
+    assert payload.shape == x.shape
+    assert scale.shape == (4, 1)
+
+    properties = OpInvokeInfo(
+        op,
+        (x, [-1]),
+        kwargs,
+        out,
+    ).get_perf_properties()
+    expected_gp_ops = x.numel() * 6 + x.numel() + (x.numel() - scale.numel()) + scale.numel()
+    assert properties.compute_ops[torch.float32].gp_ops == expected_gp_ops
+    assert properties.memory_write_bytes == payload.numel() * payload.element_size() + scale.numel() * 4
+
+    invoke = OpInvokeInfo(op, (x, [-1]), kwargs, out)
+    result = get_op_estimator(op, TEST_DEVICE.name)(invoke, TEST_DEVICE)
+    memory_time_s = result.statistics[StatsKey.MEMORY_ACCESS]
+    compute_time_s = result.statistics[StatsKey.COMPUTE]
+    assert result.statistics["dynamic_quant_dependency_serialized"] is True
+    assert result.execution_time_s == pytest.approx(
+        memory_time_s + compute_time_s + TEST_DEVICE.static_cost.gp_op_cost_s
+    )
+    assert result.execution_time_s > max(memory_time_s, compute_time_s) + TEST_DEVICE.static_cost.gp_op_cost_s
+
+
+def test_dynamic_quantize_symmetric_per_tensor_keeps_default_roofline():
+    x = torch.empty((4, 32), device="meta", dtype=torch.bfloat16)
+    op = torch.ops.tensor_cast.dynamic_quantize_symmetric.default
+    kwargs = {"scale_dtype": torch.float32, "out_dtype": torch.int8}
+    out = op(x, [], **kwargs)
+    invoke = OpInvokeInfo(op, (x, []), kwargs, out)
+
+    result = get_op_estimator(op, TEST_DEVICE.name)(invoke, TEST_DEVICE)
+    memory_time_s = result.statistics[StatsKey.MEMORY_ACCESS]
+    compute_time_s = result.statistics[StatsKey.COMPUTE]
+
+    assert "dynamic_quant_dependency_serialized" not in result.statistics
+    assert result.execution_time_s == pytest.approx(
+        max(memory_time_s, compute_time_s) + TEST_DEVICE.static_cost.gp_op_cost_s
+    )
+
+
+def test_dynamic_quantize_symmetric_preserves_h2d_and_extra_static_costs(monkeypatch):
+    x = torch.empty((4, 32), device="meta", dtype=torch.bfloat16)
+    op = torch.ops.tensor_cast.dynamic_quantize_symmetric.default
+    kwargs = {"scale_dtype": torch.float32, "out_dtype": torch.int8}
+    out = op(x, [-1], **kwargs)
+    invoke = OpInvokeInfo(op, (x, [-1]), kwargs, out)
+    properties = invoke.get_perf_properties()
+    properties.host_to_device_bytes = 4096
+    properties.host_to_device_serial = True
+    properties.extra_static_cost_count = 2
+    monkeypatch.setattr(invoke, "get_perf_properties", lambda: properties)
+
+    result = get_op_estimator(op, TEST_DEVICE.name)(invoke, TEST_DEVICE)
+    memory_time_s = result.statistics[StatsKey.MEMORY_ACCESS]
+    compute_time_s = result.statistics[StatsKey.COMPUTE]
+    h2d_time_s = result.statistics["host_to_device_time_s"]
+    expected_static_time_s = TEST_DEVICE.static_cost.gp_op_cost_s * 3
+
+    assert result.statistics["static_cost_time_s"] == pytest.approx(expected_static_time_s)
+    assert result.execution_time_s == pytest.approx(
+        h2d_time_s + memory_time_s + compute_time_s + expected_static_time_s
+    )
+
+
+def test_dynamic_quantize_symmetric_estimator_accepts_keyword_dims():
+    x = torch.empty((4, 32), device="meta", dtype=torch.bfloat16)
+    op = torch.ops.tensor_cast.dynamic_quantize_symmetric.default
+    positional_out = op(x, [-1], scale_dtype=torch.float32, out_dtype=torch.int8)
+    keyword_out = op(x, dims=[-1], scale_dtype=torch.float32, out_dtype=torch.int8)
+
+    positional = OpInvokeInfo(
+        op,
+        (x, [-1]),
+        {"scale_dtype": torch.float32, "out_dtype": torch.int8},
+        positional_out,
+    )
+    keyword = OpInvokeInfo(
+        op,
+        (x,),
+        {"dims": [-1], "scale_dtype": torch.float32, "out_dtype": torch.int8},
+        keyword_out,
+    )
+
+    positional_result = get_op_estimator(op, TEST_DEVICE.name)(positional, TEST_DEVICE)
+    keyword_result = get_op_estimator(op, TEST_DEVICE.name)(keyword, TEST_DEVICE)
+
+    assert keyword_result.execution_time_s == pytest.approx(positional_result.execution_time_s)
+    assert keyword_result.statistics["dynamic_quant_dependency_serialized"] is True
+
+
+def test_w8a8_qmm_reads_per_sample_scale_payload():
+    m, k, n = 4, 32, 16
+    x = torch.empty((m, k), device="meta", dtype=torch.int8)
+    w = torch.empty((k, n), device="meta", dtype=torch.int8)
+    w_scale = torch.empty((), device="meta", dtype=torch.float32)
+    op = torch.ops.tensor_cast.static_quant_linear.default
+
+    def memory_read_bytes(x_scale):
+        args = (x, w, w_scale, None, x_scale, None, None, torch.bfloat16)
+        out = op(*args)
+        return OpInvokeInfo(op, args, {}, out).get_perf_properties().memory_read_bytes
+
+    scalar_scale = torch.empty((), device="meta", dtype=torch.float32)
+    per_sample_scale = torch.empty((m, 1), device="meta", dtype=torch.float32)
+
+    assert memory_read_bytes(per_sample_scale) - memory_read_bytes(scalar_scale) == (m - 1) * 4
+
+
 def test_mxfp4_linear_uses_native_mma_without_int4_dequant():
     m, k, n, group_size = 4, 64, 8, 32
     k_groups = k // group_size
@@ -163,6 +279,27 @@ def test_mxfp4_linear_uses_native_mma_without_int4_dequant():
     fp_out = torch.ops.tensor_cast.fp8_linear.default(*fp_args)
     fp_properties = OpInvokeInfo(torch.ops.tensor_cast.fp8_linear.default, fp_args, {}, fp_out).get_perf_properties()
     assert torch.float32 not in fp_properties.compute_ops
+
+
+@pytest.mark.parametrize("out_dtype", [None, torch.int8])
+def test_batch_matmul_quant_requires_explicit_floating_output(out_dtype):
+    x = torch.empty((2, 1, 8), device="meta", dtype=torch.int8)
+    w = torch.empty((2, 8, 16), device="meta", dtype=torch.int8)
+    scale = torch.ones(1, device="meta")
+
+    with pytest.raises(ValueError, match="floating-point out_dtype"):
+        torch.ops.tensor_cast.batch_matmul_quant.default(x, w, scale, None, scale, None, None, out_dtype)
+
+
+def test_batch_matmul_quant_preserves_explicit_floating_output():
+    x = torch.empty((2, 1, 8), device="meta", dtype=torch.int8)
+    w = torch.empty((2, 8, 16), device="meta", dtype=torch.int8)
+    scale = torch.ones(1, device="meta")
+
+    out = torch.ops.tensor_cast.batch_matmul_quant.default(x, w, scale, None, scale, None, None, torch.bfloat16)
+
+    assert out.shape == (2, 1, 16)
+    assert out.dtype == torch.bfloat16
 
 
 def test_grouped_mxfp4_uses_the_same_native_mma_model_as_dense_linear():
@@ -681,6 +818,57 @@ def test_grouped_matmul_meta_ops_preserve_shapes_and_dtype():
     )
     assert quant_swiglu_out.shape == (2, 3)
     assert torch.ops.tensor_cast.grouped_matmul_fp8_swiglu.default([], [], [], [], [], None).shape == (0, 0)
+
+
+def test_grouped_quant_swiglu_overloads_preserve_output_contracts():
+    x = [torch.empty((2, 4), dtype=torch.int8, device="meta"), torch.empty((1, 4), dtype=torch.int8, device="meta")]
+    w = [torch.empty((4, 12), dtype=torch.int8, device="meta") for _ in x]
+    w_scale = [torch.empty((12,), device="meta") for _ in x]
+    x_scale = [torch.empty((value.shape[0],), device="meta") for value in x]
+    missing = [None] * len(x)
+    args = (x, w, w_scale, missing, x_scale, missing, missing, torch.bfloat16)
+    op = torch.ops.tensor_cast.grouped_matmul_quant_swiglu
+
+    floating = op.default(*args)
+    assert isinstance(floating, torch.Tensor)
+    assert floating.shape == (3, 6)
+    assert floating.dtype == torch.bfloat16
+
+    payload, scale = op.quantized(*args, swiglu_limit=7.0)
+    assert payload.shape == floating.shape
+    assert payload.dtype == torch.int8
+    assert scale.shape == (3,)
+    assert scale.dtype == torch.float32
+
+
+@pytest.mark.parametrize("limit", [0.0, 7.0])
+@pytest.mark.parametrize("keyword_limit", [False, True])
+def test_grouped_quant_swiglu_properties_include_native_quantization(limit, keyword_limit):
+    x = [torch.empty((2, 4), dtype=torch.int8, device="meta"), torch.empty((1, 4), dtype=torch.int8, device="meta")]
+    w = [torch.empty((4, 12), dtype=torch.int8, device="meta") for _ in x]
+    w_scale = [torch.empty((12,), device="meta") for _ in x]
+    x_scale = [torch.empty((value.shape[0],), device="meta") for value in x]
+    missing = [None] * len(x)
+    args = (x, w, w_scale, missing, x_scale, missing, missing, torch.bfloat16)
+    op = torch.ops.tensor_cast.grouped_matmul_quant_swiglu
+    base = OpInvokeInfo(op.default, args, {}, op.default(*args)).get_perf_properties()
+    quant_args = args if keyword_limit else (*args, limit)
+    kwargs = {"swiglu_limit": limit} if keyword_limit else {}
+    output = op.quantized(*quant_args, **kwargs)
+
+    props = OpInvokeInfo(op.quantized, quant_args, kwargs, output).get_perf_properties()
+
+    # Both experts perform 3 * 4 * 12 multiply-adds on INT8 inputs.
+    assert props.compute_ops[torch.int8].mma_ops == 2 * 3 * 4 * 12
+    assert props.compute_ops[torch.int8].mma_ops == base.compute_ops[torch.int8].mma_ops
+    # Each of the 18 SwiGLU outputs adds five quantization operations;
+    # enabled gate/up clipping adds four comparisons per output.
+    assert props.compute_ops[torch.bfloat16].gp_ops - base.compute_ops[torch.bfloat16].gp_ops == 18 * (
+        9 if limit > 0 else 5
+    )
+    assert props.memory_read_bytes == base.memory_read_bytes
+    # Only the INT8 payload and three FP32 row scales leave the fused kernel.
+    assert props.memory_write_bytes == 18 + 3 * 4
 
 
 def test_grouped_matmul_swiglu_meta_ops_halve_gate_up_features():

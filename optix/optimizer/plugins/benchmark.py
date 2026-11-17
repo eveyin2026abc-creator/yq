@@ -102,6 +102,23 @@ class AisBench(BenchmarkInterface):
         with open_file(self.model_config_path, "r", encoding="utf-8") as f:
             self.default_data = f.read()
 
+    def bind_service_endpoint(self, *, host, port, model):
+        """Bind this benchmark to an automatically deployed PD Proxy."""
+        from ..aisbench_endpoint import bind_endpoint
+
+        endpoint = {"host": host, "port": port, "model": model}
+        self._endpoint_original = self.model_config_path.read_bytes()
+        bind_endpoint(self._endpoint_original.decode("utf-8"), **endpoint)
+        self._service_endpoint = endpoint
+
+    def restore_service_endpoint(self):
+        """Restore the shared AISBench model config after full-service refinement."""
+        original = getattr(self, "_endpoint_original", None)
+        if original is not None:
+            self.model_config_path.write_bytes(original)
+            self._endpoint_original = None
+        self._service_endpoint = None
+
     def configure_pd_phase(self, *, phase_name, phase_config):
         """Refresh AISBench's derived model path after a phase-local command override."""
 
@@ -140,7 +157,7 @@ class AisBench(BenchmarkInterface):
         if not del_log:
             backup(self.run_log, self.bak_path, self.__class__.__name__)
 
-    def get_performance_metric(self, metric_name: str, algorithm: str = "average"):
+    def get_performance_metric(self, metric_name: str, algorithm: str = "average", *, required: bool = True):
         output_path = Path(self.config.output_path)
         result_files = glob.glob(f"{output_path}/*/performances/*/*.csv")
         if len(result_files) != 1:
@@ -166,7 +183,9 @@ class AisBench(BenchmarkInterface):
             if not _res:
                 continue
             return parse_result(_res)
-        raise ValueError(f"Not Found value.  metric_name {metric_name}, algorithm: {algorithm}")
+        if required:
+            raise ValueError(f"Not Found value.  metric_name {metric_name}, algorithm: {algorithm}")
+        return None
 
     def get_best_concurrency(self):
         output_path = Path(self.config.output_path)
@@ -202,7 +221,11 @@ class AisBench(BenchmarkInterface):
         performance_index.time_per_output_token = self.get_performance_metric(
             self.config.performance_config.time_per_output_token.metric,
             self.config.performance_config.time_per_output_token.algorithm,
+            # Single-token Prefill results omit TPOT when it cannot be measured.
+            required=get_settings().tpot_penalty != 0,
         )
+        if performance_index.time_per_output_token is None:
+            logger.debug("TPOT missing but tpot_penalty=0; accepting AISBench result without TPOT.")
         csv_files = _require_unique_csv(output_path)
         csv_path = Path(csv_files[0])
         json_file = csv_path.with_suffix(".json")
@@ -223,6 +246,12 @@ class AisBench(BenchmarkInterface):
             performance_index.generate_speed = float(output_average.split()[0])
         return performance_index
 
+    def get_measured_concurrency(self):
+        csv_files = _require_unique_csv(Path(self.config.output_path))
+        json_file = Path(csv_files[0]).with_suffix(".json")
+        with open_file(json_file, "r") as f:
+            return float(_get_aisbench_summary_value(json.load(f), "Concurrency"))
+
     def before_run(self, run_params: Optional[tuple[OptimizerConfigField]] = None):
         remove_file(Path(self.config.output_path))
         super().before_run(run_params)
@@ -239,6 +268,10 @@ class AisBench(BenchmarkInterface):
                 concurrency = rate = None
         with open_file(self.model_config_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
+        if getattr(self, "_service_endpoint", None):
+            from ..aisbench_endpoint import bind_endpoint
+
+            lines = bind_endpoint("".join(lines), **self._service_endpoint).splitlines(keepends=True)
         _request_rate_pattern = re.compile(r"(request_rate\s*=\s*)\d{1,10}(?:\.\d{1,30})?\s*,")
         _batch_size_pattern = re.compile(r"(batch_size\s*=\s*)\d{1,10}(?:\.\d{1,30})?\s*,")
         # Modify request_rate and batch_size

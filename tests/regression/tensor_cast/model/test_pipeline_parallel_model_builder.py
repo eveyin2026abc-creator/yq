@@ -39,6 +39,7 @@ from tensor_cast.core.input_generator import (
 from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics, _spec_decode_skips_runner_sampler
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import DeviceProfile
+from tensor_cast.memory_accounting import CacheMemoryEntry, CacheMemoryInventory
 from tensor_cast.model_config import (
     AttentionQuantConfig,
     DflashConfig,
@@ -96,8 +97,20 @@ class _FakeTextConfig:
 
 class _FakeTransformerModel(torch.nn.Module):
     builds: list[ModelConfig] = []
+    omitted_path_builds: list[tuple[str, ...]] = []
 
-    def __init__(self, model_id: str, model_config: ModelConfig):
+    def iter_weight_tensor_registrations(self):
+        for tensor in self.parameters():
+            yield tensor, False
+        for tensor in self.buffers():
+            yield tensor, False
+
+    def __init__(
+        self,
+        model_id: str,
+        model_config: ModelConfig,
+        omitted_paths: tuple[str, ...] = (),
+    ):
         super().__init__()
         self.model_id = model_id
         self.model_config = model_config
@@ -110,6 +123,7 @@ class _FakeTransformerModel(torch.nn.Module):
         self.weight_size = self.num_hidden_layers * 10
         self.forward_calls = []
         type(self).builds.append(model_config)
+        type(self).omitted_path_builds.append(omitted_paths)
 
     def forward(
         self,
@@ -251,6 +265,7 @@ class _RequiresIndexerCache:
 
 def _install_fake_builder(monkeypatch, model_config: ModelConfig):
     _FakeTransformerModel.builds = []
+    _FakeTransformerModel.omitted_path_builds = []
     _FakeResolver.model_config = model_config
     monkeypatch.setattr(model_builder, "ConfigResolver", _FakeResolver)
     monkeypatch.setattr(model_builder, "TransformerModel", _FakeTransformerModel)
@@ -355,10 +370,27 @@ def test_build_model_keeps_single_model_path_when_pp_size_is_one(monkeypatch):
 
 
 @pytest.mark.parametrize("pp_size", [1, 2])
+def test_language_model_only_is_noop_for_text_model(monkeypatch, pp_size):
+    world_size = 2 * pp_size
+    _install_fake_builder(monkeypatch, _make_model_config(num_layers=4, pp_size=pp_size, world_size=world_size))
+    user_input = UserInputConfig(
+        model_id="fake/model",
+        world_size=world_size,
+        tp_size=2,
+        pp_size=pp_size,
+        language_model_only=True,
+    )
+
+    model_builder.build_model(user_input)
+
+    assert _FakeTransformerModel.omitted_path_builds == [()] * pp_size
+
+
+@pytest.mark.parametrize("pp_size", [1, 2])
 def test_build_model_passes_compile_mode_to_pipeline_stages(monkeypatch, pp_size):
     _install_fake_builder(monkeypatch, _make_model_config(num_layers=4, pp_size=pp_size, world_size=4))
     monkeypatch.setattr(torch, "compile", lambda model, **_kwargs: model)
-    monkeypatch.setattr(model_builder, "get_backend", lambda **_kwargs: "eager")
+    monkeypatch.setattr("tensor_cast.compilation.get_backend", lambda **_kwargs: "eager")
     user_input = UserInputConfig(model_id="fake/model", world_size=4, tp_size=4 // pp_size, pp_size=pp_size)
     user_input.do_compile = True
 
@@ -382,6 +414,35 @@ def test_build_model_returns_real_split_pipeline_model_for_pp_size(monkeypatch):
     assert all(build.parallel_config.pipeline_parallel_size == 1 for build in builds)
     assert all(build.parallel_config.world_size == 2 for build in builds)
     assert all(build.parallel_config.data_parallel_size == 1 for build in builds)
+
+
+def test_build_model_passes_language_model_only_paths_to_every_pipeline_stage(monkeypatch):
+    model_config = _make_model_config(num_layers=4, pp_size=2, world_size=4)
+    model_config.hf_config.model_type = "fake_vl"
+    model_config.hf_config.vision_config = SimpleNamespace()
+    _install_fake_builder(monkeypatch, model_config)
+    profile = SimpleNamespace(
+        visual_module_path="model.visual",
+        language_model_only_extra_paths=("linear_proj", "image_start"),
+        language_module_path="model.language_model",
+        language_layers_path_str="model.language_model.layers",
+    )
+    monkeypatch.setattr(model_builder, "get_model_profile", lambda _model_type: profile)
+    user_input = UserInputConfig(
+        model_id="fake/model",
+        world_size=4,
+        tp_size=2,
+        pp_size=2,
+        language_model_only=True,
+    )
+
+    model = model_builder.build_model(user_input)
+
+    assert isinstance(model, PipelineModel)
+    assert _FakeTransformerModel.omitted_path_builds == [
+        ("model.visual", "linear_proj", "image_start"),
+        ("model.visual", "linear_proj", "image_start"),
+    ]
 
 
 def test_build_model_keeps_mtp_only_on_last_pipeline_stage(monkeypatch):
@@ -1102,7 +1163,7 @@ def test_build_model_allows_text_config_with_none_vision_config(monkeypatch):
     monkeypatch.setattr(
         model_builder,
         "_build_pipeline_model",
-        lambda _user_input, _model_config: pipeline_model,
+        lambda _user_input, _model_config, **_kwargs: pipeline_model,
     )
 
     assert model_builder.build_model(user_input) is pipeline_model
@@ -1144,6 +1205,47 @@ def test_pipeline_runner_remaps_stage_local_kv_and_indexer_cache():
     ] * cache_stats.indexer_cache_bytes / sum(
         bytes_of_tensor(cache) for cache in input_kwargs["indexer_cache_by_layers"].values()
     )
+
+
+def test_pipeline_stage_inventory_assigns_fixed_state_to_owning_stage():
+    model = _make_pipeline_model()
+    input_kwargs = _make_pipeline_input_kwargs()
+    entries = []
+    for layer_idx, tensor in input_kwargs["kv_cache_by_layers"].items():
+        size = bytes_of_tensor(tensor)
+        entries.append(CacheMemoryEntry(f"kv_cache_by_layers:{layer_idx}", (tensor,), size, size, layer_idx))
+    for layer_idx in (1, 2):
+        entries.append(
+            CacheMemoryEntry(
+                f"kimi_kda_state:{layer_idx}",
+                (input_kwargs["kv_cache_by_layers"][layer_idx],),
+                10 + layer_idx,
+                0,
+                layer_idx,
+            )
+        )
+    inventory = CacheMemoryInventory(tuple(entries))
+
+    _, first_stats = build_pipeline_stage_kwargs(
+        model.plan.stages[0],
+        input_kwargs,
+        cache_inventory=inventory,
+    )
+    _, second_stats = build_pipeline_stage_kwargs(
+        model.plan.stages[1],
+        input_kwargs,
+        hidden_states=torch.empty(2, 7, 16, device="meta"),
+        cache_inventory=inventory,
+    )
+
+    assert first_stats.fixed_cache_bytes == 11
+    assert second_stats.fixed_cache_bytes == 12
+    assert [entry.owner_key for entry in first_stats.inventory.entries if not entry.token_pool_bytes] == [
+        "kimi_kda_state:1"
+    ]
+    assert [entry.owner_key for entry in second_stats.inventory.entries if not entry.token_pool_bytes] == [
+        "kimi_kda_state:2"
+    ]
 
 
 def test_pipeline_stage_kwargs_remaps_mtp_tail_cache_to_last_stage():
@@ -1656,6 +1758,8 @@ def test_pipeline_runner_uses_stage_consistent_memory_accounting():
                 runtime_events=[],
                 trace_events=[],
                 peak_memory_usage_bytes=8,
+                activation_peak_bytes=5,
+                request_input_bytes=0,
                 cache_stats=PipelineStageCacheStats(kv_cache_bytes=1, indexer_cache_bytes=1),
                 weight_size_bytes=1,
             ),
@@ -1668,6 +1772,8 @@ def test_pipeline_runner_uses_stage_consistent_memory_accounting():
                 runtime_events=[],
                 trace_events=[],
                 peak_memory_usage_bytes=1,
+                activation_peak_bytes=0,
+                request_input_bytes=0,
                 cache_stats=PipelineStageCacheStats(kv_cache_bytes=4, indexer_cache_bytes=4),
                 weight_size_bytes=100,
             ),
@@ -1690,7 +1796,7 @@ def test_pipeline_runner_uses_stage_consistent_memory_accounting():
         ],
     )
 
-    assert result.peak_memory_usage_bytes == 1000
+    assert result.peak_memory_usage_bytes == 1003
     # Summary binds to the peak-max stage (stage0, peak=8 > stage1 peak=1): all
     # metrics come from stage0, so weight/kv/indexer are stage0's values (1/1/1),
     # not the global maxima on stage1 (100/4/4). Per-stage traceability is in
@@ -1719,6 +1825,8 @@ def _make_divergent_stage_results(model):
                 runtime_events=[],
                 trace_events=[],
                 peak_memory_usage_bytes=peak,
+                activation_peak_bytes=[80, 12, 0][stage_id],
+                request_input_bytes=0,
                 cache_stats=PipelineStageCacheStats(
                     kv_cache_bytes=kv,
                     kv_cache_per_token_bytes=float(kv),
@@ -1754,7 +1862,8 @@ def test_pipeline_runner_reports_peak_stage_summary():
 
 
 def test_pipeline_runner_reports_stage_consistent_activation():
-    # Activation uses same-rank terms: stage0 act = 100 - 10 - 1 - 1 = 88.
+    # Activation comes from stage-local liveness, not peak minus weight/cache.
+    # Stage0 also has 8 bytes of ordinary request inputs.
     model = _make_pipeline_model(num_layers=6, pp_size=3, world_size=6)
     runner = PipelineRunner(
         model=model,
@@ -1767,7 +1876,7 @@ def test_pipeline_runner_reports_stage_consistent_activation():
         stage_results=stage_results,
         transfer_results=[],
     )
-    assert result.model_activation_size_bytes == 88
+    assert result.model_activation_size_bytes == 80
 
 
 def test_pipeline_result_carries_per_stage_memory_breakdown():
@@ -1799,7 +1908,7 @@ def test_pipeline_result_carries_per_stage_memory_breakdown():
         "kv_cache_bytes": 1,
         "indexer_cache_bytes": 1,
         "peak_bytes": 100,
-        "activation_bytes": 88,
+        "activation_bytes": 80,
     }
     assert breakdown[1]["weight_bytes"] == 60  # stage1 weight-max, visible here
     assert breakdown[1]["stage_id"] == 1
@@ -1839,12 +1948,12 @@ def test_pipeline_runner_attributes_transfer_peak_to_source_stage():
         stage_results=stage_results,
         transfer_results=transfer_results,
     )
-    assert result.peak_memory_usage_bytes == 1000
+    assert result.peak_memory_usage_bytes == 1012
     assert result.model_weight_size_bytes == 10  # stage0 weight
     assert result.kv_cache_size_bytes == 1  # stage0 kv
-    assert result.model_activation_size_bytes == 88
+    assert result.model_activation_size_bytes == 80
     breakdown = result.stage_memory_breakdown
-    assert breakdown[0]["peak_bytes"] == 1000
+    assert breakdown[0]["peak_bytes"] == 1012
     assert breakdown[1]["peak_bytes"] == 80  # stage1, no outgoing transfer
     assert breakdown[2]["peak_bytes"] == 70  # stage2, no outgoing transfer
 
@@ -1965,6 +2074,7 @@ def test_model_runner_builds_metrics_from_pipeline_result():
         indexer_cache_size_bytes=gib // 2,
         indexer_cache_per_token_bytes=512.0,
         model_weight_size_bytes=gib,
+        model_activation_size_bytes=1.25 * gib,
     )
 
     metrics = runner._build_pipeline_metrics(
@@ -1980,7 +2090,7 @@ def test_model_runner_builds_metrics_from_pipeline_result():
     assert metrics.model_weight_size_gb == 1.0
     assert metrics.engram_host_resident_size_gb == 8.0
     assert metrics.engram_host_resident_per_rank_gb == 2.0
-    assert metrics.model_activation_size_gb == 1.5
+    assert metrics.model_activation_size_gb == 1.25
     assert metrics.device_memory_available_gb == 11.5
     assert metrics.table_result == "pipeline table"
     assert metrics.runtime_event_list == [{"name": "pipeline stage"}]
@@ -2126,6 +2236,8 @@ def _make_profile_stage_result(stage_spec, *, execution_time_s, peak, weight, kv
         runtime_events=[],
         trace_events=[],
         peak_memory_usage_bytes=peak,
+        activation_peak_bytes=8,
+        request_input_bytes=0,
         cache_stats=PipelineStageCacheStats(
             kv_cache_bytes=kv,
             kv_cache_per_token_bytes=32.5,
@@ -2218,8 +2330,8 @@ def test_pipeline_run_result_exposes_structured_profile():
     assert stage0.indexer_cache_per_token_bytes == 8.25  # float preserved
     assert stage0.runtime_peak_bytes == 104
     assert stage0.outgoing_payload_bytes == 4096
-    # activation = peak - weight - kv - indexer = 104 - 48 - 4 - 2 = 50
-    assert stage0.activation_bytes == 50
+    # Activation is the stage-local lifecycle peak (8 bytes), not a residual.
+    assert stage0.activation_bytes == 8
 
     # last stage has no outgoing transfer
     stage1 = profile.stages[1]

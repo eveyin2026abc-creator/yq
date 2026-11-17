@@ -16,7 +16,36 @@
 
 set -euo pipefail
 <%= vllm_pd.run_envs %>
-source ${PD_CANN_HOME:-/usr/local/Ascend/cann-9.0.0}/set_env.sh
+set +eu
+_cann_env=""
+if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
+    _cann_env="/usr/local/Ascend/ascend-toolkit/set_env.sh"
+elif [ -f /usr/local/Ascend/cann/set_env.sh ]; then
+    _cann_env="/usr/local/Ascend/cann/set_env.sh"
+elif compgen -G "/usr/local/Ascend/cann-*/set_env.sh" >/dev/null; then
+    _cann_env="$(ls -d /usr/local/Ascend/cann-*/set_env.sh | tail -1)"
+fi
+
+if [ -n "$_cann_env" ]; then
+    source "$_cann_env"
+    _cann_rc=$?
+    if [ "$_cann_rc" -ne 0 ]; then
+        echo "[ERROR] failed to load CANN env: $_cann_env (exit $_cann_rc)" >&2
+        exit "$_cann_rc"
+    fi
+else
+    echo "[WARN] no CANN set_env.sh matched; tried ascend-toolkit, cann, cann-*" >&2
+fi
+
+if [ -f /usr/local/Ascend/nnal/atb/set_env.sh ]; then
+    source /usr/local/Ascend/nnal/atb/set_env.sh
+    _atb_rc=$?
+    if [ "$_atb_rc" -ne 0 ]; then
+        echo "[ERROR] failed to load ATB env: /usr/local/Ascend/nnal/atb/set_env.sh (exit $_atb_rc)" >&2
+        exit "$_atb_rc"
+    fi
+fi
+set -euo pipefail
 # conda 激活：失败时告警但不终止（远端可能无 conda，回退系统 python）
 if [ -f /opt/mamba/etc/profile.d/conda.sh ]; then
     source /opt/mamba/etc/profile.d/conda.sh
@@ -54,6 +83,7 @@ ASCEND_RT_VISIBLE_DEVICES=<%= current_node.gpu_ids %> vllm serve <%= vllm.comman
     <%= vllm.command.others %> \
     --kv-transfer-config '{
         "kv_connector": "'${PD_KV_CONNECTOR:-MooncakeLayerwiseConnector}'",
+        "kv_buffer_device": "npu",
         "kv_role": "kv_producer",
         "kv_port": <%= current_node.kv_port %>,
         "engine_id": "<%= current_node.engine_id %>",

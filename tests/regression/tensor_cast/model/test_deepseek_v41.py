@@ -180,6 +180,12 @@ def test_profile_is_v41_specific_and_does_not_fallback_to_v4() -> None:
     profile = get_model_profile("deepseek_v41")
     assert profile is not None
     assert profile.model_type == "deepseek_v41"
+    assert profile.language_model_only_extra_paths == (
+        "aligner",
+        "image_start",
+        "image_end",
+        "image_newline",
+    )
     assert profile.mla_module_name == "DeepseekV41SparseAttention"
     assert profile.mla_module_class_type.__name__ == "DeepseekV41SparseAttention"
     assert profile.visual_module_path == "vision"
@@ -1085,8 +1091,7 @@ def test_v41_offload_disabled_preserves_cache_accounting():
     runner = object.__new__(ModelRunner)
     runner.user_input = SimpleNamespace()
     runner.model = SimpleNamespace(model_config=SimpleNamespace(hf_config=SimpleNamespace(model_type="deepseek_v41")))
-    assert runner._apply_kv_offload_accounting(10.0, 1024, 128, 32, 1, False, 2) == (
-        10.0,
+    assert runner._apply_kv_offload_accounting(1024, 128, 32, 1, False, 2) == (
         1152 / 1024**3,
         "none",
         0.0,

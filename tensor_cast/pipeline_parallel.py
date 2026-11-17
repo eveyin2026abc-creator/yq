@@ -28,9 +28,11 @@ from typing import Any, Optional
 import torch
 
 from . import ops  # noqa: F401
+from .core.input_generator import collect_cache_inventory, collect_cache_memory
 from .core.user_config import UserInputConfig
 from .device import DeviceProfile
 from .model_config import ModelConfig, ParallelConfig
+from .memory_accounting import CacheMemoryInventory
 from .performance_model.memory_tracker import MemoryTracker
 from .performance_model.utils import bytes_of_tensor
 from .runtime import Runtime
@@ -97,6 +99,8 @@ class PipelineStageCacheStats:
     kv_cache_per_token_bytes: float = 0.0
     indexer_cache_bytes: int = 0
     indexer_cache_per_token_bytes: float = 0.0
+    fixed_cache_bytes: int = 0
+    inventory: CacheMemoryInventory = field(default_factory=lambda: CacheMemoryInventory(()))
 
 
 @dataclass(frozen=True)
@@ -180,7 +184,8 @@ class PipelineRunResult:
     indexer_cache_size_bytes: int = 0
     indexer_cache_per_token_bytes: float = 0.0
     model_weight_size_bytes: int = 0
-    model_activation_size_bytes: Optional[float] = None
+    fixed_cache_bytes: int = 0
+    model_activation_size_bytes: float = 0.0
     stage_latency_breakdown: list[dict] = field(default_factory=list)
     stage_memory_breakdown: list[dict] = field(default_factory=list)
     trace_events: list[dict] = field(default_factory=list)
@@ -688,8 +693,8 @@ class PipelineModel(torch.nn.Module):
 
     @property
     def is_vl_model(self) -> bool:
-        """Pipeline split models are text-only in this code path."""
-        return False
+        """MiniMax carries image inputs through the first pipeline stage."""
+        return self.hf_config.model_type == "minimax_m3_vl"
 
     @property
     def hf_config(self):
@@ -770,6 +775,7 @@ def build_pipeline_stage_kwargs(
     input_kwargs: dict[str, Any],
     *,
     hidden_states: Optional[torch.Tensor] = None,
+    cache_inventory: Optional[CacheMemoryInventory] = None,
 ) -> tuple[dict[str, Any], PipelineStageCacheStats]:
     """Select and rebase global inputs for one pipeline stage."""
     if "position_ids" not in input_kwargs:
@@ -780,6 +786,9 @@ def build_pipeline_stage_kwargs(
         if "input_ids" not in input_kwargs:
             raise ValueError("The first pipeline stage requires input_ids.")
         stage_kwargs["input_ids"] = input_kwargs["input_ids"]
+        for key in ("pixel_values", "image_grid_thw"):
+            if key in input_kwargs:
+                stage_kwargs[key] = input_kwargs[key]
     else:
         if hidden_states is None:
             raise ValueError("Non-first pipeline stages require hidden_states.")
@@ -817,13 +826,40 @@ def build_pipeline_stage_kwargs(
     if stage_spec.is_last and "sampling_metadata" in input_kwargs:
         stage_kwargs["sampling_metadata"] = input_kwargs["sampling_metadata"]
 
-    kv_cache_bytes, kv_cache_per_token = cache_stats["kv_cache_by_layers"]
-    indexer_cache_bytes, indexer_cache_per_token = cache_stats["indexer_cache_by_layers"]
+    excluded = frozenset(
+        i - stage_spec.layer_start for i in kv_excluded_layers if stage_spec.layer_start <= i < stage_spec.layer_end
+    )
+    if cache_inventory is None:
+        stage_inventory = collect_cache_inventory(stage_kwargs, excluded)
+    else:
+        stage_layer_end = stage_spec.layer_end + stage_spec.extra_tail_layers + stage_spec.extra_draft_layers
+        stage_inventory = CacheMemoryInventory(
+            tuple(
+                entry
+                for entry in cache_inventory.entries
+                if entry.layer_index is not None and stage_spec.layer_start <= entry.layer_index < stage_layer_end
+            )
+        )
+    _, kv_cache_per_token = cache_stats["kv_cache_by_layers"]
+    _, indexer_cache_per_token = cache_stats["indexer_cache_by_layers"]
+    kv_cache_bytes = (
+        sum(
+            entry.token_pool_bytes
+            for entry in stage_inventory.entries
+            if entry.owner_key.startswith("kv_cache_by_layers:")
+        )
+        + stage_inventory.fixed_bytes
+    )
+    indexer_cache_bytes = sum(
+        entry.token_pool_bytes for entry in stage_inventory.entries if entry.owner_key.startswith("indexer_")
+    )
     return stage_kwargs, PipelineStageCacheStats(
         kv_cache_bytes=kv_cache_bytes,
         kv_cache_per_token_bytes=kv_cache_per_token,
         indexer_cache_bytes=indexer_cache_bytes,
         indexer_cache_per_token_bytes=indexer_cache_per_token,
+        fixed_cache_bytes=stage_inventory.fixed_bytes,
+        inventory=stage_inventory,
     )
 
 
@@ -866,10 +902,12 @@ def _slice_layer_cache(
     for layer_idx, cache in cache_by_layers.items():
         if layer_idx in excluded_layers:
             continue
-        total_bytes += int(bytes_of_tensor(cache))
+        if not getattr(cache, "tensor_cast_fixed_cache", False):
+            total_bytes += bytes_of_tensor(cache)
 
     local_cache = {}
     selected_bytes = 0
+    selected_token_bytes = 0
     for layer_idx in range(stage_spec.layer_start, layer_end):
         if allow_sparse_layers and layer_idx not in cache_by_layers:
             continue
@@ -877,15 +915,17 @@ def _slice_layer_cache(
         # The placeholder stays in local_cache for layer-indexed forward, but
         # is excluded from the stage's KV cache byte accounting.
         local_cache[layer_idx - stage_spec.layer_start] = cache
-        if layer_idx not in excluded_layers:
-            selected_bytes += int(bytes_of_tensor(cache))
+        if layer_idx not in excluded_layers or getattr(cache, "tensor_cast_fixed_cache", False):
+            selected_bytes += bytes_of_tensor(cache)
+            if not getattr(cache, "tensor_cast_fixed_cache", False):
+                selected_token_bytes += bytes_of_tensor(cache)
     global_per_token_bytes = input_kwargs.get(metric_key, 0.0)
     if total_bytes <= 0 or global_per_token_bytes <= 0:
         return local_cache, selected_bytes, 0.0
     return (
         local_cache,
         selected_bytes,
-        float(global_per_token_bytes) * selected_bytes / total_bytes,
+        float(global_per_token_bytes) * selected_token_bytes / total_bytes,
     )
 
 
@@ -912,6 +952,8 @@ class _PipelineStageRunResult:
     cache_stats: PipelineStageCacheStats
     peak_memory_usage_bytes: float
     weight_size_bytes: int
+    activation_peak_bytes: int = 0
+    request_input_bytes: int = 0
 
 
 @dataclass
@@ -960,6 +1002,8 @@ class StageRunner:
             raise ValueError("StageRunner.run requires sampling_metadata on the last stage when with_sampler=True.")
 
         memory_tracker = MemoryTracker(self.device_profile)
+        inventory = cache_stats.inventory
+        memory_tracker.register_model_memory(self.stage.model, inventory)
         with (
             Runtime(
                 self.perf_models,
@@ -970,11 +1014,15 @@ class StageRunner:
         ):
             output = _primary_model_output(self.stage(**stage_kwargs))
             if with_sampler:
-                _ = sampler(output, stage_kwargs["sampling_metadata"])
+                sampled = sampler(output, stage_kwargs["sampling_metadata"])
+                memory_tracker.register_model_outputs(sampled)
+            memory_tracker.register_model_outputs(output)
 
         if runtime_observer is not None:
             runtime_observer(runtime)
 
+        memory = memory_tracker.get_forward_memory_summary()
+        stage_weight_bytes = int(self.stage.weight_size)
         return _PipelineStageRunResult(
             stage_spec=self.stage_spec,
             output=output,
@@ -993,8 +1041,12 @@ class StageRunner:
                 thread_name=f"PP Stage {self.stage_spec.stage_id}",
             ),
             cache_stats=cache_stats,
-            peak_memory_usage_bytes=_safe_peak_memory_usage(memory_tracker),
-            weight_size_bytes=int(self.stage.weight_size),
+            peak_memory_usage_bytes=memory.peak_memory_bytes(
+                stage_weight_bytes, cache_stats.kv_cache_bytes + cache_stats.indexer_cache_bytes
+            ),
+            activation_peak_bytes=memory.activation_peak_bytes,
+            request_input_bytes=memory.request_input_bytes,
+            weight_size_bytes=stage_weight_bytes,
         )
 
 
@@ -1193,12 +1245,14 @@ class PipelineRunner:
         transfers: list[_PipelineTransferRunResult] = []
         hidden_states = None
         logits = None
+        cache_inventory = collect_cache_memory(self.model, input_kwargs)
 
         for stage_runner in self.stage_runners:
             stage_kwargs, cache_stats = build_pipeline_stage_kwargs(
                 stage_runner.stage_spec,
                 input_kwargs,
                 hidden_states=hidden_states,
+                cache_inventory=cache_inventory,
             )
             stage_result = stage_runner.run(
                 stage_kwargs,
@@ -1248,13 +1302,21 @@ class PipelineRunner:
         # Attribute transfer workspace to the source stage so top-level peak and
         # per-stage breakdown stay rank-consistent.
         outgoing_transfer_peak = _stage_outgoing_transfer_peak(transfer_results)
-        effective_peak = {
-            result.stage_spec.stage_id: max(
-                float(result.peak_memory_usage_bytes),
-                float(outgoing_transfer_peak.get(result.stage_spec.stage_id, 0.0)),
-            )
-            for result in stage_results
-        }
+        effective_peak = {}
+        for result in stage_results:
+            stage_id = result.stage_spec.stage_id
+            peak = float(result.peak_memory_usage_bytes)
+            if stage_id in outgoing_transfer_peak:
+                resident = (
+                    result.weight_size_bytes
+                    + result.cache_stats.kv_cache_bytes
+                    + result.cache_stats.indexer_cache_bytes
+                )
+                peak = max(
+                    peak,
+                    resident + result.request_input_bytes + outgoing_transfer_peak[stage_id],
+                )
+            effective_peak[stage_id] = peak
         summary_stage = max(
             stage_results,
             key=lambda result: effective_peak.get(result.stage_spec.stage_id, 0.0),
@@ -1263,7 +1325,7 @@ class PipelineRunner:
         summary_stage_id = summary_stage.stage_spec.stage_id if summary_stage is not None else None
         summary_peak_bytes = effective_peak.get(summary_stage_id, 0.0) if summary_stage is not None else 0.0
         summary_cache_stats = summary_stage.cache_stats if summary_stage is not None else PipelineStageCacheStats()
-        summary_activation_bytes = _stage_activation_memory_bytes(summary_stage)
+        summary_activation_bytes = float(summary_stage.activation_peak_bytes) if summary_stage is not None else 0.0
         stage_latency_breakdown = _stage_latency_breakdown_entries(stage_results, transfers)
         stage_memory_breakdown = [
             _stage_memory_breakdown_entry(result, effective_peak.get(result.stage_spec.stage_id, 0.0))
@@ -1290,6 +1352,7 @@ class PipelineRunner:
             ),
             peak_memory_usage_bytes=summary_peak_bytes,
             kv_cache_size_bytes=summary_cache_stats.kv_cache_bytes,
+            fixed_cache_bytes=summary_cache_stats.fixed_cache_bytes,
             kv_cache_per_token_bytes=summary_cache_stats.kv_cache_per_token_bytes,
             indexer_cache_size_bytes=summary_cache_stats.indexer_cache_bytes,
             indexer_cache_per_token_bytes=summary_cache_stats.indexer_cache_per_token_bytes,
@@ -1467,25 +1530,6 @@ def _transfer_time_s_for_stage_latency(transfer: PipelineTransferStats, model_na
     return 0.0
 
 
-def _stage_activation_memory_bytes(result: Any) -> float:
-    """Stage-local activation = peak - weight - kv - indexer, clamped to >= 0.
-
-    All four terms come from the same stage, so the subtraction is physically
-    meaningful (unlike the cross-stage ``peak - kv - weight`` in model_runner,
-    which can mix different ranks and fabricate a non-existent rank).
-    """
-    if result is None:
-        return 0.0
-    cache_stats = result.cache_stats
-    return max(
-        0.0,
-        float(result.peak_memory_usage_bytes)
-        - float(result.weight_size_bytes)
-        - float(cache_stats.kv_cache_bytes)
-        - float(cache_stats.indexer_cache_bytes),
-    )
-
-
 def _stage_memory_breakdown_entry(result: Any, effective_peak_bytes: float = 0.0) -> dict:
     """Build a per-stage memory breakdown dict for the summary stage list.
 
@@ -1509,7 +1553,7 @@ def _stage_memory_breakdown_entry(result: Any, effective_peak_bytes: float = 0.0
         "kv_cache_bytes": int(cache_stats.kv_cache_bytes),
         "indexer_cache_bytes": int(cache_stats.indexer_cache_bytes),
         "peak_bytes": int(max(runtime_peak, float(effective_peak_bytes))),
-        "activation_bytes": int(_stage_activation_memory_bytes(result)),
+        "activation_bytes": int(result.activation_peak_bytes),
     }
 
 
@@ -1585,7 +1629,7 @@ def _build_pipeline_profile(
                 compute_time_s_by_model=compute_by_model,
                 outgoing_comm_time_s_by_model=outgoing_by_model,
                 weight_bytes=int(result.weight_size_bytes),
-                activation_bytes=int(_stage_activation_memory_bytes(result)),
+                activation_bytes=int(result.activation_peak_bytes),
                 kv_cache_bytes=int(cache_stats.kv_cache_bytes),
                 kv_cache_per_token_bytes=float(cache_stats.kv_cache_per_token_bytes),
                 indexer_cache_bytes=int(cache_stats.indexer_cache_bytes),

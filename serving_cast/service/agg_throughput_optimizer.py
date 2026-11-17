@@ -15,6 +15,7 @@
 # -------------------------------------------------------------------------
 
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass, replace
 
@@ -32,6 +33,8 @@ from .optimizer_summary import (
 from .scheduler import DecodeFirstWithSlack
 from .utils import (
     AGG_COLUMNS,
+    IMAGE_CACHE_COLUMNS,
+    IMAGE_COLUMNS,
     format_parallel_label,
     MemoryInfo,
     OptimizerData,
@@ -158,6 +161,16 @@ class _ChunkedAggMetrics:
     mixed_steps: int = 0
     decode_latency_source: str = "exact"
 
+    @property
+    def kv_cache_size_gb(self) -> float:
+        """KV-cache size for the per-request memory budget (PR #906 review #2).
+
+        Missing hand-built PP memory records contribute zero rather than NaN.
+        """
+        info = self.memory_info or {}
+        value = info.get("forward_kv_cache_size_gb", info.get("kv_cache_size_gb", 0.0))
+        return 0.0 if math.isnan(value) else value
+
 
 class AggThroughputOptimizer(BaseThroughputOptimizer):
     name = "aggregation"
@@ -173,6 +186,7 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             enable_static_capture(model_runner)
 
     def get_inference_info(self, optimizer_data: OptimizerData) -> OptimizerSummary:
+        cache_stats = self._prepare_multimodal_cache(optimizer_data) or {}
         max_batched_tokens = optimizer_data.max_batched_tokens
         batch_size = optimizer_data.batch_size
         input_length = optimizer_data.input_length
@@ -181,22 +195,47 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
         # global_concurrency = batch_size * DP (PP does not add replicas).
         concurrency = batch_size * self.dp
         variable_input_mode = optimizer_data.length_distribution is not None
+        # P1-02 / review F1: a mixed distribution must charge each bin only its
+        # own images, so the per-row budget (when available) drives both the
+        # chunk plan and the timeline.
+        image_budgets = self._image_tokens_per_row(optimizer_data)
+        scalar_image_budget = max(image_budgets) if image_budgets else self._image_tokens_per_request(optimizer_data)
         chunk_plan = optimizer_data.get_prefill_chunk_plan(
-            (concurrency + self.dp - 1) // self.dp if variable_input_mode else None
+            (concurrency + self.dp - 1) // self.dp if variable_input_mode else None,
+            image_tokens_per_request=image_budgets if image_budgets is not None else scalar_image_budget,
         )
         prefill_num_chunks = optimizer_data.get_prefill_num_chunks(chunk_plan)
 
         composition_rows = []
         if self.pp > 1:
-            metrics = self._get_pp_timeline_metrics(optimizer_data, concurrency=concurrency)
+            metrics = self._get_pp_timeline_metrics(
+                optimizer_data,
+                concurrency=concurrency,
+                image_tokens_per_request=scalar_image_budget,
+                image_tokens_per_row=image_budgets,
+            )
         else:
-            metrics = self._get_timeline_metrics(optimizer_data, concurrency)
+            metrics = self._get_timeline_metrics(
+                optimizer_data,
+                concurrency,
+                image_tokens_per_request=scalar_image_budget,
+                image_tokens_per_row=image_budgets,
+            )
         if variable_input_mode:
             prefill_num_chunks = max(len(request.chunks) for request in self._last_aggregation_timeline.requests)
             composition_rows = optimizer_data.build_concurrency_samples(batch_size)
             composition_rows = [dict(row, samples=row["samples"] * self.dp) for row in composition_rows]
 
-        memory_left = metrics.memory_left_gb
+        # The multimodal cache is a static startup reservation, so a candidate
+        # is only deployable when its headroom covers the reservation on top of
+        # the timeline's own peak. Charge it exactly once, here, where the
+        # feasibility verdict (early stop / OOM) is taken. Sharing
+        # ``_multimodal_cache_reservation_bytes`` with the simulated cache keeps
+        # one budget source; the PP path's per-stage minimum already covers the
+        # worst stage, so no extra per-stage loop is needed.
+        cache_reservation_gb = self._multimodal_cache_reservation_bytes(optimizer_data) / 1024**3
+        memory_left = metrics.memory_left_gb - cache_reservation_gb
+        prefill_memory_left = metrics.prefill_memory_left_gb - cache_reservation_gb
         token_s_device = metrics.output_throughput / self.dp / self.pp / self.tp
         parallel = format_parallel_label(
             self.model_runner.model.model_config.parallel_config,
@@ -233,15 +272,41 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             concurrency,
             parallel,
             memory_left,
-            metrics.prefill_memory_left_gb,
+            prefill_memory_left,
         )
         summary = OptimizerSummary(optimizer_data)
         memory_info = getattr(metrics, "memory_info", None)
         if memory_info:
+            # Copy before rewriting: the tightest record can come from a cached
+            # forward/PP record, so mutating it in place would corrupt the cache.
+            memory_info = dict(memory_info)
+            memory_info["device_memory_available_gb"] = memory_left
             summary.set_memory_info(memory_info)
         if getattr(metrics, "pp_mixed_pd_overlap_approx", False):
             summary.set_pp_mixed_pd_overlap_approx(True)
-        columns = AGG_COLUMNS.copy()
+        # P1-05: the vision-encoder accounting of this candidate, derived from
+        # the same plan the forward uses (deterministic per candidate). These
+        # columns only exist for an image-bearing workload, so a text-only run
+        # keeps the historical result schema (review: stormchasingg).
+        image_columns = (
+            list(IMAGE_COLUMNS) + list(IMAGE_CACHE_COLUMNS) if self._has_image_workload(optimizer_data) else []
+        )
+        if image_columns:
+            encoder_waves, vision_time_ms = self._encoder_row_accounting(optimizer_data, concurrency)
+            # Images whose vision actually came from the cache: a request only
+            # skips the tower when every one of its images hit, so a partial
+            # hit contributes 0 here even though it counts in image_hits. A
+            # scalar (non-distribution) workload has no bins to inspect.
+            vision_saved = 0
+            if optimizer_data.length_distribution is not None:
+                vision_saved = sum(
+                    len(row["images"])
+                    for row in optimizer_data.get_representative_rows()
+                    if row.get("images") and int(row.get("cached_images", 0)) >= len(row["images"])
+                )
+        else:
+            encoder_waves, vision_time_ms, vision_saved = 1, 0.0, 0
+        columns = AGG_COLUMNS.copy() + image_columns
         data = [
             self.model_runner.user_input.device,
             optimizer_data.num_devices,
@@ -266,6 +331,19 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             memory_info["kv_cache_size_gb"] if memory_info else float("nan"),
             memory_info["model_activation_size_gb"] if memory_info else float("nan"),
             memory_info["device_memory_available_gb"] if memory_info else float("nan"),
+            *(
+                [
+                    encoder_waves,
+                    vision_time_ms,
+                    cache_stats.get("image_hits", 0),
+                    cache_stats.get("image_misses", 0),
+                    round(cache_stats.get("resident_bytes", 0) / 1024**3, 3),
+                    round(cache_stats.get("reserved_bytes", 0) / 1024**3, 3),
+                    vision_saved,
+                ]
+                if image_columns
+                else []
+            ),
         ]
         columns.append("qps")
         data.append(metrics.output_throughput / output_length)
@@ -294,23 +372,77 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
         result_df = pd.DataFrame(columns=columns, data=rows).round(3)
         summary.set_summary_df(result_df)
         early_stop_reason = None
-        if metrics.prefill_memory_left_gb < 0:
+        if prefill_memory_left < 0:
             early_stop_reason = EARLY_STOP_PREFILL_OOM
         elif memory_left < 0:
             early_stop_reason = EARLY_STOP_DECODE_OOM
         summary.set_early_stop_flag(memory_left, metrics.tpot, metrics.ttft, reason=early_stop_reason)
 
-        self._maybe_set_search_info(optimizer_data, memory_left, batch_size, metrics.ttft, metrics.tpot, summary)
+        self._maybe_set_search_info(
+            optimizer_data,
+            memory_left,
+            batch_size,
+            metrics.ttft,
+            metrics.tpot,
+            summary,
+            static_reservation_gb=cache_reservation_gb,
+        )
 
         return summary
 
-    def _get_pp_timeline_metrics(self, data: OptimizerData, *, concurrency: int) -> _ChunkedAggMetrics:
-        """Schedule variable or fixed requests through PP stages to completion."""
+    def _get_pp_timeline_metrics(
+        self,
+        data: OptimizerData,
+        *,
+        concurrency: int,
+        image_tokens_per_request: int = 0,
+        image_tokens_per_row: list[int] | None = None,
+    ) -> _ChunkedAggMetrics:
+        """Schedule variable or fixed requests through PP stages to completion.
+
+        ``image_tokens_per_request`` mirrors the PP=1 timeline contract:
+        request lengths already include the image token budget, so
+        forward keys declare ``image_tokens_included`` and only each request's
+        first prefill chunk carries the image forward inputs (the vision
+        tower runs once per request; review: zhenghaojie - without this the
+        heterogeneous varlen steps silently dropped the image tokens while
+        homogeneous steps re-added them, splitting one report across two
+        incompatible contracts).
+        """
         from .aggregation_timeline import RequestShape, build_requests, page_tokens, simulate_pipeline
 
         runner = self.model_runner
+        has_image = image_tokens_per_request > 0
+        # Resolve the per-request image count the same way the budget planner
+        # does: when image_batch_size is not set explicitly the resolver
+        # returns the distribution default (1) or the search batch_size, and
+        # feeding the raw None into the image-bearing RequestInfo /
+        # forward_image would desynchronize the already-counted length budget
+        # from the actual image inputs (review: lutean).
+        resolved_image_batch_size = self._resolve_image_batch_size(data) if has_image else None
         local_concurrency = concurrency // self.dp
-        requests = build_requests(data, local_concurrency)
+        requests = build_requests(
+            data,
+            local_concurrency,
+            image_tokens_per_request=image_tokens_per_request,
+            image_tokens_per_row=image_tokens_per_row,
+        )
+        # The cache key pairs the phase shapes (which now carry the
+        # carries_image flag, so image-bearing and text-only steps never
+        # collide) with the image geometry: the step cache survives across
+        # search candidates, and a second candidate with a different
+        # image_batch_size/height/width must not reuse the first candidate's
+        # profile (review: AvadaKedavrua). The resolved count also makes the
+        # key express the fixed-length fallback that varies with the search
+        # batch_size.
+        forward_images = tuple(data.distribution_images) if (has_image and data.distribution_images) else None
+        image_geometry = (
+            resolved_image_batch_size,
+            data.image_height,
+            data.image_width,
+            self._image_template_fingerprint(forward_images),
+        )
+
         decode_query_len, _ = self._resolve_forward_shape(data, True)
         decode_query_len = max(
             decode_query_len,
@@ -341,24 +473,60 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             mixed = any(s.is_decode for s in shapes) and any(not s.is_decode for s in shapes)
 
             def phase_profile(phase_shapes):
-                if phase_shapes not in self._pp_step_cache:
-                    batch = [RequestInfo(s.query_len, s.seq_len, is_decode=s.is_decode) for s in phase_shapes]
+                step_key = (image_geometry, phase_shapes)
+                if step_key not in self._pp_step_cache:
+                    batch = [
+                        RequestInfo(
+                            s.query_len,
+                            s.seq_len,
+                            is_decode=s.is_decode,
+                            image_tokens_included=has_image and not s.is_decode,
+                            image_batch_size=resolved_image_batch_size if s.carries_image else None,
+                            image_height=data.image_height if s.carries_image else None,
+                            image_width=data.image_width if s.carries_image else None,
+                            # Heterogeneous templates cannot be expressed by the
+                            # scalar triple, so forward the per-request specs; without
+                            # them the image-bearing step ran as a longer text-only
+                            # forward and the vision cost vanished silently
+                            # (review: stormchasingg).
+                            images=forward_images if s.carries_image else None,
+                        )
+                        for s in phase_shapes
+                    ]
                     if all(shape == phase_shapes[0] for shape in phase_shapes):
                         shape = phase_shapes[0]
+                        image_kwargs = {}
+                        if has_image and not shape.is_decode:
+                            if shape.carries_image:
+                                if forward_images:
+                                    image_kwargs["forward_images"] = forward_images
+                                else:
+                                    image_kwargs["forward_image"] = (
+                                        resolved_image_batch_size,
+                                        data.image_height,
+                                        data.image_width,
+                                    )
+                            else:
+                                # Preserve the explicit "no image on this chunk"
+                                # contract: omitting the argument would fall back
+                                # to resolving the scalar triple from the data.
+                                image_kwargs["forward_image"] = (None, None, None)
                         metrics = self._get_forward_info(
                             len(batch) * self.dp,
                             data,
                             shape.is_decode,
                             query_len=shape.query_len,
                             seq_len=shape.seq_len,
+                            image_tokens_included=has_image and not shape.is_decode,
+                            **image_kwargs,
                         )
                     else:
                         metrics = runner.run_inference(batch, generate_inputs_func=generate_inputs_varlen)
                     profile = getattr(metrics, "pipeline_profile", None)
                     if profile is None:
                         raise RuntimeError("PP aggregation requires a pipeline profile for every selected microbatch")
-                    self._pp_step_cache[phase_shapes] = profile
-                return self._pp_step_cache[phase_shapes]
+                    self._pp_step_cache[step_key] = profile
+                return self._pp_step_cache[step_key]
 
             if mixed:
                 prefill_shapes = tuple(s for s in shapes if not s.is_decode)
@@ -462,8 +630,33 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
             mixed_steps=mixed_steps,
         )
 
-    def _get_timeline_metrics(self, data, concurrency):
-        """Run one replica's finite batch and scale completion counts by DP."""
+    @staticmethod
+    def _image_template_fingerprint(forward_images) -> tuple | None:
+        """Stable fingerprint of a heterogeneous per-request image template.
+
+        Two candidates with the same token total but different image sizes must
+        not share a cached PP/mixed step profile (review: stormchasingg).
+        """
+        if not forward_images:
+            return None
+        return tuple((spec.height, spec.width, spec.image_id) for spec in forward_images)
+
+    def _get_timeline_metrics(
+        self,
+        data,
+        concurrency,
+        image_tokens_per_request: int = 0,
+        image_tokens_per_row: list[int] | None = None,
+    ):
+        """Run one replica's finite batch and scale completion counts by DP.
+
+        ``image_tokens_per_request`` consumes the image-aware chunk-plan
+        contract: request lengths already include the image token
+        budget, so forward keys declare ``image_tokens_included`` and only
+        the first chunk of each request carries the image forward inputs
+        (the vision tower runs once per request; review: zhangzhenyu
+        round 7 P1).
+        """
         from .aggregation_timeline import RequestShape, build_requests, page_tokens, simulate
 
         runner = self.model_runner
@@ -474,8 +667,32 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
                 "enable_decode_kv_offload",
             )
         )
+        has_image = image_tokens_per_request > 0
+        # Resolve the per-request image count the same way the budget planner
+        # and the homogeneous forward key do, so the heterogeneous varlen rows
+        # and the mixed-record cache never see the raw (possibly None)
+        # image_batch_size the user left unset (review: lutean).
+        resolved_image_batch_size = self._resolve_image_batch_size(data) if has_image else None
         local_concurrency = concurrency // self.dp
-        requests = build_requests(data, local_concurrency)
+        requests = build_requests(
+            data,
+            local_concurrency,
+            image_tokens_per_request=image_tokens_per_request,
+            image_tokens_per_row=image_tokens_per_row,
+        )
+        # The mixed-record cache pairs the shapes (whose RequestShape entries
+        # carry the carries_image flag) with the image geometry so search
+        # candidates with different image inputs never share a record
+        # (review: AvadaKedavrua). The resolved count also makes the key
+        # express the fixed-length fallback that varies with the search
+        # batch_size.
+        forward_images = tuple(data.distribution_images) if (has_image and data.distribution_images) else None
+        image_geometry = (
+            resolved_image_batch_size,
+            data.image_height,
+            data.image_width,
+            self._image_template_fingerprint(forward_images),
+        )
         query_len, _ = self._resolve_forward_shape(data, True)
         reserved_shapes = tuple(
             RequestShape(True, query_len, request.prompt_length + data.output_length + query_len)
@@ -507,21 +724,35 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
                     shape.is_decode,
                     query_len=shape.query_len,
                     seq_len=shape.seq_len,
+                    image_tokens_included=has_image and not shape.is_decode,
+                    carry_image_input=shape.carries_image,
                 )
                 return self._compute_forward_latency_record(key, data)
-            if shapes not in self._mixed_record_cache:
-                batch = [RequestInfo(s.query_len, s.seq_len, is_decode=s.is_decode) for s in shapes]
+            mixed_key = (image_geometry, shapes)
+            if mixed_key not in self._mixed_record_cache:
+                batch = [
+                    RequestInfo(
+                        s.query_len,
+                        s.seq_len,
+                        is_decode=s.is_decode,
+                        image_tokens_included=has_image and not s.is_decode,
+                        image_batch_size=resolved_image_batch_size if s.carries_image else None,
+                        image_height=data.image_height if s.carries_image else None,
+                        image_width=data.image_width if s.carries_image else None,
+                    )
+                    for s in shapes
+                ]
                 metrics = runner.run_inference(batch, generate_inputs_func=generate_inputs_varlen)
-                self._mixed_record_cache[shapes] = self._build_forward_latency_record(metrics)
+                self._mixed_record_cache[mixed_key] = self._build_forward_latency_record(metrics)
                 logger.info(
                     "Heterogeneous Forward Latency: %.4f ms, batch=%d, prefill=%d, decode=%d, query_tokens=%d",
-                    self._mixed_record_cache[shapes].latency_ms,
+                    self._mixed_record_cache[mixed_key].latency_ms,
                     len(shapes),
                     sum(not s.is_decode for s in shapes),
                     sum(s.is_decode for s in shapes),
                     sum(s.query_len for s in shapes),
                 )
-            return self._mixed_record_cache[shapes]
+            return self._mixed_record_cache[mixed_key]
 
         def pure_decode_record(shape, count):
             """Interpolate latency between measured powers of two; bound memory above."""
@@ -627,6 +858,8 @@ class AggThroughputOptimizer(BaseThroughputOptimizer):
                     full_kv = reserved_kv
                 extra_kv = max(0.0, full_kv - info["kv_cache_size_gb"])
                 info = dict(info)
+                # The derived-resident account comes from the forward, before timeline reservations.
+                info["forward_kv_cache_size_gb"] = info["kv_cache_size_gb"]
                 info["kv_cache_size_gb"] += extra_kv
                 info["device_memory_available_gb"] -= extra_kv
                 return replace(phase_record, memory_left_gb=phase_record.memory_left_gb - extra_kv, memory_info=info)

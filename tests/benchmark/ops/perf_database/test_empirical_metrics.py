@@ -817,6 +817,18 @@ class TestModelRunnerProfilingMetrics:
         pm = self._make_empirical_pm(hit_shapes=set())
 
         class FakeMemoryTracker:
+            def register_model_memory(self, _model, _inventory):
+                pass
+
+            def register_model_outputs(self, _outputs):
+                pass
+
+            def get_forward_memory_summary(self):
+                return SimpleNamespace(
+                    activation_peak_bytes=0,
+                    peak_memory_bytes=lambda weight_bytes, cache_bytes: weight_bytes + cache_bytes,
+                )
+
             def peak_mem_usage(self):
                 return 0
 
@@ -843,6 +855,15 @@ class TestModelRunnerProfilingMetrics:
         class FakeModel:
             model_config = SimpleNamespace(parallel_config=SimpleNamespace(data_parallel_size=1))
 
+            def named_parameters(self, **_kwargs):
+                return iter([])
+
+            def named_buffers(self, **_kwargs):
+                return iter([])
+
+            def modules(self):
+                return iter([])
+
             def forward(self, **_kwargs):
                 pm.op_records.append(
                     EmpiricalOpRecord(
@@ -856,9 +877,12 @@ class TestModelRunnerProfilingMetrics:
 
         monkeypatch.setattr(model_runner_module, "Runtime", FakeRuntime)
         monkeypatch.setattr(model_runner_module, "MemoryTracker", lambda _device: FakeMemoryTracker())
-        monkeypatch.setattr(model_runner_module, "kv_cache_excluded_layer_indices", lambda _model: set())
+        monkeypatch.setattr(
+            model_runner_module,
+            "collect_cache_memory",
+            lambda _model, _kwargs: SimpleNamespace(entries=(), fixed_bytes=0),
+        )
         monkeypatch.setattr(model_runner_module, "dcp_kv_token_capacity_factor", lambda _model: 1)
-        monkeypatch.setattr(model_runner_module, "get_visual", lambda _model: None)
 
         runner = object.__new__(ModelRunner)
         runner.perf_models = [pm]

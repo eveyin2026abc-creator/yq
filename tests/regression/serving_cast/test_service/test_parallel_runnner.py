@@ -14,6 +14,7 @@
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
 
+import logging
 import unittest
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -27,6 +28,7 @@ from serving_cast.service.optimizer_summary import OptimizerSummary
 from serving_cast.service.utils import LengthBin, LengthDistribution, OptimizerData, UnsupportedPPConfigurationError
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import DeviceProfile
+from tensor_cast.layers.parallel_linear import InvalidHeadParallelismError
 from tests.helpers.model_assets import vendored_model_config_path
 
 from .test_common import SimpleArgs
@@ -54,6 +56,22 @@ class RuntimeErrorExecutor:
                 raise BrokenProcessPool
 
         return BrokenResultIterator()
+
+
+def test_invalid_head_candidate_is_skipped_without_error_log(caplog):
+    args = SimpleArgs()
+    task_runner = ParallelRunner(args)
+    user_config = UserInputConfig.from_args(args)
+
+    with patch(
+        "tensor_cast.core.model_runner.ModelRunner",
+        side_effect=InvalidHeadParallelismError("head_num=3 cannot be sharded over tp_size=2"),
+    ):
+        assert task_runner._get_model_runnner(user_config) is None
+
+    assert not any(
+        record.levelno >= logging.ERROR and record.name == "serving_cast.parallel_runner" for record in caplog.records
+    )
 
 
 class TestTaskRunner(unittest.TestCase):
@@ -1236,3 +1254,37 @@ class TestParallelRunnerPDMode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_runner_creation_preserves_template_switch(enabled):
+    from types import SimpleNamespace
+
+    runner = object.__new__(ParallelRunner)
+    runner.args = SimpleNamespace(template_graph_optimization=enabled)
+    user_input = SimpleNamespace(model_id="example/model", pp_size=1)
+    with patch("template_engine.runner_bridge.create_runner") as create:
+        assert runner._get_model_runnner(user_input) is create.return_value
+    create.assert_called_once_with(user_input, enabled=enabled)
+
+
+@pytest.mark.parametrize("pp_size", [1, 2])
+@pytest.mark.parametrize("error_kind", ["unsupported_pp", "unexpected"])
+def test_runner_without_args_preserves_build_error_policy(pp_size, error_kind, caplog):
+    from types import SimpleNamespace
+
+    runner = object.__new__(ParallelRunner)
+    user_input = SimpleNamespace(model_id="example/model", pp_size=pp_size)
+    error = (
+        UnsupportedPPConfigurationError("unsupported")
+        if error_kind == "unsupported_pp"
+        else RuntimeError("build failed")
+    )
+    with patch("serving_cast.parallel_runner.ModelRunner", side_effect=error):
+        if error_kind == "unexpected" and pp_size > 1:
+            with pytest.raises(RuntimeError, match="build failed") as caught:
+                runner._get_model_runnner(user_input)
+            assert caught.value is error
+        else:
+            assert runner._get_model_runnner(user_input) is None
+    assert "example/model" in caplog.text

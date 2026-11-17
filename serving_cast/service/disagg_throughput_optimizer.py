@@ -31,6 +31,7 @@ from .optimizer_summary import (
 )
 from .utils import (
     DISAGG_COLUMNS,
+    IMAGE_COLUMNS,
     build_memory_info,
     format_breakdowns,
     format_parallel_label,
@@ -161,8 +162,15 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
             chunk_plan = []
             global_batched_token_limit = None
         else:
+            # Same per-bin contract as the aggregation path: a text-only bin
+            # must not inherit another bin's image budget (review:
+            # zhenyu_zhang).
+            per_row_budgets = self._image_tokens_per_row(optimizer_data)
             chunk_plan = optimizer_data.get_prefill_chunk_plan(
-                (concurrency + self.dp - 1) // self.dp if variable_input_mode else None
+                (concurrency + self.dp - 1) // self.dp if variable_input_mode else None,
+                image_tokens_per_request=(
+                    per_row_budgets if per_row_budgets is not None else self._image_tokens_per_request(optimizer_data)
+                ),
             )
             global_batched_token_limit = self._get_global_batched_token_limit(optimizer_data)
 
@@ -186,13 +194,26 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
             )
 
         if decode_flag or variable_input_mode or unbounded_prefill or single_prefill_fits_budget:
-            if variable_input_mode:
+            # A decode step with a length distribution must not go through the
+            # chunked-prefill loop: it has no prefill chunks to replay, so the
+            # loop contributes nothing and TPOT collapses to serving_cost (0 for
+            # PD ratio), which then empties the D frame and the whole PD join.
+            # The scalar path below resolves the decode shape from the
+            # distribution's weighted context length instead.
+            if variable_input_mode and not decode_flag:
                 chunk_results, composition_rows = self._get_batched_forward_info(
                     concurrency,
                     optimizer_data,
                     chunk_plan,
                 )
-                latency_ms = optimizer_data.serving_cost
+                # Encoder budget (P1-05): the batched forward runs the vision
+                # tower once, so the waves beyond the first are charged here as a
+                # phase overhead. Without this the disaggregated prefill path
+                # ignored --encoder-budget while the aggregation path honoured it
+                # (review: zhenyu_zhang F4).
+                latency_ms = optimizer_data.serving_cost + self._extra_vision_wave_ms(
+                    optimizer_data, concurrency, chunk_plan=chunk_plan
+                )
                 device_memory_available_gb = float("inf")
                 memory_info = None
                 breakdown_sums = {}
@@ -298,6 +319,12 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
                         decode_flag,
                         query_len=chunk.query_len,
                         seq_len=chunk.seq_len,
+                        # Chunk lengths already include the image token
+                        # budget; every request in this wave is on its first
+                        # chunk position, so each wave's forward carries its
+                        # own requests' image inputs exactly once.
+                        image_tokens_included=True,
+                        carry_image_input=chunk.is_first_chunk,
                     )
                     wave_keys.append(wave_key)
                     wave_specs.append(
@@ -391,7 +418,11 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
                 # OOM/partial replay has no complete request-level TTFT estimate. Keep the
                 # phase latency for diagnostics; memory-based early stop takes precedence.
                 ttft = latency_ms
-            output_throughput = total_input_tokens / latency_ms * 1000 if latency_ms > 0 else 0
+            # Keep PP=1 Prefill throughput on the same request-level time base
+            # as TTFT. The phase makespan remains available as a diagnostic
+            # column, while TTFT is the request-weighted completion time used
+            # for both the SLO and the reported Prefill rate.
+            output_throughput = total_input_tokens / ttft * 1000 if ttft > 0 else 0
 
         token_s_device = output_throughput / self.dp / self.pp / self.tp
         parallel = format_parallel_label(
@@ -427,7 +458,19 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
         summary = OptimizerSummary(optimizer_data)
         if memory_info:
             summary.set_memory_info(memory_info)
-        columns = DISAGG_COLUMNS.copy()
+        # P1-42/P1-05: expose the vision-encoder accounting per phase so the
+        # PD cross join can derive vision_time_ms_p / _d (vision runs on P only).
+        # Both frames decide from the workload, not from the phase, so a text-only
+        # PD run keeps the historical schema (same rule as aggregation;
+        # review: stormchasingg).
+        image_columns = list(IMAGE_COLUMNS) if self._has_image_workload(optimizer_data) else []
+        if image_columns:
+            encoder_waves, vision_time_ms = (
+                self._encoder_row_accounting(optimizer_data, max(1, concurrency)) if not decode_flag else (1, 0.0)
+            )
+        else:
+            encoder_waves, vision_time_ms = 1, 0.0
+        columns = DISAGG_COLUMNS.copy() + image_columns
         data = [
             self.model_runner.user_input.device,
             optimizer_data.num_devices,
@@ -456,6 +499,7 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
             memory_info["kv_cache_size_gb"] if memory_info else float("nan"),
             memory_info["model_activation_size_gb"] if memory_info else float("nan"),
             memory_info["device_memory_available_gb"] if memory_info else float("nan"),
+            *([encoder_waves, vision_time_ms] if image_columns else []),
         ]
         rows = [data]
         if variable_input_mode and not decode_flag:
@@ -489,7 +533,14 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
             early_stop_reason = EARLY_STOP_DECODE_OOM if decode_flag else EARLY_STOP_PREFILL_OOM
         summary.set_early_stop_flag(device_memory_available_gb, tpot, ttft, reason=early_stop_reason)
 
-        self._maybe_set_search_info(optimizer_data, device_memory_available_gb, batch_size, ttft, tpot, summary)
+        self._maybe_set_search_info(
+            optimizer_data,
+            device_memory_available_gb,
+            batch_size,
+            ttft,
+            tpot,
+            summary,
+        )
 
         return summary
 
@@ -553,7 +604,7 @@ class DisaggThroughputOptimizer(BaseThroughputOptimizer):
                 query_len=effective_input_length,
                 seq_len=None,
                 resident_policy="inflight",
-                chunk_shapes=[(c.query_len, c.seq_len) for c in chunk_plan] if len(chunk_plan) > 1 else None,
+                chunk_shapes=chunk_plan if len(chunk_plan) > 1 else None,
                 prefill_token_budget=max_batched_tokens,
             )
             # Explicit guards instead of assert: these are runtime

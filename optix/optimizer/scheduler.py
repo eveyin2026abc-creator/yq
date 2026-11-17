@@ -18,7 +18,7 @@ import time
 from contextlib import contextmanager
 from math import isclose
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 
 import numpy as np
 from loguru import logger
@@ -40,7 +40,7 @@ from ..config.config import (
 )
 from ..config.constant import MULTIHOST_INFER_ENGINE, Stage
 from ..logging import LogStage, format_subprocess_failure
-from ..optimizer.errors import OptimizerError
+from ..optimizer.errors import ConcurrencySweepError, OptimizerError
 from ..optimizer.health_check import (
     BenchmarkHealthCheckHook,
     BenchmarkHookPoint,
@@ -71,7 +71,18 @@ from ..optimizer.protocols import (
     SupportsPrepare,
 )
 from ..optimizer.store import DataStorage
-from ..optimizer.utils import get_folder_size
+from ..optimizer.utils import backup, get_folder_size
+
+
+class SweepLevelResult(TypedDict, total=False):
+    concurrency: int
+    performance: PerformanceIndex | None
+    measured_concurrency: float | None
+    error: str
+    skipped: str
+
+
+SWEEP_SLO_CLIFF_MARGIN = 1.2
 
 
 class Scheduler:
@@ -97,12 +108,17 @@ class Scheduler:
         self.retry_number = retry_number
         self.wait_time = wait_start_time or get_settings().wait_start_time
         self.current_back_path = None
+        self._sweep_fallback_back_path = None
         # Backup phase marker: "pso" / "refine" / "default"; None means no optimization phase (falls back to the old plain-number dirs)
         self.backup_phase = None
         # Iteration index of the current phase; together with backup_phase forms a top-level dir under back_up, e.g. pso_001, refine_002
         self.backup_iter = 0
         self.simulate_run_info = None
         self.simulate_launch_plan = {}
+        self.pd_agent_context = None
+        self.pd_archive_root = Path(".")
+        self.pd_trial_purpose = "search"
+        self._pd_budget_deadline = None
         self.performance_index = None
         self._error_info = None
         self.last_outcome: Optional[RunOutcome] = None
@@ -255,6 +271,11 @@ class Scheduler:
         return None
 
     def _new_case_id(self) -> str:
+        self._pd_budget_deadline = None
+        if getattr(self, "engine", None) == "vllm_pd":
+            self.simulate_launch_plan = {}
+            self.simulator._optix_pd_launch_plan = {}
+            self._pd_launch_sequence = 0
         allocator = getattr(self.data_storage, "next_case_id", None)
         if callable(allocator):
             case_id = allocator()
@@ -451,10 +472,32 @@ class Scheduler:
                 self.simulator.bak_path = self.current_back_path
                 self.benchmark.bak_path = self.current_back_path
 
+    def _check_workflow_time(self):
+        root = getattr(self, "pd_workflow_root", None)
+        if root is None and self.engine == "vllm_pd" and self.pd_agent_context is not None:
+            root = self.pd_archive_root.parent
+        if root is not None:
+            from .agentic.pd_state import (
+                workflow_seconds_remaining,
+                WorkflowBudgetExceeded,
+            )
+
+            key = (str(root), self.pd_trial_purpose)
+            cached = self._pd_budget_deadline
+            if cached is not None and cached[0] == key:
+                seconds = cached[1] - time.monotonic()
+            else:
+                seconds, safe = workflow_seconds_remaining(root, self.pd_trial_purpose, cacheable=True)
+                if seconds is not None and safe:
+                    self._pd_budget_deadline = (key, time.monotonic() + seconds)
+            if seconds is not None and seconds <= 0:
+                raise WorkflowBudgetExceeded("PD workflow time budget exhausted")
+
     def wait_simulate(self):
         start_time = time.time()
         for _ in range(self.wait_time):
             time.sleep(1)
+            self._check_workflow_time()
             elapsed = time.time() - start_time
             context = self._create_check_context(elapsed)
             result = self.service_checks.run(ServiceHookPoint.STARTUP_POLLING, context)
@@ -505,12 +548,45 @@ class Scheduler:
         )
 
     def run_simulate(self, params: np.ndarray, params_field: tuple[OptimizerConfigField]):
+        self._pd_budget_deadline = None
         self.simulate_launch_plan = {}
+        if self.engine == "vllm":
+            from ..serve_plan import validate_service_positions
+
+            simulator = getattr(self, "simulator", None)
+            config = getattr(simulator, "config", None)
+            command = getattr(config, "command", None)
+            validate_service_positions(self.simulate_run_info or (), others=getattr(command, "others", None))
         if isinstance(self.benchmark, SupportsPrepare):
             self.benchmark.prepare()
         logger.debug("starting simulator subprocess")
         if self.engine == MULTIHOST_INFER_ENGINE:
             self.simulate_launch_plan = run_multihost_trial(self.simulator, tuple(self.simulate_run_info))
+        elif self.engine == "vllm_pd" and getattr(self, "pd_agent_context", None) is not None:
+            from .pd_adapter import run_pd_trial
+            from .agentic.pd_execution import trial_identity
+
+            self._pd_launch_sequence = getattr(self, "_pd_launch_sequence", 0) + 1
+            identity = trial_identity(
+                self.pd_agent_context,
+                self.pd_trial_purpose,
+                self.current_case_id,
+                getattr(self, "pd_candidate_identity", None),
+                launch_attempt=self._pd_launch_sequence,
+            )
+
+            self.simulate_launch_plan = {}
+            try:
+                self.simulate_launch_plan = run_pd_trial(
+                    self.simulator,
+                    tuple(self.simulate_run_info),
+                    self.pd_archive_root / identity["archive_id"],
+                    self.pd_agent_context,
+                    purpose=getattr(self, "pd_trial_purpose", "search"),
+                    identity=identity,
+                )
+            finally:
+                self.simulate_launch_plan = getattr(self.simulator, "_optix_pd_launch_plan", {})
         else:
             self.simulator.run(tuple(self.simulate_run_info))
         logger.debug("waiting for simulator startup")
@@ -548,6 +624,7 @@ class Scheduler:
     def _monitor_benchmark_only(self) -> None:
         start_time = time.time()
         for _ in range(get_settings().particles_time_out):
+            self._check_workflow_time()
             elapsed = time.time() - start_time
             context = self._create_check_context(elapsed)
             benchmark_result = self.benchmark_checks.run(BenchmarkHookPoint.RUNTIME_MONITOR, context)
@@ -568,6 +645,7 @@ class Scheduler:
 
         start_time = time.time()
         for _ in range(get_settings().particles_time_out):
+            self._check_workflow_time()
             elapsed = time.time() - start_time
             context = self._create_check_context(elapsed)
             service_result = self.service_checks.run(ServiceHookPoint.RUNTIME_MONITOR, context)
@@ -650,6 +728,16 @@ class Scheduler:
     def stop_target_server(self, del_log: bool = False):
         self.simulator.stop(del_log)
         self.benchmark.stop(del_log)
+        if self.engine == "vllm_pd" and getattr(self, "pd_agent_context", None) is not None:
+            import json
+            from .pd_adapter import verify_saved_shutdown
+
+            plan = getattr(self.simulator, "_optix_pd_launch_plan", {})
+            if plan.get("nodes"):
+                verify_saved_shutdown(plan)
+                archive = self.simulator._optix_pd_archive
+                (archive / "deployment.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                (self.pd_archive_root / "latest.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
 
     def _persist_trial_log(self, candidate_id: str, run_dir):
         """Copy per-trial service/benchmark logs before del_log cleanup (issue 2.8)."""
@@ -697,6 +785,33 @@ class Scheduler:
             if not self.first_duration:
                 self.first_duration = duration
         self._finalize_report_only_time_saving(self.performance_index, duration)
+        if self.engine == "vllm_pd" and getattr(self, "pd_agent_context", None) is not None:
+            import json
+            from .agentic.pd_state import search_summary
+            from math import isfinite
+
+            plan = getattr(self.simulator, "_optix_pd_launch_plan", {})
+            if plan:
+                from .agentic.pd_execution import validate_result_identity
+
+                validate_result_identity(plan, self.current_case_id, candidate_id, self.simulator._optix_pd_archive)
+                plan.update(
+                    finished_at=time.time(),
+                    outcome="failed"
+                    if self.error_info
+                    or (plan.get("purpose") == "search" and not isfinite(float(kwargs.get("fitness", float("inf")))))
+                    else "measured",
+                    error=str(self.error_info) if self.error_info else None,
+                    fitness=kwargs.get("fitness"),
+                    candidate_id=candidate_id if candidate_id is not None else plan.get("candidate_id"),
+                    duration=duration,
+                )
+                archive = self.simulator._optix_pd_archive
+                (archive / "deployment.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                (self.pd_archive_root.parent / "pd_search_summary.json").write_text(
+                    json.dumps(search_summary(self.pd_archive_root.parent), indent=2),
+                    encoding="utf-8",
+                )
         real_evaluation = True
         if REAL_EVALUATION in kwargs:
             real_evaluation = kwargs.pop(REAL_EVALUATION)
@@ -732,6 +847,9 @@ class Scheduler:
                 set_resolved_field(run_fields)
             else:
                 self.simulator._resolved_field = run_fields
+            set_env_fields = getattr(self.simulator, "set_env_fields", None)
+            if callable(set_env_fields):
+                set_env_fields(f for f in params_field if getattr(f, "config_position", "") == "env")
             self.simulator.update_command()
         if isinstance(self.benchmark, SupportsDataField):
             self.benchmark.data_field = params_field
@@ -783,6 +901,7 @@ class Scheduler:
         and exposed as the evaluation result.
         """
         for pass_number in range(2, self.benchmark_run_count + 1):
+            self._check_workflow_time()
             self.benchmark.stop()
             self.benchmark_pass = pass_number
             is_final_pass = pass_number == self.benchmark_run_count
@@ -914,6 +1033,220 @@ class Scheduler:
         params: 1D array whose values correspond to mindie related configurations.
         """
         return self._run_evaluation(params, params_field, decode_context, with_request_rate=True)
+
+    def _set_sweep_concurrency(self, level: int) -> None:
+        for field in self.simulate_run_info or ():
+            if field.name in CONCURRENCYS:
+                field.value = level
+
+    def _saturate_sweep_request_rate(self) -> None:
+        for field in self.simulate_run_info or ():
+            if field.name not in REQUESTRATES:
+                continue
+            try:
+                minimum, maximum = float(field.min), float(field.max)
+            except (TypeError, ValueError):
+                logger.debug("sweep request_rate skip {}: invalid range {!r}/{!r}", field.name, field.min, field.max)
+                continue
+            field.value = 0 if minimum <= 0 <= maximum else maximum
+
+    def backfill_sweep_best(self, performance, concurrency: int) -> None:
+        """Backfill scheduler state with the best sweep level so save_result
+        persists performance/params consistent with the fitness reported by
+        the strategy layer.
+        """
+        self.performance_index = performance
+        self._set_sweep_concurrency(concurrency)
+
+    def _service_crashed(self) -> bool:
+        process = getattr(self.simulator, "process", None)
+        if process is not None and process.poll() is not None:
+            return True
+        if isinstance(self.simulator, SupportsHealth) and not isinstance(self.simulator, Simulator):
+            try:
+                return self.simulator.health().stage != Stage.running
+            except Exception:
+                return True
+        return False
+
+    @staticmethod
+    def _sweep_hit_slo_cliff(perf, tpot_slo, ttft_slo, margin) -> bool:
+        """True when latency exceeds margin x SLO (higher levels only get worse)."""
+        if perf is None:
+            return False
+        for slo, attr in ((tpot_slo, "time_per_output_token"), (ttft_slo, "time_to_first_token")):
+            if not slo:
+                continue
+            val = getattr(perf, attr, None)
+            try:
+                if val is not None and float(val) > float(slo) * margin:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        return False
+
+    def _measured_concurrency(self):
+        getter = getattr(self.benchmark, "get_measured_concurrency", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception as exc:
+            logger.debug("measured concurrency unavailable: {}", exc)
+            return None
+
+    def _sweep_archive_base(self) -> Path:
+        """Sweep archives are always written: trial back_up dir if --backup, else a fallback dir."""
+        if self.current_back_path:
+            return self.current_back_path
+        if self._sweep_fallback_back_path is None:
+            base = Path(get_settings().output) / "back_up"
+            if self.backup_phase:
+                base = base.joinpath(f"{self.backup_phase}_{self.backup_iter:03d}")
+            self._sweep_fallback_back_path = get_train_sub_path(base)
+        return self._sweep_fallback_back_path
+
+    def _archive_sweep_level(self, candidate_id: Optional[str], level: int) -> None:
+        config = getattr(self.benchmark, "config", None)
+        output_path = getattr(config, "output_path", None)
+        if output_path is None:
+            output_path = getattr(getattr(config, "command", None), "result_dir", None)
+        if not output_path or not Path(output_path).exists():
+            return
+        target_dir = self._sweep_archive_base() / "sweep" / (candidate_id or "unknown") / f"c{level}"
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        backup(Path(output_path), target_dir)
+
+    def run_concurrency_sweep(
+        self,
+        params: np.ndarray,
+        params_field: tuple[OptimizerConfigField],
+        levels: list,
+        *,
+        candidate_id: Optional[str] = None,
+        monitor_service: bool = True,
+        early_stop_tpot: float | None = None,
+        early_stop_ttft: float | None = None,
+        early_stop_margin: float = SWEEP_SLO_CLIFF_MARGIN,
+    ) -> list[SweepLevelResult]:
+        """Deploy once and benchmark at each concurrency level, returning one entry
+        per level: ``{"concurrency", "performance", "measured_concurrency"}`` on
+        success, ``{"concurrency", "error"}`` on level-local failure. A crashed
+        service raises ConcurrencySweepError carrying the levels measured so far.
+        Once a level's TPOT/TTFT exceeds ``early_stop_margin`` x SLO, higher
+        levels are recorded as ``{"concurrency", "skipped": "slo_cliff"}``.
+        """
+        if not levels:
+            logger.warning("concurrency sweep called with empty levels; returning empty result")
+            return []
+        with logger.contextualize(stage=LogStage.EVALUATE.value):
+            self.run_start_timestamp = time.time()
+            self.set_back_up_path()
+            self._sweep_fallback_back_path = None
+            self.simulate_run_info = map_param_with_value(params, params_field)
+            self._set_sweep_concurrency(levels[0])
+            self._saturate_sweep_request_rate()
+            self.current_case_id = self._new_case_id()
+            self.benchmark_pass = 1
+            logger.debug("sweep start levels={} values={}", levels, {v.name: v.value for v in self.simulate_run_info})
+            self._error_info = None
+            self.last_outcome = None
+            self.del_log = True
+            self.performance_index = PerformanceIndex(case_id=self.current_case_id)
+            self.early_exit_info = None
+            self._configure_early_exit_controller()
+            if self.benchmark_run_count > 1:
+                self.current_phase = EarlyExitPhase.CALIBRATION
+                logger.info("benchmark pass 1/{} role=warmup", self.benchmark_run_count)
+            else:
+                self.current_phase = EarlyExitPhase.EVALUATION
+            try:
+                self.update_data_field(self.simulate_run_info)
+                self.run_target_server(params, params_field)
+            except OptimizerError:
+                raise
+            except Exception as e:
+                self._error_info = e
+                self.del_log = False
+                self.last_outcome = RunOutcome(
+                    status=RunStatus.FAILED, performance_index=self.performance_index, error_context=e
+                )
+                raise
+            time.sleep(1)
+            sweep_results = []
+            for index, level in enumerate(levels):
+                try:
+                    if index > 0:
+                        self._set_sweep_concurrency(level)
+                        self.benchmark.stop()
+                        self.benchmark_pass = 1
+                        self.current_phase = (
+                            EarlyExitPhase.CALIBRATION if self.benchmark_run_count > 1 else EarlyExitPhase.EVALUATION
+                        )
+                        self._reset_early_exit_window()
+                        if isinstance(self.benchmark, SupportsDataField):
+                            self.benchmark.data_field = tuple(self.simulate_run_info)
+                        self.benchmark.update_command()
+                        if isinstance(self.benchmark, SupportsPrepare):
+                            self.benchmark.prepare()
+                        logger.info("concurrency sweep level {}/{} concurrency={}", index + 1, len(levels), level)
+                        self.benchmark.run(tuple(self.simulate_run_info))
+                        self.monitoring_status(monitor_service=monitor_service)
+                        time.sleep(1)
+                    if self.benchmark_run_count > 1:
+                        self._apply_repeated_benchmark_runs(monitor_service=monitor_service)
+                        performance_index = self.performance_index
+                    else:
+                        performance_index = self._attach_metrics_window_reference(
+                            self.benchmark.get_performance_index()
+                        )
+                        performance_index = self._merge_report_only_early_exit(performance_index)
+                    measured_concurrency = self._measured_concurrency()
+                    self._archive_sweep_level(candidate_id, level)
+                    sweep_results.append(
+                        {
+                            "concurrency": level,
+                            "performance": performance_index,
+                            "measured_concurrency": measured_concurrency,
+                        }
+                    )
+                    self.performance_index = performance_index
+                    if self._sweep_hit_slo_cliff(
+                        performance_index, early_stop_tpot, early_stop_ttft, early_stop_margin
+                    ):
+                        remaining = levels[index + 1 :]
+                        logger.info("SLO cliff at {} (>{}x SLO), skipping {}", level, early_stop_margin, remaining)
+                        for skipped_level in remaining:
+                            sweep_results.append({"concurrency": skipped_level, "skipped": "slo_cliff"})
+                        break
+                except OptimizerError:
+                    raise
+                except Exception as e:
+                    if self._service_crashed():
+                        self._error_info = e
+                        self.del_log = False
+                        self.last_outcome = RunOutcome(
+                            status=RunStatus.FAILED, performance_index=self.performance_index, error_context=e
+                        )
+                        raise ConcurrencySweepError(str(e), sweep_results) from e
+                    logger.warning("concurrency sweep level {} failed, continuing: {}", level, e)
+                    sweep_results.append({"concurrency": level, "error": str(e)})
+            if self.performance_index is not None:
+                self._attach_warmup_summary(self.performance_index)
+            levels_ok = sum(1 for r in sweep_results if r.get("performance") is not None)
+            status = RunStatus.SUCCESS if levels_ok else RunStatus.FAILED
+            duration = time.time() - self.run_start_timestamp if self.run_start_timestamp else 0.0
+            logger.debug(
+                "sweep done status={} duration={:.2f}s levels_ok={}/{}",
+                status.value,
+                duration,
+                levels_ok,
+                len(sweep_results),
+            )
+            self.last_outcome = RunOutcome(
+                status=status, performance_index=self.performance_index, error_context=self._error_info
+            )
+            return sweep_results
 
     def run_benchmark_only(
         self,

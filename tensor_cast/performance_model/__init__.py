@@ -82,6 +82,16 @@ def _load_custom_op():
         return False
 
 
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.unpermute_tokens.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    properties = op_invoke_info.get_memory_access_properties()
+    if get_named_args(op_invoke_info).get("probs") is not None:
+        # npu_moe_token_unpermute multiplies route probabilities and reduces top-k
+        # inside the kernel; no expanded BF16/FP32 intermediate is written to HBM.
+        properties.compute_ops[torch.float32] = OpInvokeInfo.ComputeOps(gp_ops=2 * op_invoke_info.args[0].numel())
+    return properties
+
+
 @OpInvokeInfo.register_op_properties(torch.ops.aten.bmm.default)
 def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     assert len(op_invoke_info.args) == 2
@@ -105,6 +115,31 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     properties = op_invoke_info.get_memory_access_properties()
     properties.compute_ops[mat1.dtype] = OpInvokeInfo.ComputeOps()
     properties.compute_ops[mat1.dtype].mma_ops = mma_ops
+    return properties
+
+
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.batch_matmul_quant.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    named = get_named_args(op_invoke_info)
+    x = named["x"]
+    w = named["w"]
+    bias = named["bias"]
+    assert isinstance(x, torch.Tensor) and x.ndim == 3
+    assert isinstance(w, torch.Tensor) and w.ndim == 3
+    b, m, k = x.shape
+    assert w.shape[0] == b and w.shape[1] == k
+    n = w.shape[2]
+
+    # Each matrix FMA is counted as one multiply plus one add (2 FLOPs).
+    mma_ops = b * m * n * k * 2
+    if mma_ops == 0:
+        return OpInvokeInfo.PerformanceProperties()
+
+    properties = op_invoke_info.get_memory_access_properties()
+    compute_dtype = _quantized_weight_compute_dtype(w.dtype)
+    properties.compute_ops[compute_dtype] = OpInvokeInfo.ComputeOps(mma_ops=mma_ops)
+    if bias is not None:
+        properties.compute_ops[compute_dtype].gp_ops = b * m * n
     return properties
 
 
@@ -419,6 +454,30 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     return properties
 
 
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.dynamic_quantize_symmetric.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    """Model absmax reduction, scale construction, and output quantization."""
+    x = op_invoke_info.args[0]
+    payload, scale = op_invoke_info.out
+    properties = op_invoke_info.get_memory_access_properties()
+
+    # Dynamic symmetric quantization performs the static quantization work
+    # plus abs/max reduction and one scale construction per reduction result.
+    # These are logical operations rather than hardware instruction counts.
+    quant_ops_per_element = 4 + int(x.dtype != torch.float32)
+    if not is_fp8_dtype(payload.dtype):
+        quant_ops_per_element += 1
+    static_quant_ops = x.numel() * quant_ops_per_element
+    reduction_ops = x.numel() + max(x.numel() - scale.numel(), 0)
+    scale_ops = scale.numel()
+    _accumulate_compute_ops(
+        properties,
+        torch.float32,
+        gp_ops=static_quant_ops + reduction_ops + scale_ops,
+    )
+    return properties
+
+
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.dynamic_quantize_mxfp4.default)
 def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     x = op_invoke_info.args[0]
@@ -454,6 +513,13 @@ def _(
     properties = op_invoke_info.get_memory_access_properties(exclude_input_ids={0})
     properties.memory_read_bytes += bytes_of_tensor(input) * index.numel() / input.shape[dim]
     return properties
+
+
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.masked_scatter.default)
+def _masked_scatter_properties(info):
+    # Read base embeddings, Boolean mask and image features; write the merged
+    # embeddings. This is a memory movement, not another vision computation.
+    return info.get_memory_access_properties()
 
 
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.hif8_kv_cache_write.default)
@@ -782,6 +848,37 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     _accumulate_compute_ops(properties, q_compute_dtype, gp_ops=q.numel() * 3)
     _accumulate_compute_ops(properties, k_compute_dtype, gp_ops=k.numel() * 3)
     return properties
+
+
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.mrope_cache_lookup.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    cos_sin_cache = op_invoke_info.args[0]
+    position_ids = op_invoke_info.args[1]
+    output = op_invoke_info.out
+    assert isinstance(cos_sin_cache, torch.Tensor)
+    assert isinstance(position_ids, torch.Tensor)
+    assert isinstance(output, torch.Tensor)
+
+    # Do not charge reading the full static table.  A GatherV2-style lookup
+    # reads only the selected rows, whose total payload equals the output.
+    properties = op_invoke_info.get_memory_access_properties(exclude_input_ids={0})
+    properties.memory_read_bytes += bytes_of_tensor(output)
+    return properties
+
+
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.materialize.default)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    """Device-side materialization copy (e.g. the VL merger grid reshape).
+
+    A materialization reads its source once and writes the reshaped output
+    once — the same traffic TensorMove charges for a contiguous copy. Only
+    the tensors carry bytes: the shape list is host-side metadata.
+    """
+    src = op_invoke_info.args[0]
+    output = op_invoke_info.out
+    assert isinstance(src, torch.Tensor)
+    assert isinstance(output, torch.Tensor)
+    return op_invoke_info.get_memory_access_properties()
 
 
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.apply_rope_single.default)
@@ -2153,6 +2250,7 @@ def _(
     return properties
 
 
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.grouped_matmul_quant.packed)
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.grouped_matmul_quant.default)
 def _(
     op_invoke_info: OpInvokeInfo,
@@ -2522,6 +2620,34 @@ def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     )
 
 
+@OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.grouped_matmul_quant_swiglu.quantized)
+def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    # Native W8A8 GMM1 produces INT8 + FP32 scales. Intermediate BF16
+    # activation remains inside the kernel and has no separate HBM pass.
+    properties = _swiglu_fusion_properties_helper(
+        op_invoke_info,
+        op_invoke_info.args[0],
+        op_invoke_info.args[1],
+        _SwiGLUFusionConfig(
+            bias=op_invoke_info.args[6],
+            matmul_helper=_grouped_static_quant_matmul_properties_helper,
+            is_int4_weight=False,
+            w_offset=op_invoke_info.args[3],
+            epilogue_dtype=_swiglu_epilogue_dtype(op_invoke_info, 7),
+        ),
+    )
+    payload = op_invoke_info.out[0]
+    limit = op_invoke_info.args[8] if len(op_invoke_info.args) > 8 else op_invoke_info.kwargs.get("swiglu_limit", 0.0)
+    # Per-token max reduction, scale, round, clamp/cast; gate/up clamp adds
+    # four comparisons per output activation when enabled by V4 config.
+    _accumulate_compute_ops(
+        properties,
+        _swiglu_epilogue_dtype(op_invoke_info, 7),
+        gp_ops=payload.numel() * (5 + (4 if limit > 0 else 0)),
+    )
+    return properties
+
+
 @OpInvokeInfo.register_op_properties(torch.ops.tensor_cast.grouped_matmul_fp8_swiglu.default)
 def _(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
     # Args: (x, w, w_scale, x_scale, bias, out_dtype)
@@ -2814,9 +2940,72 @@ def _estimate_default(op_invoke_info: OpInvokeInfo, device_profile: DeviceProfil
 register_op_estimator(None, None)(_estimate_default)
 
 
+@register_op_estimator(torch.ops.tensor_cast.dynamic_quantize_symmetric.default, None)
+def _estimate_dynamic_quantize_symmetric(
+    op_invoke_info: OpInvokeInfo,
+    device_profile: DeviceProfile,
+) -> PerformanceModel.Result:
+    """Estimate dependent reduction and requantization work analytically.
+
+    Dynamic quantization cannot use the default single-envelope Roofline: the
+    output quantization depends on the absmax reduction and generated scale.
+    Charge the memory and GP envelopes sequentially instead of assuming that
+    all bytes and arithmetic overlap.  The inputs remain only tensor shapes,
+    dtypes, and device peaks; no measured latency or shape-specific multiplier
+    enters this estimator.
+    """
+    if "dims" in op_invoke_info.kwargs:
+        dims = op_invoke_info.kwargs["dims"]
+    elif len(op_invoke_info.args) > 1:
+        # The custom-op schema is (x, dims, scale_dtype, out_dtype).
+        dims = op_invoke_info.args[1]
+    else:
+        dims = []
+    if not dims:
+        return _estimate_default(op_invoke_info, device_profile)
+
+    result = _estimate_default(op_invoke_info, device_profile)
+    memory_time_s = result.statistics[StatsKey.MEMORY_ACCESS]
+    compute_time_s = result.statistics[StatsKey.COMPUTE]
+    if memory_time_s == 0 and compute_time_s == 0:
+        return result
+
+    perf_properties = op_invoke_info.get_perf_properties()
+    host_to_device_time_s = result.statistics["host_to_device_time_s"]
+    serialized_device_time_s = memory_time_s + compute_time_s
+    device_and_host_time_s = (
+        host_to_device_time_s + serialized_device_time_s
+        if perf_properties.host_to_device_serial
+        else max(serialized_device_time_s, host_to_device_time_s)
+    )
+    static_cost_time_s = result.statistics.get("static_cost_time_s", 0)
+    result.execution_time_s = device_and_host_time_s + static_cost_time_s
+    result.statistics.update(
+        {
+            "dynamic_quant_dependency_serialized": True,
+            "dynamic_quant_memory_envelope_s": memory_time_s,
+            "dynamic_quant_compute_envelope_s": compute_time_s,
+            "static_cost_time_s": static_cost_time_s,
+        }
+    )
+    return result
+
+
+def _internal_spill_properties(op_invoke_info: OpInvokeInfo) -> OpInvokeInfo.PerformanceProperties:
+    """Control event: carries no data movement, its duration comes from the timeline."""
+    del op_invoke_info
+    return OpInvokeInfo.PerformanceProperties()
+
+
+OpInvokeInfo.register_op_properties(torch.ops.tensor_cast._internal_spill.default)(_internal_spill_properties)
+
+
 @register_op_estimator(torch.ops.tensor_cast._internal_wait_and_bind.default, None)
 @register_op_estimator(torch.ops.tensor_cast._internal_record.default, None)
 @register_op_estimator(torch.ops.tensor_cast._internal_order_barrier.default, None)
+@register_op_estimator(torch.ops.tensor_cast._internal_mark_lane_begin.default, None)
+@register_op_estimator(torch.ops.tensor_cast._internal_mark_lane_end.default, None)
+@register_op_estimator(torch.ops.tensor_cast._internal_spill.default, None)
 def _estimate_internal_multistream_anchor(
     op_invoke_info: OpInvokeInfo, device_profile: DeviceProfile
 ) -> PerformanceModel.Result:

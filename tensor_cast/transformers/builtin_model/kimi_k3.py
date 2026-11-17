@@ -50,6 +50,7 @@ import torch
 
 from ..custom_model_registry import ModelProfile, get_visual_layers, register_model_profile
 from ...layers.internal import CopyLayerWrapper, RegionMarkerWrapper
+from ...memory_accounting import CacheMemoryEntry, register_cache_memory_collector
 
 logger = logging.getLogger(__name__)
 
@@ -1983,8 +1984,8 @@ class K3IdentityRotaryEmb(torch.nn.Module):
         return cos, sin
 
 
-def _k3_kda_state_size_gb(model) -> float:
-    """Per-rank KDA state (``recurrent_states`` + ``conv_states``) memory in GB.
+def _k3_kda_state_bytes_per_layer(model, batch_size: int = 1) -> int:
+    """Per-layer, per-rank KDA persistent-state capacity in bytes.
 
     K3 hybrid attention uses KDA (``KimiDeltaAttention``, ~69/93 layers) with
     a *fixed-size* recurrent state plus a short-conv tail state. Unlike MLA's
@@ -1994,8 +1995,7 @@ def _k3_kda_state_size_gb(model) -> float:
     MSModeling's ``kv_cache_excluded_layer_indices`` correctly excludes KDA
     layers from per-token KV cache accounting (they are not paged), but this
     also drops KDA's fixed state from the memory budget entirely. This
-    helper computes the per-rank persistent footprint so the ModelRunner patch can fold it
-    back into the memory figures.
+    helper computes the exact integer-byte footprint for one KDA layer.
 
     The persistent state buffers we account for are:
 
@@ -2008,35 +2008,32 @@ def _k3_kda_state_size_gb(model) -> float:
 
     KDA attention is TP-sharded by heads (same policy as MLA — see P5
     ``_k3_build_tp_plan_extras``), so each rank maintains state for
-    ``num_heads_per_rank`` heads. Steady-state decode keeps ``batch_size=1``
-    per rank for the *persistent* state buffers; prefill allocates larger
-    transient buffers, but only the persistent footprint survives across
-    tokens, matching MLA's per-token KV accounting philosophy.
+    ``num_heads_per_rank`` heads. Each live sequence owns a persistent state;
+    callers pass the rank-local sequence count as ``batch_size``.
 
-    Returns 0.0 for non-K3 models or when ``linear_attn_config`` is missing,
+    Returns 0 for non-K3 models or when ``linear_attn_config`` is missing,
     so callers can invoke unconditionally.
     """
     try:
         model_config = getattr(model, "model_config", None)
         if model_config is None:
-            return 0.0
+            return 0
         hf_config = getattr(model_config, "hf_config", None)
         if hf_config is None or getattr(hf_config, "model_type", None) != "kimi_k3":
-            return 0.0
+            return 0
         # K3 is a VL model; ``linear_attn_config`` lives on ``text_config``.
         # ModelWrapper exposes ``text_config`` on the wrapped model; fall
         # back to the HF config's nested ``text_config`` if the wrapper
         # does not.
         text_config = getattr(model, "text_config", None) or getattr(hf_config, "text_config", None)
         if text_config is None:
-            return 0.0
+            return 0
         linear_attn_cfg = getattr(text_config, "linear_attn_config", None)
         if not isinstance(linear_attn_cfg, dict):
-            return 0.0
+            return 0
         kda_layers = linear_attn_cfg.get("kda_layers") or []
         if not kda_layers:
-            return 0.0
-        num_kda_layers = len(kda_layers)
+            return 0
         head_dim = int(linear_attn_cfg.get("head_dim", 128) or 128)
         num_heads = int(linear_attn_cfg.get("num_heads", 96) or 96)
         short_conv_kernel_size = int(linear_attn_cfg.get("short_conv_kernel_size", 4) or 4)
@@ -2047,7 +2044,8 @@ def _k3_kda_state_size_gb(model) -> float:
             tp_size = 1
         num_heads_per_rank = max(1, num_heads // tp_size)
 
-        batch_size = 1
+        if batch_size < 0:
+            raise ValueError("KDA state batch_size must be non-negative")
 
         recurrent_state_bytes_per_layer = (
             batch_size * num_heads_per_rank * head_dim * head_dim * 4  # fp32
@@ -2056,11 +2054,36 @@ def _k3_kda_state_size_gb(model) -> float:
             3 * batch_size * (short_conv_kernel_size - 1) * (num_heads_per_rank * head_dim) * 2  # bf16
         )
 
-        total_bytes = num_kda_layers * (recurrent_state_bytes_per_layer + conv_state_bytes_per_layer)
-        return total_bytes / 1024**3
+        return recurrent_state_bytes_per_layer + conv_state_bytes_per_layer
     except Exception as e:
         logger.warning("Failed to compute K3 KDA state size: %s", e)
-        return 0.0
+        return 0
+
+
+@register_cache_memory_collector("kimi_k3")
+def _collect_kimi_kda_cache_entries(model, input_kwargs, excluded) -> tuple[CacheMemoryEntry, ...]:
+    """Describe K3 fixed state separately from its forward-only placeholders."""
+    if not excluded:
+        return ()
+
+    attention_meta = input_kwargs.get("attention_meta")
+    seq_lens = getattr(attention_meta, "seq_lens", None)
+    batch_size = int(seq_lens.numel()) if isinstance(seq_lens, torch.Tensor) else 1
+    per_layer_bytes = _k3_kda_state_bytes_per_layer(model, batch_size=batch_size)
+    layer_indices = sorted(excluded)
+    entries = []
+    for layer_idx in layer_indices:
+        placeholder = input_kwargs["kv_cache_by_layers"][layer_idx]
+        entries.append(
+            CacheMemoryEntry(
+                owner_key=f"kimi_kda_state:{layer_idx}",
+                tensors=(placeholder,),
+                size_bytes=per_layer_bytes,
+                token_pool_bytes=0,
+                layer_index=layer_idx,
+            )
+        )
+    return tuple(entries)
 
 
 def _make_k3_mla_prolog_hook(original_compute_mla_prolog):
@@ -2110,6 +2133,15 @@ def _make_k3_mla_prolog_hook(original_compute_mla_prolog):
         )
 
     return _patched_compute_mla_prolog
+
+
+# Marker attribute stamped on the transformers dynamic remote modules
+# (``modeling_kimi_k3`` / ``modeling_kimi_linear``) once the class-level
+# monkey-patches in ``_patch_model_classes_for_kimi_k3`` have been applied.
+# See ``_K25_MODULE_PATCH_MARKER`` in kimi_k25.py for the full rationale
+# (Issue #596): a process-level boolean cannot detect transformers
+# re-executing the remote modeling files into fresh module objects.
+_K3_MODULE_PATCH_MARKER = "_tensor_cast_kimi_k3_patched"
 
 
 def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
@@ -2168,6 +2200,43 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
             _patched_resolve._tensor_cast_patched = True
             transformers.dynamic_module_utils.resolve_trust_remote_code = _patched_resolve
+
+    # ----------------------------------------------------------------
+    # Re-patch guard (Issue #596)
+    # ----------------------------------------------------------------
+    # transformers keys remote modules by content hash and may re-execute
+    # modeling_kimi_k3.py / modeling_kimi_linear.py in the same worker,
+    # producing NEW module objects whose classes lose every monkey-patch
+    # applied to their predecessors.  A process-level boolean cannot detect
+    # that.  Resolve the current remote modules and skip only when ALL of
+    # them still carry the patch marker; otherwise re-run the full
+    # (idempotent) patch pass against the new classes.  Process-level
+    # installs below (``_install_mla_prolog_op``, ModelRunner accounting,
+    # ...) keep their own one-shot guards.
+    # ----------------------------------------------------------------
+    remote_module_names = None
+    try:
+        probe_cls = _get_k3_class_from_source(
+            "modeling_kimi_k3.KimiK3ForConditionalGeneration",
+            effective_model_id,
+            "auto",
+        )
+        k3_module_name = probe_cls.__module__
+        package_prefix, separator, _ = k3_module_name.rpartition(".")
+        linear_module_name = f"{package_prefix}.modeling_kimi_linear" if separator else "modeling_kimi_linear"
+        remote_module_names = (k3_module_name, linear_module_name)
+        if all(getattr(sys.modules.get(name), _K3_MODULE_PATCH_MARKER, False) for name in remote_module_names):
+            return False
+    except Exception:
+        # Resolution failed — fall through and let the per-patch blocks
+        # below surface/report the problem exactly as before.
+        remote_module_names = None
+
+    # Tracks exceptions swallowed by the per-patch blocks below.  The module
+    # marker is stamped only when NO block swallowed an exception, so a
+    # partially-applied pass is retried on the next entry instead of being
+    # permanently cached (Issue #596 review; same rule as Kimi-K2.5).
+    partial_failure = False
 
     # =================================================================
     # KimiK3ForConditionalGeneration.forward — filter TC kwargs
@@ -2231,6 +2300,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 VL forward: {e}")
+        partial_failure = True
 
     # =================================================================
     # _merge_input_ids_with_image_features — meta device stub
@@ -2294,6 +2364,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 merge_input_ids: {e}")
+        partial_failure = True
 
     # =================================================================
     # MoonViT3dEncoder — register tensor_cast attention backend
@@ -2416,6 +2487,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 visual encoder: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiDeltaAttention.forward → decomposed linear_attn_* sub-ops
@@ -2616,7 +2688,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
                 chunk_size = 64
                 state_read_passes = 1 if has_previous_state else 0
                 state_write_passes = 1
-                core_attn_out = torch.ops.tensor_cast.linear_attn_chunk_gated_delta_rule(
+                core_attn_out, _ = torch.ops.tensor_cast.linear_attn_chunk_gated_delta_rule(
                     query,
                     key,
                     value,
@@ -2653,6 +2725,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiDeltaAttention: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiLinearModel._update_linear_attn_mask — meta tensor fix
@@ -2697,6 +2770,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 _update_linear_attn_mask: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiSparseMoeBlock.forward/moe_infer — stub for graph tracing
@@ -2729,30 +2803,45 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiSparseMoeBlock: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiMoEGate.forward — deterministic routing for simulation
     #
     # ----------------------------------------------------------------
-    # The real gate performs top-k softmax + random sampling which is
-    #      non-deterministic and untraceable. Replace with equal-weight
-    #      routing to produce deterministic shapes during graph capture.
+    # The real gate performs a weight GEMM, then top-k + renormalize +
+    #      multinomial sampling.  Only the sampling part is non-deterministic
+    #      and untraceable, so keep the GEMM (real K3 pays it every token;
+    #      dropping it underestimated decode latency and left gate.weight
+    #      as untraced dead weight) and replace the sampling with a
+    #      deterministic top-k + softmax over the same logits.
     # =================================================================
     try:
         class_ref_gate = "modeling_kimi_linear.KimiMoEGate"
         gate_cls = _get_k3_class_from_source(class_ref_gate, effective_model_id, "auto")
 
         def patched_gate_forward(self, hidden_states, **kwargs):
+            # Deterministic routing for simulation, but keeping the REAL gate
+            # GEMM: K3 executes the gate matmul every token in real
+            # deployment, so (a) the traced graph must contain it or decode
+            # latency is underestimated, and (b) ``gate.weight`` must be
+            # consumed by a traced op or it becomes unexecuted-resident
+            # dead weight in the memory accounts.  Only the untraceable
+            # part of the real gate — top-k + renormalize + multinomial
+            # sampling — is replaced by deterministic top-k over the same
+            # logits, which keeps shapes stable for graph capture.
             if hidden_states.dim() == 3:
-                bsz, seq_len, _ = hidden_states.shape
+                flat = hidden_states.reshape(-1, hidden_states.shape[-1])
             else:
-                bsz = hidden_states.shape[0]
-                seq_len = 1
-            device = hidden_states.device
-            dtype = hidden_states.dtype
+                flat = hidden_states
+            # Align dtypes before the GEMM (F.linear requires input and weight
+            # to share a dtype; hidden_states may be bf16 while gate.weight is
+            # fp32 in mixed-precision configs) and run softmax in fp32 so fp16
+            # logits cannot overflow to NaN/inf.
+            logits = torch.nn.functional.linear(flat.to(self.weight.dtype), self.weight)
             top_k = self.top_k
-            topk_idx = torch.zeros(bsz * seq_len, top_k, dtype=torch.long, device=device)
-            topk_weight = torch.ones(bsz * seq_len, top_k, dtype=dtype, device=device) / top_k
+            topk_scores, topk_idx = torch.topk(logits, top_k, dim=-1)
+            topk_weight = torch.softmax(topk_scores.float(), dim=-1).to(hidden_states.dtype)
             return topk_idx, topk_weight
 
         gate_cls.forward = patched_gate_forward
@@ -2760,6 +2849,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiMoEGate: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiMLAAttention — position_embeddings resolution + output gate
@@ -3057,6 +3147,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiDecoderLayer AttnRes: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiDynamicCache — compatibility stub
@@ -3133,6 +3224,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 MoonVision3dPatchEmbed: {e}")
+        partial_failure = True
 
     # =================================================================
     # SituAndMul direct-mode + MLP forward patch
@@ -3213,6 +3305,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 SituAndMul/MLP forward: {e}")
+        partial_failure = True
 
     # =================================================================
     # Monkey-patch module-level _apply_attn_res
@@ -3264,6 +3357,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 
     except Exception as e:
         logger.warning(f"Could not patch K3 module-level _apply_attn_res: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiLinearModel.__init__ — inject identity rotary_emb shim
@@ -3312,6 +3406,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
             logger.info("Patched KimiLinearModel.__init__ for MTP rotary_emb shim.")
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiLinearModel for MTP shim: {e}")
+        partial_failure = True
 
     # =================================================================
     # ModelWrapper.forward — add output_intermediate_hidden_states for MTP
@@ -3428,6 +3523,7 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
             logger.info("Patched ModelWrapper.forward for K3 MTP.")
     except Exception as e:
         logger.warning(f"Could not patch ModelWrapper.forward for K3 MTP: {e}")
+        partial_failure = True
 
     # =================================================================
     # KimiLinearForCausalLM.forward — PP side-channel + bypass lm_head
@@ -3550,100 +3646,42 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
             logger.info("Patched KimiLinearForCausalLM.forward for K3 PP side-channel.")
     except Exception as e:
         logger.warning(f"Could not patch K3 KimiLinearForCausalLM.forward for PP: {e}")
+        partial_failure = True
 
-    # =================================================================
-    # KDA state memory accounting (recurrent_states + conv_states)
-    # ----------------------------------------------------------------
-    # K3 hybrid attention uses KDA (``KimiDeltaAttention``, ~69/93
-    #      layers) with a *fixed-size* recurrent state plus a short-conv
-    #      tail state. Unlike MLA's paged KV cache, KDA state does NOT
-    #      grow with context length T, but it DOES occupy real GPU memory
-    #      and must NOT be treated as zero memory.
-    #
-    #      MSModeling's ``kv_cache_excluded_layer_indices`` correctly
-    #      excludes KDA layers from per-token KV cache accounting (they
-    #      are not paged), but this exclusion also drops KDA's fixed state
-    #      from the memory budget entirely. The simulation then reports
-    #      ``KV cache: 0.221 GB`` (MLA only) and
-    #      ``Model activation size: 0.000 GB``, giving the false
-    #      impression that KDA has zero memory footprint.
-    #
-    # Monkey-patch ``ModelRunner.run_inference`` and
-    #      ``ModelRunner._build_pipeline_metrics`` to inject KDA state
-    #      bytes into the returned ``ModelRunnerMetrics``:
-    #        - ``kv_cache_size_gb``       += kda_state_gb  (KV-like memory)
-    #        - ``peak_memory_usage_gb``  += kda_state_gb  (real GPU memory)
-    #        - ``device_memory_available_gb`` -= kda_state_gb
-    #        - ``kda_state_size_gb``      = kda_state_gb  (new attribute
-    #          carrying the breakdown value for printing)
-    #      Also patch ``ModelRunnerMetrics.print_info`` to print a
-    #      breakdown line clarifying that KDA state is included in the
-    #      KV cache figure above.
-    #
-    #      ``_k3_kda_state_size_gb(model)`` returns 0.0 for non-K3 models
-    #      or when ``linear_attn_config`` is missing, so the patch is a
-    #      pure no-op for every other model — no behavior change, no
-    #      attribute injection, no extra print line.
-    # =================================================================
+    # Keep K3's region markers and torch.empty stubs out of meta constant folding.
     try:
-        from tensor_cast.core.model_runner import (
-            ModelRunner as _K3_ModelRunner,
-            ModelRunnerMetrics as _K3_ModelRunnerMetrics,
-        )
+        from tensor_cast.core.model_runner import ModelRunner as _K3_ModelRunner
 
-        if not getattr(_K3_ModelRunner, "_tensor_cast_k3_kda_accounting", False):
+        if not getattr(_K3_ModelRunner, "_tensor_cast_k3_constant_folder_guard", False):
             _orig_run_inference_k3 = _K3_ModelRunner.run_inference
-            _orig_build_pipeline_metrics_k3 = _K3_ModelRunner._build_pipeline_metrics
-            _orig_print_info_k3 = _K3_ModelRunnerMetrics.print_info
 
-            def _k3_inject_kda_state(metrics, kda_gb):
-                """Mutate ``metrics`` in place to fold KDA state into the
-                KV-cache/peak/available figures and attach the breakdown
-                attribute. No-op when ``kda_gb`` is 0.
-                """
-                if kda_gb <= 0:
-                    return
-                metrics.kda_state_size_gb = kda_gb
-                metrics.kv_cache_size_gb += kda_gb
-                metrics.peak_memory_usage_gb += kda_gb
-                metrics.device_memory_available_gb -= kda_gb
-
-            def _patched_run_inference_k3(self, *args, **kwargs):
+            def _run_inference_with_k3_constant_folder_guard(self, *args, **kwargs):
                 # Scope the MetaConstantFolder guard to this run so dynamo
                 # compilation (which happens inside run_inference) never
                 # folds K3's region markers / torch.empty stub allocations,
                 # while other execution contexts keep the default policy.
                 with _k3_constant_folder_guard(getattr(self, "model", None)):
                     metrics = _orig_run_inference_k3(self, *args, **kwargs)
-                _k3_inject_kda_state(metrics, _k3_kda_state_size_gb(self.model))
                 return metrics
 
-            def _patched_build_pipeline_metrics_k3(self, pipeline_result, *, batch_size, run_time_s, **kwargs):
-                metrics = _orig_build_pipeline_metrics_k3(
-                    self, pipeline_result, batch_size=batch_size, run_time_s=run_time_s, **kwargs
-                )
-                _k3_inject_kda_state(metrics, _k3_kda_state_size_gb(self.model))
-                return metrics
-
-            def _patched_print_info_k3(self):
-                _orig_print_info_k3(self)
-                kda_gb = getattr(self, "kda_state_size_gb", 0.0)
-                if kda_gb > 0:
-                    # KDA state has already been folded into the
-                    # ``KV cache`` and ``Memory available`` figures above;
-                    # surface it as a breakdown line so users can see
-                    # that KDA's fixed recurrent+conv state is not zero
-                    # memory.
-                    print(f"    KDA state (recurrent+conv, included in KV cache above): {kda_gb:.6f} GB")
-
-            _K3_ModelRunner.run_inference = _patched_run_inference_k3
-            _K3_ModelRunner._build_pipeline_metrics = _patched_build_pipeline_metrics_k3
-            _K3_ModelRunnerMetrics.print_info = _patched_print_info_k3
-            _K3_ModelRunner._tensor_cast_k3_kda_accounting = True
+            _K3_ModelRunner.run_inference = _run_inference_with_k3_constant_folder_guard
+            _K3_ModelRunner._tensor_cast_k3_constant_folder_guard = True
             patched = True
-            logger.info("Patched ModelRunner/ModelRunnerMetrics for K3 KDA state memory accounting.")
+            logger.info("Patched ModelRunner with the K3 constant-folder guard.")
     except Exception as e:
-        logger.warning(f"Could not patch ModelRunner for K3 KDA state accounting: {e}")
+        logger.warning(f"Could not install the K3 constant-folder guard: {e}")
+        partial_failure = True
+
+    # Stamp the marker on the remote module objects only when every patch
+    # block completed without swallowing an exception.  On partial failure the
+    # modules stay unmarked, so the next entry point retries the full pass
+    # (all patches are idempotent via ``_original_*`` / ``_patched_*`` checks)
+    # instead of permanently caching a half-patched module (Issue #596 review).
+    if remote_module_names is not None and not partial_failure:
+        for name in remote_module_names:
+            module = sys.modules.get(name)
+            if module is not None:
+                setattr(module, _K3_MODULE_PATCH_MARKER, True)
 
     return patched
 
@@ -3651,8 +3689,6 @@ def _patch_model_classes_for_kimi_k3(config, model_id) -> bool:
 # ============================================================
 # Orchestrator: hf_config_patch_method entry point
 # ============================================================
-
-_patched_kimi_k3 = False
 
 
 def _hf_config_patch_for_kimi_k3(config, model_id=None):
@@ -3662,8 +3698,9 @@ def _hf_config_patch_for_kimi_k3(config, model_id=None):
     the HuggingFace model is instantiated.
 
     Config-level patches run for every new config instance.
-    Class-level patches run once per process, guarded by
-    ``_patched_kimi_k3`` to avoid redundant work.
+    Class-level patches are self-guarded per remote module object and are
+    re-applied whenever transformers re-executes the remote modeling files
+    in this process (Issue #596).
 
     Class-level patches use ``_get_k3_class_from_source`` with ``"auto"``
     mode so they work under both HF and ModelScope remote sources without
@@ -3676,15 +3713,10 @@ def _hf_config_patch_for_kimi_k3(config, model_id=None):
     # Config-level patches (always run for every new config)
     config_patched = _patch_hf_config_for_kimi_k3(config)
 
-    # Class-level patches (run once per process, requires model_id)
-    global _patched_kimi_k3
-    if _patched_kimi_k3:
-        return
-
+    # Class-level patches (self-guarded per remote module, requires model_id)
     classes_patched = _patch_model_classes_for_kimi_k3(config, model_id)
 
     if config_patched or classes_patched:
-        _patched_kimi_k3 = True
         logger.info("Patched transformers environment for Kimi-K3")
 
 
@@ -4006,6 +4038,7 @@ register_model_profile(
         mtp_block_module_name="KimiDecoderLayer",
         # Visual / language module paths (K3 VL structure)
         visual_module_path="vision_tower",
+        language_model_only_extra_paths=("mm_projector",),
         language_module_path="language_model",
         visual_layers_module_path="vision_tower.encoder.blocks",
         visual_layers_path_str="vision_tower.encoder.blocks",

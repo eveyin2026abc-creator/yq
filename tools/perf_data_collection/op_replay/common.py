@@ -20,11 +20,13 @@ import argparse
 import csv
 from collections.abc import Callable, Collection
 import hashlib
+import json
 from importlib import import_module, metadata
 import math
 import os
 from pathlib import Path
 import re
+import tempfile
 from typing import TYPE_CHECKING
 
 try:
@@ -102,6 +104,16 @@ def init_runtime() -> None:
         "DT_INT64": torch.int64,
         "DT_BOOL": torch.bool,
     }
+
+
+def parse_v4_runtime_workload(row: dict[str, str]):
+    """Read shared V4 request metadata before adapter-specific ABI validation."""
+    raw = row.get("Runtime v4_workload", "").strip()
+    if not raw:
+        return None
+    from tensor_cast.performance_model.profiling_database.backend_projector import normalize_v4_workload
+
+    return normalize_v4_workload(json.loads(raw))
 
 
 def get_runtime_modules():
@@ -386,7 +398,7 @@ def parse_shape(raw_shape: str) -> tuple[int, ...]:
 
 
 def parse_shape_or_none(raw_shape: str):
-    if not raw_shape.strip():
+    if raw_shape.strip().upper() in {"", "NULL"}:
         return None
     return parse_shape(raw_shape)
 
@@ -595,10 +607,21 @@ def write_csv_rows(
     fieldnames: list[str],
     rows: list[dict[str, str]],
 ) -> None:
-    with csv_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(canonicalize_shape_columns(row) for row in rows)
+    # Replace only a complete CSV; a failed replay/write must not truncate its
+    # input. Keep the temporary file on the same volume for atomic replacement.
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8-sig", newline="", dir=csv_path.parent, delete=False
+        ) as csv_file:
+            temporary_path = Path(csv_file.name)
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(canonicalize_shape_columns(row) for row in rows)
+        os.replace(temporary_path, csv_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def reset_invalid_replay_rows() -> None:
@@ -773,6 +796,7 @@ def process_replay_csvs(
         kept_rows: list[dict[str, str]] = []
         deleted_count = 0
         processed_count = 0
+        persisted_count = 0
         source_row_count += len(rows)
 
         if update_mode == "missing-only" and csv_has_complete_microbench(rows):
@@ -796,12 +820,20 @@ def process_replay_csvs(
                     # Each repeat gets a fresh row mapping in case run_row_fn mutates it.
                     repeat_row = dict(row)
                     run_row_fn(csv_path, row_index, repeat_row)
+                    if MICROBENCH_DURATION in copy_back_fields and MICROBENCH_DURATION in repeat_row:
+                        duration = float(repeat_row[MICROBENCH_DURATION])
+                        if not math.isfinite(duration) or duration <= 0:
+                            raise RuntimeError("Replay returned a non-positive or non-finite duration")
                     pending_write_back.update(
                         {field: repeat_row[field] for field in copy_back_fields if field in repeat_row}
                     )
                     total_rows += 1
                     processed_count += 1
                 row.update(pending_write_back)
+                for field in copy_back_fields:
+                    if field in pending_write_back and field not in fieldnames:
+                        fieldnames.append(field)
+                persisted_count += bool(pending_write_back)
                 kept_rows.append(row)
             except Exception as exc:
                 # A runtime-aware row is only valid when every configured
@@ -839,7 +871,8 @@ def process_replay_csvs(
                 if on_row_finally is not None:
                     on_row_finally()
 
-        if deleted_count and (can_write_cleanup is None or can_write_cleanup()):
+        write_allowed = can_write_cleanup is None or can_write_cleanup()
+        if deleted_count and write_allowed:
             write_csv_rows(csv_path, fieldnames, kept_rows)
             print(f"[CLEANUP] {csv_path} deleted {deleted_count} invalid row(s).")
 
@@ -848,8 +881,16 @@ def process_replay_csvs(
 
         # Write back rows that were processed (e.g. direct-timing results
         # written by run_row) even when no rows were deleted.
-        if processed_count and not deleted_count and (can_write_cleanup is None or can_write_cleanup()):
+        if processed_count and not deleted_count and write_allowed:
             write_csv_rows(csv_path, fieldnames, kept_rows)
+
+        if processed_count or deleted_count:
+            valid_count = sum(row_has_valid_duration(row) for row in kept_rows)
+            print(
+                f"[PERSIST] {csv_path}: completed_rows={persisted_count}, "
+                f"written_rows={persisted_count if write_allowed else 0}, "
+                f"usable_duration_rows={valid_count}, retained_rows={len(kept_rows)}."
+            )
 
     return total_rows, invalid_rows, source_row_count, skipped_rows
 
@@ -983,3 +1024,84 @@ def build_standard_argparser(
         help=argparse.SUPPRESS,
     )
     return parser
+
+
+def infer_even_split_lengths(shape: tuple[int, ...], total_tokens: int) -> list[int]:
+    """Rebuild cu_seqlens/queryStartLoc-style cumulative boundaries for varlen batches.
+
+    msprof records only the tensor shape ((B+1,) = B sequences), never the
+    values. An even split of the packed token dimension is the minimal legal
+    reconstruction; rows whose token count does not split evenly are rejected
+    because the real per-sequence boundaries were not recorded.
+    """
+    if not shape or len(shape) != 1:
+        raise ValueError(f"Expected a 1-D cu_seqlens shape, got {shape}")
+    seq_count = shape[0] - 1
+    if seq_count < 1:
+        raise ValueError(f"cu_seqlens shape {shape} implies no sequences")
+    if total_tokens % seq_count != 0:
+        raise ValueError(
+            f"Packed token count {total_tokens} does not split evenly into "
+            f"{seq_count} sequence(s); real per-sequence boundaries were not recorded"
+        )
+    per_seq = total_tokens // seq_count
+    return [per_seq * index for index in range(seq_count)] + [total_tokens]
+
+
+def run_replay_main(
+    *,
+    kernel_type: str,
+    description: str,
+    usage_examples: list[str],
+    version_help: str,
+    run_row_fn: Callable[[Path, int, dict[str, str], int], None],
+    required_columns: Collection[str] | None = None,
+) -> None:
+    """Shared CLI entry flow for single-kernel replay scripts.
+
+    Parses the standard replay arguments, locates the kernel CSVs under the
+    target database directory, optionally validates required CSV columns,
+    then replays every row through ``run_row_fn`` and prints the summary.
+    """
+    args = build_standard_argparser(
+        description=description,
+        usage_examples=usage_examples,
+        version_help=version_help,
+    ).parse_args()
+    ensure_npu_available()
+    repeat_count = get_replay_repeat_count(args.repeat_count)
+
+    target_data_dir = get_target_data_dir(
+        device=args.device,
+        vllm_ascend_version=args.vllm_version,
+        database_path=args.database_path,
+        torch_version=args.torch_version,
+        cann_version=args.cann_version,
+    )
+    csv_paths = sorted(target_data_dir.rglob(f"{kernel_type}.csv"))
+    if required_columns is not None:
+        for csv_path in csv_paths:
+            columns, _ = load_csv_rows(csv_path)
+            missing_columns = [column for column in required_columns if column not in columns]
+            if missing_columns:
+                raise RuntimeError(
+                    f"{csv_path}: missing required CSV columns {missing_columns!r}. Read header: {columns!r}"
+                )
+
+    total_rows, invalid_rows, source_row_count, skipped_rows = process_replay_csvs(
+        kernel_type=kernel_type,
+        csv_paths=csv_paths,
+        repeat_count=1,
+        run_row_fn=lambda csv_path, row_index, row: run_row_fn(csv_path, row_index, row, repeat_count),
+        update_mode=args.update_mode,
+    )
+
+    if not csv_paths or source_row_count == 0:
+        raise FileNotFoundError(f"No {kernel_type}.csv rows found under {target_data_dir}")
+    if total_rows == 0:
+        print(f"[WARNING] {kernel_type} replay deleted all {source_row_count} row(s) under {target_data_dir}.")
+
+    print(f"Processed {total_rows} {kernel_type} rows under {target_data_dir}.")
+    if args.update_mode == "missing-only":
+        print(f"[SUMMARY] {kernel_type}: skipped {skipped_rows} row(s) due to missing-only mode.")
+    print_invalid_replay_summary(invalid_rows, label=kernel_type)

@@ -20,10 +20,13 @@ Resolves and configures model settings for tensor cast operations.
 """
 
 import logging
+from functools import cached_property
+from pathlib import Path
 
 import torch
+import yaml
 
-from ..core.quantization.datatypes import QuantizeAttentionAction
+from ..core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 from ..core.user_config import UserInputConfig
 from ..layers.attention import AttentionTensorCast
 from ..layers.quant_linear import TensorCastQuantLinear
@@ -46,6 +49,16 @@ from ..transformers.custom_model_registry import (
 from ..transformers.utils import AutoModelConfigLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_model_quant_config(model_type: str | None, quant_config: QuantConfig) -> QuantConfig:
+    """Apply the model profile's quantization overrides, when present."""
+    profile = get_model_profile(model_type) if model_type else None
+    resolver = getattr(profile, "quant_config_resolver", None)
+    if resolver is None:
+        return quant_config
+    resolved = resolver(quant_config)
+    return quant_config if resolved is None else resolved
 
 
 def _resolve_text_config(hf_config):
@@ -143,17 +156,19 @@ class ConfigResolver:
         Raises:
             ValueError: If user_input is None and either parallel_config or quant_config is None.
         """
-        self.model_id = model_id or user_input.model_id
+        self.model_id = model_id or (user_input.model_id if user_input is not None else "")
         auto_loader = AutoModelConfigLoader()
-        self.hf_config = auto_loader.load_config(self.model_id, remote_source=user_input.remote_source)
+        load_config_kwargs = {"remote_source": user_input.remote_source} if user_input is not None else {}
+        self.hf_config = auto_loader.load_config(self.model_id, **load_config_kwargs)
         self.user_input = user_input
 
         if user_input is not None:
-            quant_config = user_input.get_quant_config()
+            quant_config = user_input.get_quant_config(model_type=getattr(self.hf_config, "model_type", None))
             parallel_config = user_input.get_parallel_config()
         else:
             if parallel_config is None or quant_config is None:
                 raise ValueError("When the user input is None,quant_config and parallel_config can not be None")
+        quant_config = _resolve_model_quant_config(getattr(self.hf_config, "model_type", None), quant_config)
 
         self.model_config = ModelConfig(
             parallel_config,
@@ -298,6 +313,13 @@ class ConfigResolver:
             moe_config.enable_shared_expert_tp = enable_shared_expert_tp
             moe_config.enable_external_shared_experts = enable_external_shared_experts
             moe_config.host_external_shared_experts = host_external_shared_experts
+            moe_config.dispatch_with_quant = (
+                model_type == "deepseek_v4" and self._v4_paged_runtime and not self.user_input.decode
+            )
+            if moe_config.dispatch_with_quant:
+                # Expert tensor -> ModuleList conversion does not retain the
+                # checkpoint activation scalar. Carry it with the MoE recipe.
+                moe_config.swiglu_limit = float(getattr(self.hf_config, "swiglu_limit", 0.0) or 0.0)
         self.model_config.moe_config = moe_config
 
     def update_mla_config(self, model_type: str = "", enable_dsa_cp: bool = False):
@@ -328,6 +350,58 @@ class ConfigResolver:
                     enable_dsa_cp=enable_dsa_cp,
                 )
                 self.model_config.mla_config = mla_config
+            if self.model_config.mla_config is not None:
+                self.model_config.mla_config.use_paged_kv_cache = model_type == "deepseek_v4" and self._v4_paged_runtime
+                if self.model_config.mla_config.use_paged_kv_cache:
+                    from ..layers.deepseek_v4 import DeepseekV4AscendSparseAttention
+
+                    self.model_config.mla_config.mla_cls = DeepseekV4AscendSparseAttention
+
+    @cached_property
+    def _v4_paged_runtime(self) -> bool:
+        """Select the paged W8A8 graph from operator mappings and request semantics."""
+        user = self.user_input
+        if (
+            self.hf_config.model_type != "deepseek_v4"
+            or "profiling" not in user.performance_model
+            or not user.profiling_database
+            or self.model_config.dtype != torch.bfloat16
+            or user.quantize_linear_action != QuantizeLinearAction.W8A8_DYNAMIC
+            or user.quantize_attention_action != QuantizeAttentionAction.DISABLED
+            or user.enable_sequence_parallel
+            or user.num_mtp_tokens
+            or user.speculative_method
+            or user.block_size != 128
+            or user.num_queries != 1
+            or user.prefix_cache_hit_rate != 0
+            or (user.decode and user.query_len != 1)
+            or (not user.decode and (user.query_len < 4 or user.context_length != 0))
+        ):
+            return False
+        path = Path(user.profiling_database) / "op_mapping.yaml"
+        if not path.is_file():
+            return False
+        with path.open(encoding="utf-8") as stream:
+            mappings = (yaml.safe_load(stream) or {}).get("operator_mappings", {})
+        required = {
+            "compressor.default": ("Compressor", "v4_physical", "v4_requests_v2"),
+            "sparse_attn_sharedkv.default": ("SparseAttnSharedkv", "v4_physical", "v4_requests_v2"),
+            "scatter_nd_update_mla.default": ("ScatterNdUpdateV2", "scatter_nd_update_mla", None),
+            "quant_lightning_indexer.default": ("VllmQuantLightningIndexer", "attention_lightning_indexer", None),
+            "grouped_matmul_quant.packed": ("GroupedMatmul", "v4_grouped_moe", "ascend_v4_grouped_v1"),
+            "grouped_matmul_quant_swiglu.quantized": (
+                "GroupedMatmulSwigluQuant",
+                "v4_grouped_moe",
+                "ascend_v4_grouped_v1",
+            ),
+        }
+        for op, (kernel, mode, contract) in required.items():
+            mapping = mappings.get(f"tensor_cast.{op}", {})
+            if mapping.get("kernel_type") != kernel or mapping.get("query_mode") != mode:
+                return False
+            if contract is not None and mapping.get("physical_projection", {}).get("contract") != contract:
+                return False
+        return True
 
     def update_mtp_config(self, model_type: str = "", num_mtp_tokens: int = 0):
         """
@@ -428,6 +502,14 @@ class ConfigResolver:
         from tensor_cast.layers.dspark import apply_cli_overrides_to_dspark_config
 
         text_config = _resolve_text_config(self.hf_config)
+        if (
+            draft_model_config_path is None
+            and getattr(text_config, "model_type", None) in ("minimax_m3_vl", "minimax_m3_vl_text")
+            and all(kind == "minimax_m3_sparse" for kind in (getattr(text_config, "layer_types", None) or [None]))
+        ):
+            from tensor_cast.layers.minimax_m31_dspark import MINIMAX_M31_DRAFT_CONFIG
+
+            draft_model_config_path = str(MINIMAX_M31_DRAFT_CONFIG)
         # Only supported native DSpark adapters own these defaults. A positive
         # num_nextn_predict_layers on another model may describe generic MTP.
         native_dspark = getattr(text_config, "model_type", None) in ("deepseek_v41", "deepseek_v41_text")

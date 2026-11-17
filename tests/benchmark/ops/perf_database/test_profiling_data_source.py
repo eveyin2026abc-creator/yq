@@ -1319,6 +1319,39 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
 "144,512;512,5120","INT8;INT8","ND;ND","144,5120","DT_BF16","ND",22.5
 """
 
+
+def test_quant_batch_matmul_direct_mapping_preserves_batched_shapes(tmp_path):
+    (tmp_path / "op_mapping.yaml").write_text(
+        'version: "test"\n'
+        "operator_mappings:\n"
+        '  "tensor_cast.batch_matmul_quant.default":\n'
+        "    kernel_type: QuantBatchMatmulV3\n"
+        "    tc_input_count: 2\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "QuantBatchMatmulV3.csv").write_text(
+        "Input Shapes,Input Data Types,Input Formats,Output Shapes,"
+        "Output Data Types,Output Formats,Average Duration(us)\n"
+        '"16,8,128;16,128,512","INT8;INT8","ND;ND","16,8,512","DT_BF16","ND",12.5\n',
+        encoding="utf-8",
+    )
+    activation = torch.empty(16, 8, 128, device="meta", dtype=torch.int8)
+    weight = torch.empty(16, 128, 512, device="meta", dtype=torch.int8)
+    scale = torch.ones(1, device="meta")
+    op = _make_op_info(
+        torch.ops.tensor_cast.batch_matmul_quant.default,
+        [activation, weight, scale, None, scale, None, None, torch.bfloat16],
+    )
+
+    result = ProfilingDataSource(tmp_path).lookup(op)
+
+    assert result is not None
+    assert result.source == QuerySource.MEASURED
+    assert result.latency_us == pytest.approx(12.5)
+    assert result.details["kernel_type"] == "QuantBatchMatmulV3"
+    assert result.shape_match_info.simulation_shapes == [[16, 8, 128], [16, 128, 512]]
+
+
 # Comm CSV: message_bytes = 144 * 5120 * 2 (BF16 output) = 1474560
 QUANT_COMM_CSV = """\
 message_bytes,num_devices,Duration(us)
@@ -1561,6 +1594,65 @@ def test_comm_allreduce_exact_match(comm_data_dir):
     assert result.shape_match_info.simulation_shapes == [[1310720]]
     assert result.shape_match_info.kernel_shapes == [[1310720]]
     assert result.shape_match_info.shape_match_rule == "comm"
+
+
+def test_comm_dtype_filter_keeps_exact_and_interpolation_sources_separate(comm_data_dir):
+    ds = ProfilingDataSource(comm_data_dir)
+    ds._csv_cache["hcom_allReduce_"] = pd.DataFrame(
+        [
+            {"message_bytes": n, "num_devices": 8, "dtype": dtype, "Duration(us)": latency}
+            for dtype, values in (("DT_BF16", (10, 20)), ("FP32", (100, 200)))
+            for n, latency in zip((128, 256), values)
+        ]
+    )
+    assert ds._query_comm_csv("hcom_allReduce_", 128, 8, None) == (10, False)
+    assert ds._query_comm_csv("hcom_allReduce_", 128, 8, None, dtype="FLOAT") == (100, False)
+    assert ds._query_comm_csv("hcom_allReduce_", 192, 8, None, dtype="DT_FLOAT")[0] == pytest.approx(150)
+    assert ds._query_comm_csv("hcom_allReduce_", 128, 8, None, dtype="INT8") is None
+    assert ds.last_miss_reason == "comm_dtype_unmatched:INT8"
+
+
+def test_comm_split_filter_and_runtime_element_units(comm_data_dir, monkeypatch):
+    ds = ProfilingDataSource(comm_data_dir)
+    ds._op_mapping["operator_mappings"]["tensor_cast.all_to_all.default"] = {
+        "kernel_type": "hcom_alltoallv_",
+        "category": "communication",
+        "match_dtype": True,
+        "match_split_sizes": True,
+    }
+    ds._csv_cache["hcom_alltoallv_"] = pd.DataFrame(
+        [
+            {
+                "message_bytes": 8,
+                "num_devices": 2,
+                "dtype": "INT8",
+                "Duration(us)": duration,
+                "input_split_sizes": incoming,
+                "output_split_sizes": outgoing,
+            }
+            for incoming, outgoing, duration in (("[2,6]", "[4,4]", 10), ("[4,4]", "[4,4]", 20))
+        ]
+    )
+    captured = []
+    monkeypatch.setattr(ds, "_record_tensor_query", lambda *args, **kwargs: captured.append(kwargs))
+    op = _make_op_info(
+        torch.ops.tensor_cast.all_to_all.default,
+        [torch.empty((2, 4), dtype=torch.int8, device="meta"), [1, 1], [1, 1], 0, [0, 1]],
+    )
+    hit = ds.lookup(op)
+    assert hit.latency_us == 20
+    assert captured[0]["attributes"]["input_split_sizes"] == [4, 4]
+    assert captured[0]["attributes"]["output_split_sizes"] == [4, 4]
+    assert (
+        ds._query_comm_csv(
+            "hcom_alltoallv_", 8, 2, None, dtype="INT8", input_split_sizes=[3, 5], output_split_sizes=[4, 4]
+        )
+        is None
+    )
+    assert ds.last_miss_reason == "comm_split_pattern_unmatched"
+    ds._csv_cache["hcom_alltoallv_"] = ds._csv_cache["hcom_alltoallv_"].drop(columns=["input_split_sizes"])
+    assert ds.lookup(op) is None
+    assert ds.last_miss_reason == "comm_split_metadata_missing"
 
 
 def test_comm_allreduce_different_shape_same_bytes(comm_data_dir):
@@ -4671,7 +4763,7 @@ def test_glm5_sparse_mla_mixed_phase_falls_back_from_composite_decomposition(cap
         seq_lens_values=[4096, 8192],
         is_decode_values=[False, True],
     )
-    caplog.set_level("DEBUG")
+    caplog.set_level("DEBUG", logger=_decompose_mla_common.__module__)
 
     specs = _decompose_mla_common(
         op,

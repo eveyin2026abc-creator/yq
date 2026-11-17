@@ -39,9 +39,9 @@ from tensor_cast.runtime_workload import RuntimeWorkloadTrace, WorkloadFreezeErr
 
 
 logger = logging.getLogger(__name__)
-# v3 stores bounded CPU control-tensor values in workload traces. Invalidate v2
-# keys because their metadata-only traces lose value-dependent sequence lengths.
-_WORKLOAD_TRACE_SCHEMA_VERSION = 3
+# v4 retains resident owners and explicit output boundaries for activation
+# accounting. Older traces cannot reproduce these memory classifications.
+_WORKLOAD_TRACE_SCHEMA_VERSION = 4
 _DEFAULT_WORKLOAD_CACHE_MAX_BYTES = 512 * 1024**2
 _DEFAULT_WORKLOAD_INFLIGHT_TIMEOUT_S = 600.0
 _MODEL_KEY_FIELDS = (
@@ -78,6 +78,7 @@ _MODEL_KEY_FIELDS = (
     "enable_matmul_allreduce",
     "enable_dispatch_ffn_combine",
     "enable_mlapo",
+    "multistream_overlap_shared_expert",
     "enable_shared_expert_tp",
     "enable_external_shared_experts",
     "host_external_shared_experts",
@@ -106,7 +107,7 @@ class RuntimeWorkload:
     indexer_cache_size_gb: float
     indexer_cache_per_token_gb: float
     batch_size: int
-    has_heterogeneous_prefill: bool
+    fixed_cache_size_gb: float = 0.0
 
 
 class WorkloadCache:
@@ -429,11 +430,11 @@ class WorkloadReuseModelRunner:
         workload_key = self._cache.make_workload_key(self._model_key, requests, generate_inputs_func)
         state, workload, owner_token = self._cache.claim_workload(workload_key)
         if state == "hit":
-            return self._estimate(workload, runtime_observer)
+            return self._estimate(workload, runtime_observer, requests=requests)
         if state == "wait":
             workload = self._cache.wait_workload(workload_key)
             if workload is not None:
-                return self._estimate(workload, runtime_observer)
+                return self._estimate(workload, runtime_observer, requests=requests)
             return self._ensure_capture_runner().run_inference(
                 requests,
                 generate_inputs_func=generate_inputs_func,
@@ -463,13 +464,11 @@ class WorkloadReuseModelRunner:
                 trace=RuntimeWorkloadTrace.from_runtime(observed_runtimes[0]),
                 model_weight_size_gb=metrics.model_weight_size_gb,
                 kv_cache_size_gb=metrics.kv_cache_size_gb,
+                fixed_cache_size_gb=metrics.fixed_cache_size_gb,
                 kv_cache_per_token_gb=metrics.kv_cache_per_token_gb,
                 indexer_cache_size_gb=metrics.indexer_cache_size_gb,
                 indexer_cache_per_token_gb=metrics.indexer_cache_per_token_gb,
                 batch_size=metrics.batch_size,
-                has_heterogeneous_prefill=(
-                    len({request.query_len for request in requests if not request.is_decode}) > 1
-                ),
             )
             self._cache.publish_workload(workload_key, workload, owner_token)
             owner_slot_released = True
@@ -502,7 +501,7 @@ class WorkloadReuseModelRunner:
                 except Exception:  # pragma: no cover - manager may be gone
                     logger.debug("Unable to release workload capture slot", exc_info=True)
 
-    def _estimate(self, workload: RuntimeWorkload, runtime_observer=None) -> ModelRunnerMetrics:
+    def _estimate(self, workload: RuntimeWorkload, runtime_observer=None, *, requests=()) -> ModelRunnerMetrics:
         estimate_start = time.perf_counter()
         runtime = Runtime(
             self.perf_models,
@@ -516,27 +515,17 @@ class WorkloadReuseModelRunner:
         if runtime_observer is not None:
             runtime_observer(runtime)
 
-        peak_memory_usage_gb = runtime.memory_tracker.peak_mem_usage() / 1024**3
-        model_activation_size_gb = peak_memory_usage_gb - workload.kv_cache_size_gb - workload.model_weight_size_gb
+        summary = runtime.memory_tracker.get_forward_memory_summary()
+        model_activation_size_gb = summary.activation_peak_bytes / 1024**3
+        peak_memory_usage_gb = (
+            summary.peak_memory_bytes(
+                round(workload.model_weight_size_gb * 1024**3), round(workload.kv_cache_size_gb * 1024**3)
+            )
+            / 1024**3
+        )
         device_memory_available_gb = (
             self.total_device_memory_gb - peak_memory_usage_gb - self.user_input.reserved_memory_gb
         )
-        if device_memory_available_gb < 0 and workload.has_heterogeneous_prefill:
-            peak_memory_usage_gb = (
-                workload.model_weight_size_gb + workload.kv_cache_size_gb
-                if model_activation_size_gb <= 0
-                else 0.1 * model_activation_size_gb + workload.model_weight_size_gb + workload.kv_cache_size_gb
-            )
-            model_activation_size_gb = peak_memory_usage_gb - workload.kv_cache_size_gb - workload.model_weight_size_gb
-            device_memory_available_gb = (
-                self.total_device_memory_gb - peak_memory_usage_gb - self.user_input.reserved_memory_gb
-            )
-        if model_activation_size_gb < 0:
-            model_activation_size_gb = 0.0
-            peak_memory_usage_gb = workload.model_weight_size_gb + workload.kv_cache_size_gb
-            device_memory_available_gb = (
-                self.total_device_memory_gb - peak_memory_usage_gb - self.user_input.reserved_memory_gb
-            )
 
         execution_time_s = runtime.total_execution_time_s()
         tps_per_model = {
@@ -562,6 +551,7 @@ class WorkloadReuseModelRunner:
             model_weight_size_gb=workload.model_weight_size_gb,
             peak_memory_usage_gb=peak_memory_usage_gb,
             kv_cache_size_gb=workload.kv_cache_size_gb,
+            fixed_cache_size_gb=workload.fixed_cache_size_gb,
             kv_cache_per_token_gb=workload.kv_cache_per_token_gb,
             indexer_cache_size_gb=workload.indexer_cache_size_gb,
             indexer_cache_per_token_gb=workload.indexer_cache_per_token_gb,

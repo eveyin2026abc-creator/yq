@@ -6,13 +6,12 @@ from pathlib import Path
 
 import tomlkit
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCRIPT = SCRIPT_DIR / "config_writer.py"
 
 
 def load_module():
-    # config_writer 以 `from common import ...` 引用同目录模块，需先把 scripts 目录挂上 sys.path
+    # config_writer 以 `from optix_assistant_common import ...` 引用同目录模块，需先把 scripts 目录挂上 sys.path
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
     spec = importlib.util.spec_from_file_location("config_writer", SCRIPT)
@@ -60,3 +59,46 @@ def test_string_command_field_unchanged(tmp_path):
     doc = _run(tmp_path, "vllm.command.port=8089")
     assert doc["vllm"]["command"]["port"] == "8089"
     assert isinstance(doc["vllm"]["command"]["port"], str)
+
+
+def test_settings_accepts_plugin_sections_and_rejects_invalid_phase_schema():
+    module = load_module()
+    errors, notes = module.validate_settings('[vllm_pd]\nremote_tmp_dir="/tmp/pd"\n[cluster]\nhosts=[]\n')
+    assert not notes  # This regression must exercise the installed OptiX schema.
+    assert not errors
+    errors, notes = module.validate_settings('[pd_disagg.prefill]\nbenchmark_run_count=0\n')
+    assert not notes
+    assert errors and "benchmark_run_count" in errors[0]
+
+
+def test_full_service_can_be_disabled_without_removing_its_section(tmp_path):
+    doc = _run(tmp_path, "pd_disagg.full_service.enabled=false")
+    assert doc["pd_disagg"]["full_service"]["enabled"] is False
+    module = load_module()
+    errors, notes = module.validate_settings('[pd_disagg.full_service]\nenabled=true\n')
+    assert not notes
+    assert errors and "requires CONCURRENCY" in errors[0]
+
+
+def test_pd_role_env_numeric_value_stays_string(tmp_path):
+    # 回归现场：vllm_pd 的 PD 角色 env 表（env_prefill / env_decode）schema 同为
+    # dict[str, str]，VLLM_ENGINE_READY_TIMEOUT_S=30000 曾被数字推断写成 int，
+    # 导致整份 PD 配置被 schema 静默拒绝并退回 localhost。
+    module = load_module()
+    config = tmp_path / "config.toml"
+    config.write_text("[vllm_pd]\n\n[vllm_pd.env_prefill]\n")
+    assert module.main(["--config", str(config), "--set", "vllm_pd.env_prefill.VLLM_ENGINE_READY_TIMEOUT_S=30000"]) == 0
+    doc = tomlkit.parse(config.read_text())
+    value = doc["vllm_pd"]["env_prefill"]["VLLM_ENGINE_READY_TIMEOUT_S"]
+    assert value == "30000"
+    assert isinstance(value, str)
+
+
+def test_pd_role_env_decode_non_numeric_unchanged(tmp_path):
+    # 非数字值（AIV）在 PD 角色 env 表里同样以字符串落盘。
+    module = load_module()
+    config = tmp_path / "config.toml"
+    config.write_text("[vllm_pd]\n\n[vllm_pd.env_decode]\n")
+    assert module.main(["--config", str(config), "--set", "vllm_pd.env_decode.HCCL_OP_EXPANSION_MODE=AIV"]) == 0
+    doc = tomlkit.parse(config.read_text())
+    assert doc["vllm_pd"]["env_decode"]["HCCL_OP_EXPANSION_MODE"] == "AIV"

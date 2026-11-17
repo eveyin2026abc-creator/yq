@@ -73,8 +73,10 @@ msmodeling optix -e <vllm|mindie> -b <ais_bench|vllm_benchmark> -c <config.toml>
    如 `--speculative-config '{"num_speculative_tokens": $NUM_SPECULATIVE_TOKENS,...}'`）。
 6. serve 命令去重与合并：容器 flag（`--speculative-config`/`--compilation-config`）多处出现
    合并为一个（`others` 为底座、搜索侧键值覆盖）；普通 flag 重复时后出现的值生效；
-   `--speculative-config` 合并后若 `num_speculative_tokens==0` 或缺 `method`/`model`，
-   整个容器被丢弃（= 关闭投机，vLLM 对孤儿容器会启动失败）。
+   `--speculative-config` 合并后仅 `num_speculative_tokens==0` 表示明确关闭投机。
+   缺少必要的 `method`/`model`、非法 γ 或无效 JSON 会直接报错，禁止静默关闭。
+   单机、混部和 PD 预检与执行共用服务参数规划；PD 先分侧、去后缀。
+   部署导出保留实测脚本；候选 γ 与脚本不一致的历史结果必须重测，不能在导出时补齐。
 7. argv[0] 为 `vllm`/`ais_bench` 时，`materialize_command` 按部署 PATH 解析成绝对路径
    （解析细节见"环境与部署"）。
 
@@ -129,6 +131,27 @@ candidates 文件已就位。
   （候选并发值被忽略并打 warning，且每 trial 会跑两遍 benchmark：先 max 并发测吞吐，
   再以 `throughput × 1.05` 作为 request-rate 复测）——skill 的 preflight 已强制
   `use_request_rate_calibration = false`，不要打开。
+
+## 并发扫描候选（concurrency_sweep）协议
+
+并发属于 `BENCHMARK_ONLY_FIELDS`，不影响 serve 启动命令。sweep 候选一次部署服务，在保活服务上逐档改写 benchmark 并打流。
+
+**候选字段**：
+
+- `type: "concurrency_sweep"`；普通 optimization 候选省略该字段。
+- `concurrency_levels` 为 2~8 个升序整数，须位于 CONCURRENCY 搜索区间；省略时生成几何 5 档，固定区间报错。
+- `params` 只含服务侧参数，禁止 CONCURRENCY/REQUESTRATE；后者固定无限流（值 ≤0 时删除 `--request-rate` flag）。
+- 各档沿用 calibration 参数对齐；`benchmark_run_count > 1` 时保留 warmup+复跑并解析最后一趟。
+
+**执行与归档**：每档执行 `stop → 改写并发 → prepare → run → monitoring_status`，解析归档后再跑下一档。原始结果始终归档到 `<归档根>/sweep/<candidate_id>/c<level>/`，不受 `--backup` 影响；归档根优先取该 trial 的 `back_up/<phase>/<n>/`，否则取 `<output>/back_up/<phase>/<n>/`。一个 sweep 占一个 `max_trials` 名额，全部档位计时结束后统一 `save_result`。
+
+**结果与判优**：
+
+- `params.CONCURRENCY` 回填最优档；顶层 `fitness`、`performance`、`slo_violated` 使用该档结果，与其他候选同尺度比较。
+- `metadata.trial_kind` 为 `concurrency_sweep`；`metadata.sweep[]` 保存逐档并发、完整性能、错误或跳过原因，以及结果 JSON 中的实测 `Concurrency`。
+- `metadata.best_concurrency` 先从 SLO 达标档中按 `generate_speed`（即 `metadata.best_metric`）选最高档；最高与次高差距 <3% 时取较低档。全部违反 SLO 时取 TPOT 最小档并保留 `slo_violated=true`；未配置 SLO 时按纯吞吐判优。
+
+**早停与失败**：实测 TPOT/TTFT 超过 SLO 阈值 1.2 倍时跳过后续更高档，记录 `"skipped": "slo_cliff"` 且不计成功或失败。部署失败沿用普通 trial 重试与分类；单档失败记录 `"error"` 并继续，已成功档 ≥2 即视为成功；服务崩溃则整 trial 失败，`failure.category="service"`，已测档位仍保留供诊断。
 
 ## 进程生命周期（serve/benchmark 起停）
 

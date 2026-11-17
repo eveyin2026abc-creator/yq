@@ -194,6 +194,11 @@ class ModelRunner:
                 num_output_tokens=num_output_tokens,
                 seq_len=seq_len,
                 is_decode=is_decode,
+                # P1-42: keep the multimodal payload on the DES path so the
+                # generators can build pixel_values and the H2D accounting sees
+                # them. Decode steps carry no images (the vision tower runs with
+                # prefill) but keep the token accounting from the lengths.
+                images=(tuple(req.images) if (getattr(req, "images", ()) and not is_decode) else None),
             )
             transferred_batch.append(request_info)
 
@@ -426,7 +431,9 @@ class ModelRunner:
         ]
         inference_metrics = self.tensor_cast_model_runner.run_inference(batch, with_sampler=True)
         block_size = self.common_config.serving_config.block_size
-        all_mem_for_kv_cache = inference_metrics.device_memory_available_gb + inference_metrics.kv_cache_size_gb
+        # Only the token-dependent part can be reclaimed for KV blocks.
+        variable_kv_cache_gb = inference_metrics.kv_cache_size_gb - inference_metrics.fixed_cache_size_gb
+        all_mem_for_kv_cache = inference_metrics.device_memory_available_gb + variable_kv_cache_gb
         num_blocks = int(all_mem_for_kv_cache / inference_metrics.kv_cache_per_token_gb // block_size)
         # Decode Context Parallel shards the KV cache along the token dimension, so
         # the same per-card byte budget can hold more tokens. The factor is 1 when DCP
@@ -434,6 +441,21 @@ class ModelRunner:
         # h_kv >= tp, where the KV-head growth cancels the sequence shrink) or is not
         # modeled (V4/SFA caches); see ``dcp_kv_token_capacity_factor``.
         num_blocks *= inference_metrics.kv_cache_token_capacity_factor
+        # The multimodal Encoder/Prefix cache is a static startup reservation
+        # out of the KV pool, so the scheduler never sees blocks it
+        # cannot use. The deduction is validated rather than clamped.
+        from serving_cast.service.multimodal_cache import reserve_kv_blocks
+
+        reservation = getattr(self.common_config.model_config, "image_cache_capacity_mib", 0)
+        # A mocked/absent config reports a non-numeric attribute; treat that as
+        # "no reservation" instead of comparing a Mock with an int.
+        reservation_mib = reservation if isinstance(reservation, (int, float)) else 0
+        num_blocks = reserve_kv_blocks(
+            num_blocks,
+            block_size,
+            inference_metrics.kv_cache_per_token_gb,
+            reservation_mib,
+        )
         logger.debug("warmup result: %d blocks", num_blocks)
         return num_blocks, block_size
 

@@ -19,6 +19,7 @@ import copy
 import logging
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from contextlib import contextmanager
 from functools import partial
 import multiprocessing as mp
 from multiprocessing.context import BaseContext
@@ -32,6 +33,8 @@ from tensor_cast import config
 from tensor_cast.core.model_runner import ModelRunner
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.device import DeviceProfile
+from serving_cast.service.multimodal import UndeployableCandidateError
+from tensor_cast.layers.parallel_linear import InvalidHeadParallelismError
 from .service.optimizer_factory import OptimizerFactory
 from .service.optimizer_summary import OptimizerSummary
 from .service.pd_ratio_throughput_optimizer import PDRatioThroughputOptimizer
@@ -53,6 +56,24 @@ from .service.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_structural_candidate_error(exc: BaseException) -> bool:
+    """True when the failure is about building this candidate's shapes.
+
+    Type first: ``UndeployableCandidateError`` is the explicit contract for
+    "this candidate cannot be served" (image span / encoder budget / cache
+    reservation), so a new undeployable check does not need to be added to a
+    brittle message list. The historical message fragments stay as a fallback
+    for errors that arrive as a plain ``RuntimeError`` through the process
+    pool. Everything else keeps propagating.
+    """
+    from serving_cast.service.multimodal import UndeployableCandidateError
+
+    if isinstance(exc, UndeployableCandidateError):
+        return True
+    text = str(exc)
+    return "split_sizes" in text or "vision_tp" in text
 
 
 class ParallelRunner:
@@ -143,6 +164,8 @@ class ParallelRunner:
             image_batch_size=self.args.image_batch_size,
             image_height=self.args.image_height,
             image_width=self.args.image_width,
+            encoder_budget=getattr(self.args, "encoder_budget", None),
+            image_cache_capacity_mib=getattr(self.args, "image_cache_capacity", None),
             ttft_limits=self.args.ttft_limits,
             max_batched_tokens=max_batched_tokens,
             max_concurrency=getattr(self.args, "max_concurrency", None),
@@ -163,23 +186,157 @@ class ParallelRunner:
             concurrency_search_strategy=self.args.concurrency_search_strategy,
         )
 
+    @contextmanager
+    def _vision_tp_override(self) -> Iterator[None]:
+        """Restore ``args.vision_tp_size`` after the sweep, however it exits.
+
+        ``vision_tp_size`` has to be written on the runner args because
+        ``UserInputConfig.from_args()`` reads the scalar name. A candidate
+        without a value must not inherit the previous one, and the caller's args
+        object (shared with later device/planning runs) must not stay mutated.
+        """
+        had_vision_tp = hasattr(self.args, "vision_tp_size")
+        original_vision_tp = getattr(self.args, "vision_tp_size", None)
+        try:
+            yield
+        finally:
+            if had_vision_tp:
+                self.args.vision_tp_size = original_vision_tp
+            elif hasattr(self.args, "vision_tp_size"):
+                # The attribute only existed because this sweep created it.
+                del self.args.vision_tp_size
+
     def run_agg(self) -> list[OptimizerSummary]:
         logger.info(
             "Run Aggregation with ttft %r ms, tpot %r ms.",
             self.args.ttft_limits,
             self.args.tpot_limits,
         )
-        overwrite_optimizer_data = copy.deepcopy(self.optimizer_data)
-        overwrite_optimizer_data.tpot_limits = self.args.tpot_limits
-        summary_list = self._get_df_list(overwrite_optimizer_data)
-
-        self._add_summary_result(summary_list, overwrite_optimizer_data)
-
+        combos = self._multimodal_search_combos()
+        with self._vision_tp_override():
+            for combo in combos:
+                summary_list = self._run_agg_combo(combo)
+                if summary_list is None:
+                    continue
+                self._add_summary_result(summary_list, self._combo_data(combo))
         return self.summary_result
+
+    def _combo_data(self, combo: Optional[dict]) -> OptimizerData:
+        """``OptimizerData`` for one sweep candidate (also used by the caller)."""
+        data = copy.deepcopy(self.optimizer_data)
+        data.tpot_limits = self.args.tpot_limits
+        if combo is not None:
+            if combo.get("encoder_budget") is not None:
+                data.encoder_budget = combo["encoder_budget"]
+            if combo.get("image_cache_capacity_mib") is not None:
+                data.image_cache_capacity_mib = combo["image_cache_capacity_mib"]
+        return data
+
+    def _run_agg_combo(self, combo: Optional[dict]) -> Optional[list[OptimizerSummary]]:
+        """Run one sweep candidate; skip structural failures, return others."""
+        if combo is not None and combo.get("vision_tp_size") is not None:
+            # A sweep either sets a degree on every candidate or on none:
+            # ``UserInputConfig.vision_tp_size`` is a validated ``int = 1`` and
+            # rejects None, so an absent value keeps the caller's.
+            self.args.vision_tp_size = combo["vision_tp_size"]
+        overwrite_optimizer_data = self._combo_data(combo)
+        try:
+            summary_list = self._get_df_list(overwrite_optimizer_data)
+        except (RuntimeError, ValueError) as exc:
+            # A candidate the model cannot build (e.g. a vision tower that
+            # cannot shard at this degree) is skipped and counted, exactly
+            # like an undeployable encoder budget: one bad point of the
+            # sweep must not abort the rest (P1-36).
+            if combo is None or not _is_structural_candidate_error(exc):
+                raise
+            logger.warning(
+                "Skipping candidate vision_tp=%r encoder_budget=%r cache=%r: %s",
+                combo.get("vision_tp_size"),
+                combo.get("encoder_budget"),
+                combo.get("image_cache_capacity_mib"),
+                exc,
+            )
+            return None
+        if combo is not None:
+            # Keep the candidate identity on every row so the sweep is
+            # readable without cross-referencing the run order (P1-36).
+            for summary in summary_list:
+                df = summary.get_summary_df()
+                if df is None or df.empty:
+                    continue
+                df = df.copy()
+                df["vision_tp_size"] = combo.get("vision_tp_size")
+                df["encoder_budget"] = combo.get("encoder_budget")
+                df["image_cache_capacity_mib"] = combo.get("image_cache_capacity_mib")
+                summary.set_summary_df(df)
+        return summary_list
+
+    def _multimodal_search_combos(self) -> list[Optional[dict]]:
+        """Cross product of the multimodal search dimensions (P1-36).
+
+        Returns ``[None]`` when no sweep was requested, so the historical
+        single-run path and its result schema stay untouched.
+        """
+        budgets = getattr(self.args, "encoder_budgets", None)
+        capacities = getattr(self.args, "image_cache_capacities", None)
+        vision_tps = getattr(self.args, "vision_tp_sizes", None)
+        # ``nargs="*"`` turns a bare flag into ``[]``, which means "the user asked
+        # for a sweep" and not "no sweep": only ``None`` (flag absent) keeps the
+        # historical single-run path.
+        if budgets is None and capacities is None and vision_tps is None:
+            return [None]
+        budgets = list(budgets) if budgets else [getattr(self.args, "encoder_budget", None)]
+        capacities = list(capacities) if capacities else [getattr(self.args, "image_cache_capacity", None)]
+        # ``vision_tp_size`` lives on UserInputConfig, so None keeps the model's
+        # own default (vision TP=1) and the scalar --vision-tp-size wins if set.
+        vision_tps = list(vision_tps) if vision_tps else [getattr(self.args, "vision_tp_size", None)]
+        combos = [
+            {
+                "vision_tp_size": vision_tp,
+                "encoder_budget": budget,
+                "image_cache_capacity_mib": capacity,
+            }
+            for vision_tp in vision_tps
+            for budget in budgets
+            for capacity in capacities
+        ]
+        logger.info(
+            "Multimodal search: %d candidate(s) over vision TP %r x encoder budgets %r x cache capacities %r",
+            len(combos),
+            vision_tps,
+            budgets,
+            capacities,
+        )
+        return combos
+
+    def _reject_multimodal_sweep_outside_agg(self) -> None:
+        """Fail loudly when a multimodal sweep is asked for on the PD path.
+
+        Only ``run_agg`` expands the cross product; the Prefill/Decode and PD
+        ratio paths take the scalar values instead. Silently ignoring the sweep
+        would hand back a single-candidate result that looks like a comparison
+        of every candidate the caller listed (review: zhenyu_zhang).
+        """
+        requested = [
+            flag
+            for flag, attr in (
+                ("--vision-tp-sizes", "vision_tp_sizes"),
+                ("--encoder-budgets", "encoder_budgets"),
+                ("--image-cache-capacities", "image_cache_capacities"),
+            )
+            if getattr(self.args, attr, None) is not None
+        ]
+        if requested:
+            raise ValueError(
+                f"multimodal sweep dimension(s) {', '.join(requested)} are aggregation-only; "
+                "the --disagg / PD ratio paths run the scalar values. Drop the sweep flags, "
+                "or run without --disagg."
+            )
 
     def run_disagg(self) -> list[OptimizerSummary]:
         # if set pd_ratio, run PD ratio optimization
         # if set ttft_limits, run Prefill; if set tpot_limits, run Decode
+        self._reject_multimodal_sweep_outside_agg()
         if self.args.enable_optimize_prefill_decode_ratio:
             return self._run_pd_ratio()
 
@@ -285,35 +442,76 @@ class ParallelRunner:
 
     def _get_model_runnner(self, user_input: UserInputConfig) -> ModelRunner:
         model_runner = None
+        args = getattr(self, "args", None)
+        model_id = getattr(user_input, "model_id", None)
         try:
-            model_runner = ModelRunner(user_input)
+            from template_engine.runner_bridge import create_runner
+
+            if args is None:
+                model_runner = ModelRunner(user_input)
+            else:
+                model_runner = create_runner(
+                    user_input,
+                    enabled=getattr(args, 'template_graph_optimization', True),
+                )
+        except InvalidHeadParallelismError:
+            # The layer already warned about the incompatible TP candidate.
+            return None
+        except UndeployableCandidateError as exc:
+            # Structurally impossible candidate (image span / encoder budget):
+            # skip and count it instead of aborting the whole search, so a
+            # search that enumerates encoder budgets or vision TP sizes keeps
+            # its feasible points (RFC §3.3.1 / P1-36).
+            self._undeployable_candidates = getattr(self, "_undeployable_candidates", 0) + 1
+            logger.warning(
+                "Skipping undeployable candidate TP %d PP %d (%d skipped so far): %s",
+                user_input.tp_size,
+                getattr(user_input, "pp_size", 1),
+                self._undeployable_candidates,
+                exc,
+            )
+            return None
         except UnsupportedPPConfigurationError as exc:
             pp_size = getattr(user_input, "pp_size", 1)
             if pp_size > 1:
                 logger.warning(
                     "Skipping PP=%d candidate for model %r: %s",
                     pp_size,
-                    self.args.model_id,
+                    model_id,
                     exc,
                 )
             else:
-                logger.error("Failed to build model %r", self.args.model_id)
+                logger.error("Failed to build model %r", model_id)
         except Exception as exc:
             pp_size = getattr(user_input, "pp_size", 1)
             if pp_size > 1:
                 # PP>1 candidates must fail loud on non-PP errors (review P1-3).
-                logger.error("Failed to build model %r: %s", self.args.model_id, exc)
+                logger.error("Failed to build model %r: %s", model_id, exc)
                 raise
             else:
                 # PP=1 legacy path preserves the original tolerant behavior:
                 # log the error with full traceback and return None so the caller skips this candidate.
-                logger.exception("Failed to build model %r", self.args.model_id)
+                logger.exception("Failed to build model %r", model_id)
 
         return model_runner
 
     def _build_model_runner(self, user_input: UserInputConfig) -> ModelRunner | None:
-        """Build a runner while preserving the existing workload-cache behavior."""
-        if self._workload_cache is None:
+        """Build a runner while preserving the existing workload-cache behavior.
+
+        When the template graph covers this model, the runner is wrapped so
+        covered forwards replay template ops through the same Runtime backend
+        (per-call legacy fallback keeps the original behaviour as the floor).
+        """
+        runner = self._build_base_model_runner(user_input)
+        if runner is None:
+            return runner
+        from template_engine.runner_bridge import wrap_registered_runner
+
+        return wrap_registered_runner(runner, enabled=getattr(self.args, 'template_graph_optimization', True))
+
+    def _build_base_model_runner(self, user_input: UserInputConfig) -> ModelRunner | None:
+        """Original runner construction, extracted unchanged."""
+        if self._workload_cache is None or not getattr(self.args, "template_graph_optimization", True):
             return self._get_model_runnner(user_input)
         if getattr(user_input, "enable_decode_kv_offload", False) or getattr(
             user_input, "enable_prefill_kv_offload", False
@@ -372,7 +570,7 @@ class ParallelRunner:
 
         pp_sizes_raw = getattr(self.args, "pp_sizes", None)
         # Use "is not None" so that an explicit --pp-sizes with no values
-        # (nargs="*" → []) enters the PP search path instead of silently
+        # (nargs="*" 鈫?[]) enters the PP search path instead of silently
         # falling back to legacy PP=1.  build_pp_search_candidates treats []
         # as "search all powers of 2 up to num_devices".
         pp_search_enabled = pp_sizes_raw is not None
@@ -410,7 +608,7 @@ class ParallelRunner:
             tmp_user_input.moe_tp_size = candidate.moe_tp_size
             # Translate the speculative-method search slot: DFlash/DSpark reuse
             # the MTP search slot (candidate.num_mtp_tokens = N), but must NOT
-            # set num_mtp_tokens=N on UserInputConfig — that would make
+            # set num_mtp_tokens=N on UserInputConfig 鈥?that would make
             # ConfigResolver build MtpConfig alongside DflashConfig (mutually
             # exclusive). MTP keeps N for MtpWrapper construction.
             method = getattr(base_user_input, "speculative_method", None)
@@ -677,7 +875,7 @@ class ParallelRunner:
         """Resolve num_hidden_layers for PP validation without loading weights.
 
         Use override if set; otherwise read the HF config (config-only, no
-        weights). Raise on failure — a silent large fallback would let invalid
+        weights). Raise on failure 鈥?a silent large fallback would let invalid
         partitions through and break build_pipeline_plan later.
         """
         override = getattr(base_user_input, "num_hidden_layers_override", 0) or 0
@@ -801,6 +999,7 @@ class ParallelRunner:
         config.compilation.fusion_patterns.enable_matmul_allreduce = bool(user_input.enable_matmul_allreduce)
         config.compilation.fusion_patterns.enable_dispatch_ffn_combine = bool(user_input.enable_dispatch_ffn_combine)
         config.compilation.fusion_patterns.enable_mlapo = bool(user_input.enable_mlapo)
+        config.compilation.multistream_overlap_shared_expert.enable = bool(user_input.multistream_overlap_shared_expert)
 
     def _submit_task(
         self,
@@ -892,6 +1091,18 @@ class ParallelRunner:
             )
 
             return result
+        except UndeployableCandidateError as exc:
+            # Structurally impossible candidate: skip and count it rather than
+            # aborting the search (RFC §3.3.1 / P1-36).
+            self._undeployable_candidates = getattr(self, "_undeployable_candidates", 0) + 1
+            logger.warning(
+                "Skipping undeployable candidate TP %d PP %d (%d skipped so far): %s",
+                user_input.tp_size,
+                getattr(user_input, "pp_size", 1),
+                self._undeployable_candidates,
+                exc,
+            )
+            return None
         except UnsupportedPPConfigurationError as exc:
             logger.warning(
                 "Skipping candidate TP %d PP %d: %s",

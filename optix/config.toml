@@ -16,6 +16,12 @@ tpot_slo = 0.05
 # true: use scheduler.run_with_request_rate, CONCURRENCY fixed to max. The first
 #   run uses the same maximum-pressure rule, then a finite rate is calibrated.
 use_request_rate_calibration = true
+# Standard mode: run N identical benchmark passes on the same service.
+# The first N-1 passes warm the cache; only the final pass is scored.
+# Values greater than 1 require use_request_rate_calibration=false.
+# Benchmark plugins must clear prior results or isolate outputs for each pass.
+# Read metrics only from the current pass to avoid scoring warmup results.
+benchmark_run_count = 1
 skip_pso = false
 
 # ------------------------- Select top_k for fine-tuning ------------------------------------------------
@@ -131,6 +137,10 @@ port = "port"
 model = "model_path"
 served_model_name = "model_name"
 dataset_name = "dataset_name"
+# Leave backend/endpoint unset to use vllm bench serve's own defaults.
+# For chat-only / PD-disaggregated, set:
+# backend = "openai-chat"
+# endpoint = "/v1/chat/completions"
 others = ""
 
 
@@ -197,10 +207,12 @@ enabled = false
 action = "terminate"
 metrics_url = "http://127.0.0.1:8000/metrics"
 
+# Optional automatic deployment + full-service refinement is configured under
+# pd_disagg.full_service.enabled=true (default: false); see docs/zh/use_cases/examples/optix_pd_disaggregation/full_pipeline.toml.
 # ------------------------- Built-in PD Disaggregation Tuning --------------------------------------------
-# This mode only searches P/D service parameters and recommends the ratio:
+# With full_service.enabled=false, this mode only searches P/D parameters and recommends the ratio:
 #   msmodeling optix --mode pd_disagg -c ./config.toml
-# After starting the PD service yourself, use the regular standard mode
+# For manual deployment, start the PD service and use the regular standard mode
 # with skip_pso=true and manage_simulator_lifecycle=false for benchmark tuning.
 # Prefill/Decode can override the top-level n_particles/iters independently;
 # an omitted phase value falls back to the corresponding top-level value.

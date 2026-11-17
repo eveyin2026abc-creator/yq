@@ -34,7 +34,7 @@ from cli.registry.modules import get_spec
 # ── Module metadata ─────────────────────────────────────────────
 
 MODULE_ID = "text_generate"
-VERSION = "2.9.18"
+VERSION = "2.9.21"
 TITLE = I18nText("文本生成", "Text Generation")
 RUNNER = "ModelRunner"
 
@@ -297,7 +297,12 @@ UI: dict[str, UIFieldProps] = {
         group={"zh": "请求", "en": "Request"},
         control="number",
     ),
+    # Legacy MTP entry — superseded by the unified speculative decoding entry
+    # (speculative-method=mtp + num-speculative-tokens). Hidden from the form so
+    # users go through the new entry; default 0 = MTP off is inert on a baseline
+    # run, and conditions drops it from the submission once a method is set.
     "num-mtp-tokens": UIFieldProps(
+        hidden=True,
         label=I18nText("MTP token 数", "MTP Token Count"),
         tooltip=I18nText(
             'MTP token 数量。推荐使用上方的"投机解码方法=mtp + 投机 token 数"统一入口。选定 speculative-method 后此字段自动禁用。',
@@ -353,6 +358,10 @@ UI: dict[str, UIFieldProps] = {
             {
                 "value": "enable_dispatch_ffn_combine",
                 "label": "Enable Dispatch FFN Combine",
+            },
+            {
+                "value": "multistream_overlap_shared_expert",
+                "label": "Multistream Overlap Shared Expert",
             },
         ],
         default=[],
@@ -671,6 +680,17 @@ UI: dict[str, UIFieldProps] = {
         group={"zh": "高级并行", "en": "Advanced Parallelism"},
         control="number",
     ),
+    "language-model-only": UIFieldProps(
+        label=I18nText("仅语言模型", "Language Model Only"),
+        tooltip=I18nText(
+            "关闭多模态输入，并从设备常驻权重中排除视觉塔和已注册的多模态连接层。不能与图像输入参数同时使用。",
+            "Disable multimodal inputs and exclude the vision tower and registered multimodal connectors from device-resident model weights. Cannot be combined with image input options.",
+        ),
+        default=False,
+        group={"zh": "多模态", "en": "Multimodal"},
+        control="switch",
+        hidden=True,
+    ),
     "image-batch-size": UIFieldProps(
         label=I18nText("图像批大小", "Image Batch Size"),
         tooltip=I18nText(
@@ -726,6 +746,7 @@ UI: dict[str, UIFieldProps] = {
     ),
     "analytic-calibration-profile": UIFieldProps(hidden=True),
     "analytic-calibration-stack": UIFieldProps(hidden=True),
+    "template-graph-optimization": UIFieldProps(hidden=True),
     "remote-source": UIFieldProps(
         label=I18nText("模型远程来源", "Model Remote Source"),
         tooltip=I18nText("模型加载的远程来源。", "Remote source for model loading."),

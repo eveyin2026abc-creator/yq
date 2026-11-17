@@ -139,13 +139,18 @@ class TextGenerateTestMixin:
             f"{test_name}: Model activation size should be non-negative",
         )
 
-        # Validate memory consistency: peak = weight + kv_cache + activation
-        expected_peak = result["model_weight_size_gb"] + result["kv_cache_size_gb"] + result["model_activation_size_gb"]
+        # Peak memory also includes ordinary device-side request inputs, which are
+        # intentionally not exposed as a separate user-facing metric. Validate the
+        # public total/available-memory contract instead of reconstructing the peak
+        # from an incomplete set of displayed subtotals.
+        expected_available = (
+            result["total_device_memory_gb"] - result["peak_memory_usage_gb"] - result["reserved_memory_gb"]
+        )
         self.assertAlmostEqual(
-            result["peak_memory_usage_gb"],
-            expected_peak,
+            result["device_memory_available_gb"],
+            expected_available,
             places=2,
-            msg=f"{test_name}: Peak memory should equal weight + kv_cache + activation",
+            msg=f"{test_name}: Available memory should equal total - peak - reserved",
         )
 
         # Validate execution time is positive
@@ -1711,12 +1716,14 @@ class TestModelRunnerMetricsPrintInfo(unittest.TestCase):
         self.metrics = ModelRunnerMetrics(
             total_device_memory_gb=24.0,
             model_weight_size_gb=5.0,
-            peak_memory_usage_gb=12.0,
+            peak_memory_usage_gb=12.6,
             kv_cache_size_gb=3.0,
+            fixed_cache_size_gb=0.25,
+            indexer_cache_size_gb=0.75,
             kv_cache_per_token_gb=0.001,
             model_activation_size_gb=4.0,
             reserved_memory_gb=1.0,
-            device_memory_available_gb=6.0,
+            device_memory_available_gb=5.4,
             tps_per_model={"analytic": 200.0},
             execution_time_s={"analytic": 0.05},
             run_time_s=0.06,
@@ -1731,7 +1738,6 @@ class TestModelRunnerMetricsPrintInfo(unittest.TestCase):
     @patch("sys.stdout", new_callable=StringIO)
     def test_print_info_basic(self, mock_stdout):
         """Test that print_info prints the expected information."""
-        # Call the static method
         self.metrics.print_info()
 
         # Get the printed output
@@ -1740,10 +1746,16 @@ class TestModelRunnerMetricsPrintInfo(unittest.TestCase):
         # Check that the output contains expected elements
         self.assertIn("Total device memory: 24.000 GB", output)
         self.assertIn("Model weight size: 5.000 GB", output)
-        self.assertIn("KV cache: 3.000 GB", output)
-        self.assertIn("Model activation size: 4.000 GB", output)
+        self.assertIn("Peak memory usage: 12.600 GB", output)
+        self.assertNotIn("Request inputs:", output)
+        self.assertNotIn("Peak composition:", output)
+        self.assertIn("\n  Total KV cache: 3.000 GB\n", output)
+        self.assertIn("\n    Attention KV cache: 2.000 GB\n", output)
+        self.assertIn("\n    Indexer KV cache: 0.750 GB\n", output)
+        self.assertIn("\n    KDA cache: 0.250 GB\n", output)
+        self.assertIn("\n  Model activation size: 4.000 GB\n", output)
         self.assertIn("Reserved memory: 1.000 GB", output)
-        self.assertIn("Memory available: 6.000 GB", output)
+        self.assertIn("Memory available: 5.400 GB", output)
 
         # Check that breakdowns are printed
         self.assertIn("Stats breakdowns:", output)
@@ -1793,13 +1805,13 @@ class TestModelRunnerMetricsPrintInfo(unittest.TestCase):
         memory = payload["memory_gb"]
         self.assertAlmostEqual(memory["total_device"], 24.0)
         self.assertAlmostEqual(memory["model_weight"], 5.0)
-        self.assertAlmostEqual(memory["peak_usage"], 12.0)
+        self.assertAlmostEqual(memory["peak_usage"], 12.6)
         self.assertAlmostEqual(memory["kv_cache"], 3.0)
         self.assertAlmostEqual(memory["kv_cache_per_token"], 0.001)
         self.assertEqual(memory["kv_cache_token_capacity_factor"], 1)
         self.assertAlmostEqual(memory["model_activation"], 4.0)
         self.assertAlmostEqual(memory["reserved"], 1.0)
-        self.assertAlmostEqual(memory["available"], 6.0)
+        self.assertAlmostEqual(memory["available"], 5.4)
 
         # breakdowns_raw is the unmodified mapping
         self.assertEqual(payload["breakdowns_raw"]["memory"], {"activation": 2.0, "weights": 3.0})

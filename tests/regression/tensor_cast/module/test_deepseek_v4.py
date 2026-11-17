@@ -23,6 +23,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 import torch
 import torch.nn as nn
+from transformers.initialization import no_init_weights
 
 import tensor_cast.performance_model.builtin_model  # noqa: F401 — register V4 perf handlers
 
@@ -40,6 +41,7 @@ from tensor_cast.transformers.builtin_model.deepseek_v4 import (
     DeepseekV4RotaryEmbedding,
     DeepseekV4SparseAttention as BuiltinDeepseekV4SparseAttention,
 )
+from tensor_cast.transformers.utils import init_on_device_without_buffers
 from tensor_cast.layers.deepseek_v4 import (
     DeepseekV4SparseAttention,
     DeepseekV4SparseAttentionIndexer,
@@ -110,6 +112,103 @@ def _tiny_v4_config(**overrides) -> DeepseekV4Config:
     }
     defaults.update(overrides)
     return DeepseekV4Config(**defaults)
+
+
+@pytest.mark.parametrize("hc_mult", [1, 2, 4])
+@pytest.mark.parametrize("batch_shape", [(7,), (2, 3), (0,)])
+def test_fused_hc_pre_shape_dtype_contract(hc_mult, batch_shape):
+    hidden = 64
+    mix_width = (2 + hc_mult) * hc_mult
+    x = torch.empty(*batch_shape, hc_mult, hidden, device="meta", dtype=torch.bfloat16)
+    hc_fn = torch.empty(mix_width, hc_mult * hidden, device="meta", dtype=torch.float32)
+    hc_scale = torch.empty(3, device="meta", dtype=torch.float32)
+    hc_base = torch.empty(mix_width, device="meta", dtype=torch.float32)
+
+    reduced, post, comb, next_pre = torch.ops.tensor_cast.hc_pre_v3(
+        x, hc_fn, hc_scale, hc_base, None, hc_mult, 20, 1e-5, 1e-6, "current"
+    )
+    assert next_pre is None
+
+    assert reduced.shape == (*batch_shape, hidden)
+    assert post.shape == (*batch_shape, hc_mult)
+    assert comb.shape == (*batch_shape, hc_mult, hc_mult)
+    assert reduced.dtype == x.dtype
+    assert post.dtype == comb.dtype == torch.float32
+    assert reduced.device == post.device == comb.device == x.device
+
+
+@pytest.mark.parametrize("use_kwargs", [False, True])
+def test_fused_hc_pre_accounts_for_projection_and_only_external_memory(use_kwargs):
+    op = torch.ops.tensor_cast.hc_pre_v3.default
+    inputs = (
+        torch.empty(6, 4, 64, device="meta", dtype=torch.bfloat16),
+        torch.empty(24, 256, device="meta", dtype=torch.float32),
+        torch.empty(3, device="meta", dtype=torch.float32),
+        torch.empty(24, device="meta", dtype=torch.float32),
+    )
+    args = inputs if use_kwargs else (*inputs, None, 4, 2, 1e-6, 1e-6, "current")
+    kwargs = (
+        {
+            "pre_mix": None,
+            "hc_mult": 4,
+            "sinkhorn_iters": 2,
+            "norm_eps": 1e-6,
+            "hc_eps": 1e-6,
+            "pre_mix_mode": "current",
+        }
+        if use_kwargs
+        else {}
+    )
+    outputs = op(*args, **kwargs)
+    properties = OpInvokeInfo(op, args, kwargs, outputs).get_perf_properties()
+
+    assert properties.compute_ops[torch.float32].mma_ops == 73728
+    assert properties.compute_ops[torch.float32].gp_ops == 13848
+    assert properties.compute_ops[torch.bfloat16].gp_ops == 384
+    assert properties.memory_read_bytes == 27756
+    assert properties.memory_write_bytes == 1248
+    assert properties.memory_readwrite_bytes == 0
+    assert properties.extra_static_cost_count == 0
+
+    # One iteration performs less work but keeps the same external tensors.
+    shorter = (*inputs, None, 4, 1, 1e-6, 1e-6, "current")
+    shorter_outputs = op(*shorter)
+    assert (
+        OpInvokeInfo(op, shorter, {}, shorter_outputs).get_perf_properties().compute_ops[torch.float32].gp_ops
+        < properties.compute_ops[torch.float32].gp_ops
+    )
+
+
+@pytest.mark.parametrize("batch_shape", [(1, 7), (2, 3)])
+def test_emit_hc_pre_trace_has_one_fused_node(batch_shape):
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    config = _tiny_v4_config(num_hidden_layers=1, compress_ratios=[0], hc_mult=4, hc_sinkhorn_iters=20)
+    with torch.device("meta"):
+        layer = DeepseekV4DecoderLayer(config, layer_idx=0)
+    x = torch.empty(*batch_shape, config.hc_mult, config.hidden_size, device="meta", dtype=torch.bfloat16)
+    args = (x, layer.hc_attn_fn, layer.hc_attn_scale, layer.hc_attn_base)
+
+    graph = make_fx(lambda x, fn, scale, base: layer._emit_hc_pre(x, fn, scale, base))(*args)
+    operators = [node.target for node in graph.graph.nodes if node.op == "call_function"]
+    assert operators.count(torch.ops.tensor_cast.hc_pre_v3.default) == 1
+    for excluded in (
+        torch.ops.tensor_cast.hc_pre_inv_rms.default,
+        torch.ops.tensor_cast.hc_pre_sinkhorn.default,
+        torch.ops.aten.mm.default,
+        torch.ops.aten.mul.Tensor,
+        torch.ops.aten._to_copy.default,
+    ):
+        assert excluded not in operators
+    fused_node = next(node for node in graph.graph.nodes if node.target == torch.ops.tensor_cast.hc_pre_v3.default)
+    assert fused_node.args[0].meta["val"].shape == x.shape
+    assert fused_node.args[4] is None
+    assert fused_node.args[5:7] == (4, 20)
+    assert fused_node.args[9] == "current"
+    reduced, post, comb = graph(*args)
+    assert reduced.shape == (*batch_shape, config.hidden_size)
+    assert post.shape == (*batch_shape, 4)
+    assert comb.shape == (*batch_shape, 4, 4)
 
 
 class TestDeepseekV4Config(unittest.TestCase):
@@ -740,6 +839,10 @@ class TestDeepseekV4SparseAttention(unittest.TestCase):
 
         def _sparse_attn_sharedkv(q, _kv, *_args, kv_dependency=None, **_kwargs):
             assert kv_dependency is kv_cache
+            assert _kwargs["compress_ratio"] == 0
+            assert _kwargs["window_size"] == wrapper.window_size
+            assert _kwargs["seq_lens"] is attention_meta.seq_lens
+            assert _kwargs["query_lens"] is attention_meta.query_lens
             return q
 
         with (
@@ -846,6 +949,10 @@ class TestDeepseekV4SparseAttention(unittest.TestCase):
             return x, torch.ones(1, dtype=torch.float32, device=x.device)
 
         def _compressor(_hidden_states, cache, *_args, **_kwargs):
+            # Compressor sees the full context, independently of the window
+            # used by the scatter path (four tokens in this case).
+            assert _args[4].tolist() == [1024]
+            assert _args[5].tolist() == [8]
             return torch.randn(1, 8, 4), cache
 
         def _sparse_attn_sharedkv(q, _kv, _sink, topk_indices, *_args, kv_dependency=None, **_kwargs):
@@ -1129,7 +1236,9 @@ class TestDeepseekV4PerformanceModel(unittest.TestCase):
 
         props = attn_props(mock_invoke)
         assert props is not None
-        mock_invoke.get_memory_access_properties.assert_called_once_with(exclude_input_ids={"kv", "topk_indices"})
+        mock_invoke.get_memory_access_properties.assert_called_once_with(
+            exclude_input_ids={"kv", "topk_indices", "seq_lens", "query_lens"}
+        )
 
     def test_sparse_attn_sharedkv_performance_reports_missing_required_arg(self):
         """Missing kwargs should report the schema name instead of leaking KeyError."""
@@ -1210,7 +1319,8 @@ class TestDeepseekV4DecoderLayer(unittest.TestCase):
             first_k_dense_replace=0,
         )
 
-        layer = DeepseekV4DecoderLayer(config, layer_idx=0)
+        with torch.device("meta"):
+            layer = DeepseekV4DecoderLayer(config, layer_idx=0)
         assert layer.hidden_size == 4096
         assert layer.layer_idx == 0
         assert layer.hc_mult == 4
@@ -1233,10 +1343,12 @@ class TestDeepseekV4DecoderLayer(unittest.TestCase):
             first_k_dense_replace=3,
         )
 
-        layer0 = DeepseekV4DecoderLayer(config, layer_idx=0)
+        with torch.device("meta"):
+            layer0 = DeepseekV4DecoderLayer(config, layer_idx=0)
         assert hasattr(layer0, "mlp")
 
-        layer3 = DeepseekV4DecoderLayer(config, layer_idx=3)
+        with torch.device("meta"):
+            layer3 = DeepseekV4DecoderLayer(config, layer_idx=3)
         assert hasattr(layer3, "mlp")
 
     def test_decoder_layer_ratio4_builds_indexer_and_compressor(self):
@@ -1292,6 +1404,34 @@ class TestDeepseekV4Model(unittest.TestCase):
         assert isinstance(model.layers[1].self_attn.indexer, DeepseekV4Indexer)
         assert hasattr(model, "embed_tokens")
         assert hasattr(model, "rotary_emb")
+
+
+@pytest.mark.nightly
+class TestDeepseekV4ModelNightly(unittest.TestCase):
+    """Full-size V4 model init (large hidden_size; too slow for default CI)."""
+
+    def test_model_initialization(self):
+        """Test model can be initialized with V4 config."""
+        config = DeepseekV4Config(
+            hidden_size=4096,
+            num_attention_heads=32,
+            num_key_value_heads=32,
+            num_hidden_layers=2,
+            vocab_size=128256,
+            compress_ratios=[0, 4],
+            topk_limit=8,
+            index_n_heads=8,
+            index_head_dim=128,
+            hc_mult=4,
+        )
+
+        with init_on_device_without_buffers("meta"), no_init_weights():
+            model = DeepseekV4Model(config)
+        assert hasattr(model, "embed_tokens")
+        assert hasattr(model, "layers")
+        assert hasattr(model, "norm")
+        assert hasattr(model, "rotary_emb")
+        assert len(model.layers) == 2
 
 
 class TestDeepseekV4RouteFunctions(unittest.TestCase):
@@ -1496,6 +1636,24 @@ class TestDeepseekV4ConfigEdgeCases(unittest.TestCase):
 
 
 class TestDeepseekV4MlaHooks(unittest.TestCase):
+    def test_v4_indexer_is_replicated_and_wo_a_shards_whole_groups(self):
+        from tensor_cast.layers.deepseek_v4 import DeepseekV4AscendSparseAttention
+        from tensor_cast.layers.parallel_linear import ColumnParallelLinear
+        from tensor_cast.parallel_group import ParallelGroup
+
+        group = ParallelGroup(1, [[0, 1]], 2)
+        config = _tiny_v4_config(o_groups=4)
+        params = {"tp_group": group, "global_tp_group": group, "head_num": config.num_attention_heads}
+        assert DeepseekV4AscendSparseAttention.build_tp_plan_extras("model.layers", params, config) == {}
+        assert DeepseekV4SparseAttention.build_tp_plan_extras("model.layers", params, config)
+        plan = DeepseekV4SparseAttention.build_o_proj_tp_plan_extras("model.layers", params, config)
+        _, shard_params = plan["model.layers.*.self_attn.wo_a"]
+        linear = nn.Linear(16, 24, bias=False)
+        original = torch.arange(24 * 16, dtype=torch.float32).view(24, 16)
+        linear.weight = nn.Parameter(original.clone())
+        sharded = ColumnParallelLinear(linear, **shard_params)
+        torch.testing.assert_close(sharded._inner.weight, original[12:])
+
     def test_requires_indexer_cache_inherited(self):
         assert DeepseekV4SparseAttention.requires_indexer_cache()
         assert DeepseekSparseAttention.requires_indexer_cache()
@@ -1513,10 +1671,17 @@ class TestDeepseekV4MlaHooks(unittest.TestCase):
         assert "model.layers.*.self_attn.indexer.weights_proj" in plan
 
     def test_build_o_proj_tp_plan_extras_registers_v4_projections(self):
-        params = {"tp_group": MagicMock(), "global_tp_group": MagicMock()}
-        plan = DeepseekV4SparseAttention.build_o_proj_tp_plan_extras("model.layers", params, MagicMock())
+        params = {"tp_group": MagicMock(), "global_tp_group": MagicMock(), "disable_tp": True}
+        config = _tiny_v4_config(o_groups=4)
+        plan = DeepseekV4SparseAttention.build_o_proj_tp_plan_extras("model.layers", params, config)
         assert "model.layers.*.self_attn.wo_a" in plan
         assert "model.layers.*.self_attn.o_proj" not in plan
+        _, wo_a_params = plan["model.layers.*.self_attn.wo_a"]
+        assert wo_a_params["dim"] == 0
+        assert wo_a_params["head_num"] == config.o_groups
+        parallel_type, o_proj_params = plan["model.layers.*.o_proj"]
+        assert parallel_type == "rowwise"
+        assert o_proj_params["disable_tp"] is False
 
     def test_v4_attention_wrapper_skips_legacy_kv_b_setup(self):
         inner = TestDeepseekV4SparseAttention()._create_mock_inner_module(ratio=4, use_indexer=True)
@@ -1547,6 +1712,58 @@ class TestDeepseekV4BuiltinModelRegistration(unittest.TestCase):
         mla_config = profile.build_mla_config()
         assert mla_config is not None
         assert mla_config.field_names.kv_b_proj is None
+
+    def test_model_profile_keeps_wo_b_unquantized(self):
+        from tensor_cast.core.quantization.config import create_quant_config
+        from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
+        from tensor_cast.layers.quant_linear import TensorCastQuantLinear
+        from tensor_cast.quantize_utils import LinearQuantType, quantize_linear_modules
+        from tensor_cast.transformers.custom_model_registry import get_model_profile
+
+        profile = get_model_profile("deepseek_v4")
+        quant_config = create_quant_config(
+            quantize_linear_action=QuantizeLinearAction.W4A8_DYNAMIC,
+            quantize_non_expert_linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
+        )
+
+        resolved = profile.quant_config_resolver(quant_config)
+        profile.quant_config_resolver(resolved)
+
+        pattern = r"re:.*self_attn(?:\._inner)?\.o_proj$"
+        assert pattern in resolved.modules_to_not_convert
+        assert resolved.modules_to_not_convert.count(pattern) == 1
+        assert "*.self_attn.q_a_proj" not in resolved.modules_to_not_convert
+
+        layer = nn.Module()
+        layer.self_attn = nn.Module()
+        layer.self_attn.q_a_proj = nn.Linear(16, 8, bias=False)
+        layer.self_attn.o_proj = nn.Linear(8, 16, bias=False)
+        layer.mlp = nn.Module()
+        layer.mlp.experts = nn.ModuleList([nn.Module()])
+        layer.mlp.experts[0].down_proj = nn.Linear(8, 16, bias=False)
+        root = nn.Module()
+        root.layers = nn.ModuleList([layer])
+        mtp_block = nn.Module()
+        mtp_block.self_attn = nn.Module()
+        mtp_block.self_attn.o_proj = nn.Linear(8, 16, bias=False)
+        mtp_block.self_attn._inner = nn.Module()
+        mtp_block.self_attn._inner.o_proj = nn.Linear(8, 16, bias=False)
+        mtp_layer = nn.Module()
+        mtp_layer.mtp_block = mtp_block
+        root.mtp = nn.Module()
+        root.mtp.layers = nn.ModuleList([mtp_layer])
+
+        quantize_linear_modules(root, TensorCastQuantLinear, resolved, default_config_name=None, strip_module_fn=None)
+
+        assert isinstance(root.layers[0].self_attn.o_proj, nn.Linear)
+        assert isinstance(root.mtp.layers[0].mtp_block.self_attn.o_proj, nn.Linear)
+        assert isinstance(root.mtp.layers[0].mtp_block.self_attn._inner.o_proj, nn.Linear)
+        assert not isinstance(root.mtp.layers[0].mtp_block.self_attn.o_proj, TensorCastQuantLinear)
+        assert not isinstance(root.mtp.layers[0].mtp_block.self_attn._inner.o_proj, TensorCastQuantLinear)
+        assert isinstance(root.layers[0].self_attn.q_a_proj, TensorCastQuantLinear)
+        assert root.layers[0].self_attn.q_a_proj.quant_config.quant_type == LinearQuantType.W8A8
+        assert isinstance(root.layers[0].mlp.experts[0].down_proj, TensorCastQuantLinear)
+        assert root.layers[0].mlp.experts[0].down_proj.quant_config.quant_type == LinearQuantType.W4A8
 
     def test_config_normalize_methods(self):
         """Test config normalization methods."""
@@ -1848,6 +2065,401 @@ def test_v4_hif8_shared_ops_validate_scale(bad_scale):
         torch.ops.tensor_cast.compressor(
             q.reshape(1, 2, 32), cache, 4, 8, 2, False, kv_scale=bad_scale, kv_format="hif8"
         )
+
+
+@pytest.mark.parametrize("tokens", [128, 129, 1024, 18432])
+@pytest.mark.parametrize("paged", [False, True])
+def test_v4_prefill_cache_write_follows_backend(tokens, paged):
+    from types import SimpleNamespace
+
+    wrapper = SimpleNamespace(window_size=128, use_paged_kv_cache=paged)
+    kv = torch.empty(1, tokens, 512, device="meta", dtype=torch.bfloat16)
+    cache = torch.empty(200, 128, 512, device="meta", dtype=kv.dtype)
+    slots = torch.empty(tokens, device="meta", dtype=torch.int64)
+    writes = []
+
+    def scatter(update, target, *_args):
+        writes.append(update.shape[1])
+        return target
+
+    with patch("torch.ops.tensor_cast.scatter_nd_update_mla", side_effect=scatter):
+        visible, _ = DeepseekV4SparseAttention._scatter_window_kv_prefill(wrapper, kv, cache, slots, tokens, None)
+    assert visible is kv
+    assert sum(writes) == (tokens if paged else min(tokens, 128))
+    if paged:
+        assert len(writes) == 1
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.int8])
+@pytest.mark.parametrize("boundary_rows", [0, 3])
+def test_v4_paged_compressor_write_preserves_scatter_contract(dtype, boundary_rows):
+    from tensor_cast.layers.deepseek_v4 import _write_v4_paged_kv
+
+    rows = torch.empty(2, 4, 128, device="meta", dtype=dtype)
+    cache = torch.empty(8, 128, 128, device="meta", dtype=dtype)
+    lengths = torch.tensor([16, 16], dtype=torch.int32)
+    scatter = torch.ops.tensor_cast.scatter_nd_update_mla
+
+    with patch("torch.ops.tensor_cast.scatter_nd_update_mla", wraps=scatter) as write:
+        result = _write_v4_paged_kv(rows, cache, lengths, boundary_rows)
+
+    args = write.call_args.args
+    assert args[0] is rows
+    assert args[1] is cache
+    assert args[2].shape == (8,)
+    assert args[2].dtype == torch.int32
+    assert args[2].device == rows.device
+    assert args[3] == 128
+    assert args[4] is lengths
+    assert args[5:] == ("PA_BSND", boundary_rows)
+    assert result.shape == cache.shape
+    assert result.dtype == cache.dtype
+
+
+@pytest.mark.parametrize("with_scale_cache", [False, True])
+@pytest.mark.parametrize("query_len", [1, 16])
+def test_v4_paged_indexer_forward_writes_quantized_keys_and_scales(query_len, with_scale_cache):
+    from types import SimpleNamespace
+
+    with torch.device("meta"):
+        inner = nn.Module()
+        inner.num_heads = 2
+        inner.head_dim = 8
+        inner.qk_rope_head_dim = 4
+        inner.config = SimpleNamespace(topk_limit=8)
+        inner.wq_b = nn.Linear(4, 16, bias=False)
+        inner.weights_proj = nn.Linear(16, 2, bias=False)
+        indexer = DeepseekV4SparseAttentionIndexer(inner, topk_limit=8, compress_ratio=4)
+        indexer.use_paged_kv_cache = True
+        hidden = torch.empty(1, query_len, 16)
+        query = torch.empty(1, query_len, 4)
+        rope = (torch.empty(1, query_len, 4), torch.empty(1, query_len, 4))
+        cache = torch.empty(2, 128, 8, dtype=torch.int8)
+        scales = torch.empty(2, 128, 1, dtype=torch.float16) if with_scale_cache else None
+    meta = AttentionMetadataTensorCast(
+        query_start_loc=torch.tensor([0, query_len]),
+        seq_lens=torch.tensor([32 if query_len == 1 else query_len]),
+        query_lens=torch.tensor([query_len]),
+    )
+    scatter = torch.ops.tensor_cast.scatter_nd_update_mla
+    core = torch.ops.tensor_cast.quant_lightning_indexer
+    with (
+        patch("torch.ops.tensor_cast.scatter_nd_update_mla", wraps=scatter) as writes,
+        patch("torch.ops.tensor_cast.quant_lightning_indexer", wraps=core) as lookup,
+    ):
+        result = indexer(hidden, query, rope, cache, meta, indexer_scale_cache=scales)
+
+    assert result.shape == (1, query_len, 8)
+    assert result.dtype == torch.int32
+    key_write, scale_write = (call.args for call in writes.call_args_list)
+    rows = query_len // 4 + 1
+    assert key_write[0].shape == (1, rows, 8)
+    assert key_write[0].dtype == key_write[1].dtype == torch.int8
+    assert scale_write[0].shape == (1, rows, 1)
+    assert scale_write[0].dtype == scale_write[1].dtype == torch.float16
+    if with_scale_cache:
+        assert scale_write[1] is scales
+    for write in (key_write, scale_write):
+        assert write[2].shape == (rows,)
+        assert write[4] is meta.seq_lens
+        assert write[5:] == ("PA_BSND", 0 if query_len == 1 else 1)
+    args = lookup.call_args.args
+    assert args[0].dtype == torch.int8
+    assert args[1].dtype == args[8].dtype == torch.float16
+    assert args[4] == 1
+    assert args[5] is meta.seq_lens and args[6] is meta.query_lens
+    assert args[7] == "PA_BSND"
+
+
+def test_v4_paged_attention_prefill_writes_boundary_but_excludes_it_from_active_keys():
+    helper = TestDeepseekV4SparseAttention()
+    with torch.device("meta"):
+        inner = helper._create_tiny_forward_inner_module()
+        inner.compress_ratio = 4
+        inner.use_compressor = True
+        with patch("tensor_cast.layers.mla.MultiheadLatentAttentionTensorCast.__init__", _stub_mla_tensor_cast_init):
+            wrapper = DeepseekV4SparseAttention(
+                MlaConfig(module_name="DeepseekV4SparseAttention", use_paged_kv_cache=True),
+                inner,
+                helper._mock_tp_group(),
+            )
+        wrapper.layer_idx = 0
+        hidden = torch.empty(1, 16, 8)
+        rope = (torch.empty(1, 16, 2), torch.empty(1, 16, 2))
+        cache = torch.empty(2, 128, 4)
+    meta = AttentionMetadataTensorCast(
+        query_start_loc=torch.tensor([0, 16]),
+        seq_lens=torch.tensor([16]),
+        query_lens=torch.tensor([16]),
+        slot_mapping=torch.arange(16),
+    )
+    scatter = torch.ops.tensor_cast.scatter_nd_update_mla
+    attention = torch.ops.tensor_cast.sparse_attn_sharedkv
+    with (
+        patch("torch.ops.tensor_cast.scatter_nd_update_mla", wraps=scatter) as writes,
+        patch("torch.ops.tensor_cast.sparse_attn_sharedkv", wraps=attention) as attend,
+    ):
+        result, _ = wrapper(hidden, rope, attention_mask=None, attention_meta=meta, kv_cache_by_layers={0: cache})
+
+    assert result.shape == hidden.shape
+    window_write, compressed_write = (call.args for call in writes.call_args_list)
+    assert window_write[0].shape == (1, 16, 4)
+    assert compressed_write[0].shape == (1, 5, 4)
+    assert compressed_write[4] is meta.seq_lens
+    assert compressed_write[5:] == ("PA_BSND", 1)
+    assert attend.call_args.args[1].shape == (1, 20, 4)
+    assert attend.call_args.kwargs["cache_layout"] == "PA_BSND"
+    assert attend.call_args.kwargs["compress_ratio"] == 4
+    assert attend.call_args.kwargs["kv_dependency"].shape == cache.shape
+
+
+@pytest.mark.parametrize("query_len,total_len", [(1024, 1024), (18432, 18432), (1, 18432)])
+def test_v4_paged_indexer_cost_uses_all_active_pages(query_len, total_len):
+    op = torch.ops.tensor_cast.quant_lightning_indexer.default
+    q = torch.empty(1, query_len, 64, 128, device="meta", dtype=torch.bfloat16)
+    cache = torch.empty((total_len // 4 + 127) // 128, 128, 128, device="meta", dtype=q.dtype)
+    args = [
+        q,
+        torch.empty(q.shape[:-1], device="meta", dtype=q.dtype),
+        cache,
+        512,
+        1,
+        torch.tensor([total_len]),
+        torch.tensor([query_len]),
+    ]
+    paged = OpInvokeInfo(op, args, {"cache_layout": "PA_BSND"}, op(*args, cache_layout="PA_BSND"))
+    reference = OpInvokeInfo(op, args, {}, op(*args))
+    paged_mma = sum(value.mma_ops for value in _v4_perf_props(op)(paged).compute_ops.values())
+    reference_mma = sum(value.mma_ops for value in _v4_perf_props(op)(reference).compute_ops.values())
+    assert paged_mma == 2 * query_len * 64 * 128 * (total_len // 4)
+    assert reference_mma == 2 * query_len * 64 * 128 * 128
+
+
+def test_v4_indexer_query_preparation_and_int8_core_are_separate():
+    q = torch.empty(1, 1024, 64, 128, device="meta", dtype=torch.bfloat16)
+    prepare = torch.ops.tensor_cast.v4_indexer_query_quant.default
+    quantized, scale = prepare(q)
+    assert quantized.dtype == torch.int8 and scale.dtype == torch.float16
+    assert scale.shape == q.shape[:-1]
+    props = _v4_perf_props(prepare)(OpInvokeInfo(prepare, [q], {}, (quantized, scale)))
+    assert sum(ops.mma_ops for ops in props.compute_ops.values()) == 2 * q.numel() * 128
+    core = _v4_cache_query()
+    core_props = _v4_perf_props(core.func)(core)
+    assert sum(ops.mma_ops for ops in core_props.compute_ops.values()) == 2 * 1024 * 64 * 128 * 256
+    assert any(dtype == torch.float32 and ops.gp_ops > 0 for dtype, ops in core_props.compute_ops.items())
+
+
+@pytest.mark.parametrize("rotate,width,cache_dtype", [(False, 512, torch.bfloat16), (True, 128, torch.int8)])
+def test_v4_ascend_compressor_core_has_bf16_boundary_stream_without_external_cache_cost(rotate, width, cache_dtype):
+    op = torch.ops.tensor_cast.compressor.default
+    x = torch.empty(1, 4096, 4096, device="meta", dtype=torch.bfloat16)
+    cache = torch.empty(8, 128, width, device="meta", dtype=cache_dtype)
+    args = [x, cache, 4, width, 64, rotate, torch.tensor([4096]), torch.tensor([4096])]
+    out = op(*args, cache_layout="PA_BSND")
+    assert out[0].shape == (1, 1025, width)
+    assert out[0].dtype == torch.bfloat16
+    props = _v4_perf_props(op)(OpInvokeInfo(op, args, {"cache_layout": "PA_BSND"}, out))
+    assert props.compute_ops[torch.bfloat16].mma_ops == 4 * 4096 * 4096 * (2 * width)
+    # Only the core scratch output is written; K and scale cache scatters
+    # must be emitted by the caller rather than charged a second time here.
+    assert props.memory_write_bytes == out[0].numel() * 2
+    quant = torch.ops.tensor_cast.v4_indexer_query_quant.default
+    if rotate:
+        key, scale = quant(out[0])
+        assert key.dtype == torch.int8 and scale.dtype == torch.float16
+        assert scale.shape == (1, 1025)
+
+
+def test_v4_indexer_compressor_paged_core_accepts_int8_cache_but_keeps_reference_guard():
+    from tensor_cast.performance_model.op_invoke_info import get_named_args
+    from tensor_cast.performance_model.profiling_database.backend_projector import _v4_semantic_workload
+
+    op = torch.ops.tensor_cast.compressor.default
+    args = [
+        torch.empty(1, 4096, 4096, device="meta", dtype=torch.bfloat16),
+        torch.empty(8, 128, 128, device="meta", dtype=torch.int8),
+        4,
+        128,
+        64,
+        True,
+        torch.tensor([4096]),
+        torch.tensor([4096]),
+        None,
+        None,
+        "PA_BSND",
+    ]
+    info = OpInvokeInfo(op, args, {}, op(*args))
+    named = get_named_args(info)
+    workload = _v4_semantic_workload("Compressor", named, {"contract": "v4_requests_v2"})
+    assert workload["tokens"] == 4096 and workload["head_dim"] == 128
+    assert info.out[0].dtype == torch.bfloat16
+    named["cache_layout"] = "BND"
+    with pytest.raises(ValueError, match="v4_paged_runtime_required"):
+        _v4_semantic_workload("Compressor", named, {"contract": "v4_requests_v2"})
+
+
+@pytest.mark.parametrize("dtype,width,physical_rank", [(torch.int8, 128, 2), (torch.float16, 1, 3)])
+def test_v4_compressed_cache_scatter_projects_boundary_rows_without_relaxing_dtype(
+    tmp_path, dtype, width, physical_rank
+):
+    dtype_text = "INT8" if dtype == torch.int8 else "FLOAT16"
+    physical_update = f"1025,{width}" if physical_rank == 2 else f"1025,1,{width}"
+    row = {
+        "Input Shapes": f"64,128,1,{width};1025,2;{physical_update}",
+        "Input Data Types": f"{dtype_text};INT32;{dtype_text}",
+        "Input Formats": "NCHW;ND;" + ("ND" if physical_rank == 2 else "NCL"),
+        "Output Shapes": f"64,128,1,{width}",
+        "Output Data Types": dtype_text,
+        "Output Formats": "NCHW",
+        "Average Duration(us)": "19",
+    }
+    _write_v4_cache_database(tmp_path, {"ScatterNdUpdateV2": row})
+    op = torch.ops.tensor_cast.scatter_nd_update_mla.default
+    args = [
+        torch.empty(1, 1025, width, device="meta", dtype=dtype),
+        torch.empty(8, 128, width, device="meta", dtype=dtype),
+        torch.empty(1025, device="meta", dtype=torch.int32),
+        128,
+        torch.tensor([4096]),
+        "PA_BSND",
+        1,
+    ]
+    source = ProfilingDataSource(tmp_path)
+    hit = source.lookup(OpInvokeInfo(op, args, {}, op(*args)))
+    assert hit is not None and hit.latency_us == 19
+    args[-1] = 0
+    assert source.lookup(OpInvokeInfo(op, args, {}, op(*args))) is None
+
+
+def test_v4_indexer_packed_requests_are_not_multiplied_by_batch_again():
+    op = torch.ops.tensor_cast.quant_lightning_indexer.default
+    q = torch.empty(2, 1024, 64, 128, device="meta", dtype=torch.bfloat16)
+    args = [
+        q,
+        torch.empty(q.shape[:-1], device="meta", dtype=q.dtype),
+        torch.empty(4, 128, 128, device="meta", dtype=q.dtype),
+        512,
+        1,
+        torch.tensor([1024, 1024]),
+        torch.tensor([1024, 1024]),
+        "PA_BSND",
+    ]
+    info = OpInvokeInfo(op, args, {}, op(*args))
+    props = _v4_perf_props(op)(info)
+    assert sum(value.mma_ops for value in props.compute_ops.values()) == 2 * 2 * 1024 * 64 * 128 * 256
+
+
+def _v4_cache_rows(tokens=1024):
+    return {
+        "ScatterNdUpdateV2": {
+            "Input Shapes": f"64,128,1,512;{tokens},2;{tokens},1,512",
+            "Input Data Types": "DT_BF16;INT32;DT_BF16",
+            "Input Formats": "NCHW;ND;NCL",
+            "Output Shapes": "64,128,1,512",
+            "Output Data Types": "DT_BF16",
+            "Output Formats": "NCHW",
+            "Average Duration(us)": "17",
+        },
+        "VllmQuantLightningIndexer": {
+            "Input Shapes": f"{tokens},64,128;64,128,1,128;{tokens},64;{tokens},64;64,128,1;1;1;1,40;1024",
+            "Input Data Types": "INT8;INT8;FLOAT16;FLOAT16;FLOAT16;INT32;INT32;INT32;INT32",
+            "Input Formats": ";".join(["ND"] * 9),
+            "Output Shapes": f"{tokens},1,256;",
+            "Output Data Types": "INT32;FLOAT",
+            "Output Formats": "ND;ND",
+            "Average Duration(us)": "37",
+        },
+    }
+
+
+def _v4_cache_query(tokens=1024, total_len=1024):
+    op = torch.ops.tensor_cast.quant_lightning_indexer.default
+    q = torch.empty(1, tokens, 64, 128, device="meta", dtype=torch.int8)
+    weights = torch.empty(q.shape[:-1], device="meta", dtype=torch.float16)
+    cache = torch.empty(8, 128, 128, device="meta", dtype=torch.int8)
+    args = [q, weights, cache, 256, 1, torch.tensor([total_len]), torch.tensor([tokens]), "PA_BSND", weights]
+    return OpInvokeInfo(op, args, {}, op(*args))
+
+
+def _write_v4_cache_database(tmp_path, rows):
+    import csv
+
+    (tmp_path / "op_mapping.yaml").write_text(
+        'version: test\noperator_mappings:\n'
+        '  "tensor_cast.scatter_nd_update_mla.default":\n'
+        '    kernel_type: ScatterNdUpdateV2\n    query_mode: scatter_nd_update_mla\n'
+        '  "tensor_cast.quant_lightning_indexer.default":\n'
+        '    kernel_type: VllmQuantLightningIndexer\n    query_mode: attention_lightning_indexer\n',
+        encoding="utf-8",
+    )
+    for kernel, row in rows.items():
+        with (tmp_path / f"{kernel}.csv").open("w", newline="", encoding="utf-8") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(row))
+            writer.writeheader()
+            writer.writerow(row)
+
+
+def test_v4_cache_exact_queries_use_physical_abi_without_forcing_reference(tmp_path):
+    _write_v4_cache_database(tmp_path, _v4_cache_rows())
+    source = InterpolatingDataSource(ProfilingDataSource(tmp_path))
+    query = _v4_cache_query()
+    hit = source.lookup(query)
+    assert hit is not None and hit.latency_us == 37
+    assert hit.shape_match_info.shape_match_rule == "v4_cache_physical"
+    op = torch.ops.tensor_cast.scatter_nd_update_mla.default
+    args = [
+        torch.empty(1, 1024, 512, device="meta", dtype=torch.bfloat16),
+        torch.empty(8, 128, 512, device="meta", dtype=torch.bfloat16),
+        torch.empty(1024, device="meta", dtype=torch.int64),
+        128,
+        None,
+        "PA_BSND",
+    ]
+    scatter = OpInvokeInfo(op, args, {}, op(*args))
+    assert source.lookup(scatter).latency_us == 17
+    query.args[7] = "BND"
+    assert source.lookup(query) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["decode", "missing_lengths", "wrong_dtype", "insufficient_pool", "multiple_requests", "conflicting_row_metadata"],
+)
+def test_v4_indexer_query_rejects_unverified_contracts(tmp_path, mutation):
+    rows = _v4_cache_rows()
+    query = _v4_cache_query()
+    if mutation == "decode":
+        query = _v4_cache_query(tokens=1, total_len=1024)
+    elif mutation == "missing_lengths":
+        query.args[5] = None
+    elif mutation == "wrong_dtype":
+        query.args[0] = query.args[0].to(torch.bfloat16)
+    elif mutation == "insufficient_pool":
+        query.args[2] = torch.empty(1, 128, 128, device="meta", dtype=torch.int8)
+    elif mutation == "conflicting_row_metadata":
+        rows["VllmQuantLightningIndexer"].update(
+            {
+                "Runtime actual_seq_lengths_values": "1024",
+                "Runtime actual_seq_lengths_kv_values": "2048",
+                "Runtime phase": "chunked_prefill",
+            }
+        )
+    else:
+        query.args[5] = torch.tensor([512, 512])
+        query.args[6] = torch.tensor([512, 512])
+    _write_v4_cache_database(tmp_path, rows)
+    assert InterpolatingDataSource(ProfilingDataSource(tmp_path)).lookup(query) is None
+
+
+def test_v4_int8_short_prefill_keeps_physical_sparse_count_width(tmp_path):
+    query = _v4_cache_query()
+    query.args[3] = 512
+    query.out = query.func(*query.args)
+    assert query.out.shape == (1, 1024, 512)  # Only 256 compressed candidates; output is padded.
+    rows = _v4_cache_rows()
+    rows["VllmQuantLightningIndexer"]["Output Shapes"] = "1024,1,512;"
+    _write_v4_cache_database(tmp_path, rows)
+    assert ProfilingDataSource(tmp_path).lookup(query) is not None
 
 
 if __name__ == "__main__":

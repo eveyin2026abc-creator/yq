@@ -219,18 +219,29 @@ class QuantLinearBase(torch.nn.Module):
         return weight * self.weight_scale
 
     def pack_int4(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Packs a tensor of int8 values (where each value is in [-8, 7]) into an int8 tensor."""
+        """Packs a tensor of int8 values (where each value is in [-8, 7]) into an int8 tensor.
+
+        The packed payload is exposed as ``torch.int8`` to match the vLLM-Ascend
+        W4A8 contract (``linear.weight`` is ``torch.int8`` with two int4 values
+        per byte), so the profiling database queries see ``INT8`` instead of an
+        unmapped dtype.
+        """
         # Ensure values are in the correct range for int4
         tensor = tensor.clamp(-8, 7)
         # Shift to be non-negative for bitwise operations
         high_bits = (tensor[:, ::2] + 8).to(torch.uint8)
         low_bits = (tensor[:, 1::2] + 8).to(torch.uint8)
-        return (high_bits << 4) | low_bits
+        # Bitwise ops stay in the uint8 domain to avoid sign-extension hazards;
+        # view() only relabels the container dtype, keeping the bit pattern.
+        return ((high_bits << 4) | low_bits).view(torch.int8)
 
     def unpack_int4(self, packed_tensor: torch.Tensor) -> torch.Tensor:
         """Unpacks an int8 tensor into two int4 tensors (represented as int8)."""
-        high_bits = (packed_tensor >> 4).to(torch.int8) - 8
-        low_bits = (packed_tensor & 0x0F).to(torch.int8) - 8
+        # Relabel to uint8 before shifting: an int8 arithmetic right shift would
+        # sign-extend (0xF0 as int8 is -16, and (-16) >> 4 == -1, not 15).
+        packed_bytes = packed_tensor.view(torch.uint8)
+        high_bits = (packed_bytes >> 4).to(torch.int8) - 8
+        low_bits = (packed_bytes & 0x0F).to(torch.int8) - 8
         # Interleave the unpacked values
         unpacked = torch.empty(
             self.out_features,
@@ -403,7 +414,11 @@ class TensorCastQuantLinear(QuantLinearBase):
         x_shape = x.shape
         x = x.reshape(-1, x_shape[-1])
         qweight = self.qweight.transpose(0, 1)
-        out_dtype = self.quant_config.out_dtype if self.quant_config.out_dtype is not None else x.dtype
+        # A fused activation may supply an already-quantized integer payload.
+        # Dequantized matmul output retains the original floating-point dtype,
+        # just as it does when this layer performs activation quantization.
+        input_dtype = self.weight_dtype if external_activation_scale is not None else x.dtype
+        out_dtype = self.quant_config.out_dtype if self.quant_config.out_dtype is not None else input_dtype
         if self.quant_config.quant_type == LinearQuantType.HIF8:
             # Keep the compute format in the operator target, never in uint8 dtype.
             if external_activation_scale is not None:

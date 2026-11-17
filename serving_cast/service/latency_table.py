@@ -34,6 +34,19 @@ class ForwardShapeKey:
     image_batch_size: int | None = None
     image_height: int | None = None
     image_width: int | None = None
+    # Length contract flag mirrored from RequestInfo: when True the recorded
+    # query_len/seq_len already include the image token budget (chunk-plan
+    # rows) and the input generator must not add it again. Chunked-prefill
+    # keys also vary their image_* fields: only the first chunk of a request
+    # carries image forward inputs, later chunks are text-only — which makes
+    # the key space distinguish "vision tower runs" from "language only".
+    image_tokens_included: bool = False
+    # Opaque fingerprint of the per-image geometry when the request carries
+    # heterogeneous images (P1-02): ``((height, width, image_id), ...)``.
+    # Takes precedence over the scalar image_* triple, which can only express
+    # N identical images. Kept as plain primitives so this cache infrastructure
+    # never depends on the multimodal domain objects (review: zwt__).
+    image_specs: tuple[tuple[int, int, str], ...] | None = None
 
 
 @dataclass(frozen=True)

@@ -410,8 +410,15 @@ class RepetitionTestCase(RepetitionTestMixin, unittest.TestCase):
             runtime_cost_with_repeats_s,
             rtol=0.01 if do_compile else 0,
         )
-        peak_mem_usage = runtime.memory_tracker.peak_mem_usage()
-        peak_mem_usage_with_repeats = runtime_with_repeats.memory_tracker.peak_mem_usage()
+        # This direct tracker test does not register model weights, so the raw
+        # graph-input working set includes transformed parameters and is not a
+        # comparable memory total across the two model representations. The
+        # forward-created activation peak is the representation-independent
+        # accounting result that repetition must preserve.
+        peak_mem_usage = runtime.memory_tracker.get_forward_memory_summary().activation_peak_bytes
+        peak_mem_usage_with_repeats = (
+            runtime_with_repeats.memory_tracker.get_forward_memory_summary().activation_peak_bytes
+        )
         assert_close(
             self,
             peak_mem_usage,

@@ -27,6 +27,7 @@ from ..serve_plan import (
     _split_container_flags as _split_container_flags,
     param_to_cli_flag as param_to_cli_flag,
     render_serve_flags,
+    substitute_service_placeholders,
 )
 
 
@@ -51,7 +52,6 @@ class AisBenchCommand:
             self.aisbench_command_config.mode,
             "--work-dir",
             self.aisbench_command_config.work_dir,
-            "--debug",
         ]
         if self.aisbench_command_config.others:
             _cmd.extend(shlex.split(self.aisbench_command_config.others))
@@ -60,11 +60,12 @@ class AisBenchCommand:
 
 class VllmBenchmarkCommandConfig(BaseModel):
     serving: str = ""
-    backend: str = "vllm"
+    backend: str = ""
     host: str = ""
     port: str = ""
     model: str = ""
     served_model_name: str = ""
+    endpoint: str = ""
     dataset_name: str = ""
     dataset_path: str = ""
     num_prompts: str = ""
@@ -108,6 +109,10 @@ class VllmBenchmarkCommand:
             self.benchmark_command_config.result_dir,
             "--save-result",
         ]
+        if self.benchmark_command_config.backend:
+            cmd.extend(["--backend", self.benchmark_command_config.backend])
+        if self.benchmark_command_config.endpoint:
+            cmd.extend(["--endpoint", self.benchmark_command_config.endpoint])
         if self.benchmark_command_config.num_prompts:
             cmd.extend(["--num-prompts", self.benchmark_command_config.num_prompts])
         if self.benchmark_command_config.others:
@@ -128,9 +133,10 @@ class VllmCommandConfig(BaseModel):
 
 
 class VllmCommand:
-    def __init__(self, command_config: VllmCommandConfig, resolved_field: list = None):
+    def __init__(self, command_config: VllmCommandConfig, resolved_field: list = None, env_fields=()):
         self.command_config = command_config
         self._resolved_field = resolved_field or []
+        self._env_fields = env_fields
 
     @property
     def command(self):
@@ -149,5 +155,6 @@ class VllmCommand:
         # Dynamic flags from resolved_field (run-type candidate fields passed via
         # the constructor) merged with `others` — see render_serve_flags for the
         # precedence/dedupe rules, shared with external simulator plugins.
-        cmd.extend(render_serve_flags(self._resolved_field, self.command_config.others))
+        others = substitute_service_placeholders(self.command_config.others, self._env_fields)
+        cmd.extend(render_serve_flags(self._resolved_field, others))
         return cmd

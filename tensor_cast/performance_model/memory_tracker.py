@@ -22,8 +22,9 @@ from typing import Any, cast, Dict, List, NamedTuple, Optional, Set
 import torch
 
 from ..device import DeviceProfile
+from ..memory_accounting import ForwardMemorySummary
 from ..performance_model import OpInvokeInfo
-from ..performance_model.op_invoke_info import Region
+from ..performance_model.op_invoke_info import Region, RegionIdentityRegistry
 from .utils import bytes_of_tensor
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,31 @@ class _TensorInfo:
     use_op_indices_by_alias: List[int] = dataclasses.field(default_factory=list)
     """Indirect op use via its alias"""
     last_use_op_idx: int = -1
+    # Storage-level identity for view/repack-robust param matching.
+    storage_ptr: int = 0
+    base_id: int = 0
+    # Object identity at first record, for matching compile-time folded
+    # constants (``_frozen_param*`` buffers) that carry weight bytes but were
+    # never registered as params.
+    obj_id: int = 0
+
+
+def _base_root_id(tensor) -> int:
+    """id() of the view-chain root tensor (the tensor itself when not a view)."""
+    base = tensor
+    seen = 0
+    while getattr(base, "_base", None) is not None and seen < 32:
+        base = base._base
+        seen += 1
+    return id(base)
+
+
+def _storage_ptr(tensor) -> int:
+    """data_ptr of the untyped storage; 0 when unavailable (e.g. meta tensors)."""
+    try:
+        return int(tensor.untyped_storage().data_ptr())
+    except Exception:  # noqa: BLE001 - meta/fake tensors may not expose storage
+        return 0
 
 
 class TensorKey(NamedTuple):
@@ -157,6 +183,7 @@ class MemoryTracker:
 
     def __init__(self, device_profile: DeviceProfile):
         self.device_profile = device_profile
+        self.region_identity_registry = RegionIdentityRegistry()
         # A list to store invocation details for each operation.
         self.op_invoke_infos_with_repeat_id: List[tuple[OpInvokeInfo, int]] = []
         # A dictionary to store metadata for each tensor encountered.
@@ -171,16 +198,82 @@ class MemoryTracker:
         self.memory_profiles: List[OpMemoryProfile] = []
         # A flag to ensure analysis is done before retrieving the profile.
         self.is_analyzed: bool = False
-        # Cached input/output tensor ids per op index, used by analyze() to avoid
-        # re-extracting tensors from op arguments.
-        # Key: op index in self.op_invoke_infos_with_repeat_id
-        # Value: set of TensorKey seen in that op's inputs/outputs.
+        self._resident_tensors = {}
+        self._weight_storages = set()
+        self._resolved_boundaries = None
+        self._weight_templates = set()
+        self._returned_tensors = []
+        self._forward_summary = ForwardMemorySummary()
         self.op_input_tensor_ids: List[Set[TensorKey]] = []
         self.op_output_tensor_ids: List[Set[TensorKey]] = []
-        # Cached alias matching plan per op schema for faster alias processing.
-        # Key: torch op handle (op_invoke_info.func)
-        # Value: AliasPlan if op has alias-bearing outputs; otherwise None.
         self._alias_plan_cache: Dict[Any, Optional[AliasPlan]] = {}
+
+    def _register_resident(self, tensor, owner):
+        if self.is_analyzed:
+            raise RuntimeError("Register resident tensors before analysis")
+        existing = self._resident_tensors.get(id(tensor))
+        if existing is not None and existing[1] != owner:
+            raise ValueError("A storage cannot be charged as both weight and cache")
+        self._resolved_boundaries = None
+        self._resident_tensors[id(tensor)] = (tensor, owner)
+
+    def register_static_weight(self, tensor, *, repeat_template=False):
+        """Register an already charged weight; never read its values or add bytes."""
+        self._register_resident(tensor, "weight")
+        if tensor.layout == torch.strided:
+            self._weight_storages.add(tensor.untyped_storage())
+        if repeat_template:
+            self._weight_templates.add(id(tensor))
+
+    def register_model_memory(self, model, inventory):
+        for tensor, repeat_template in model.iter_weight_tensor_registrations():
+            self.register_static_weight(tensor, repeat_template=repeat_template)
+        for entry in inventory.entries:
+            for tensor in entry.tensors:
+                self.register_kv_cache(tensor)
+
+    def register_kv_cache(self, tensor):
+        self._register_resident(tensor, "cache")
+
+    def register_compiled_weight_aliases(self, tensors):
+        """Recognize frozen views of already charged weights, without reading data.
+
+        Storage identity remains meaningful for meta tensors even though their
+        data pointers are zero. Match the storage objects themselves so copies
+        and unrelated constants remain chargeable. This runs once per graph
+        invocation, not per op.
+        """
+        for tensor in tensors:
+            if id(tensor) in self._resident_tensors or tensor.layout != torch.strided:
+                continue
+            if tensor.untyped_storage() in self._weight_storages:
+                self.register_static_weight(tensor)
+
+    def register_compiled_weight_constants(self, tensors):
+        """Register graph constants with compiler-proven static-weight provenance."""
+        for tensor in tensors:
+            registration = self._resident_tensors.get(id(tensor))
+            if registration is None:
+                self.register_static_weight(tensor)
+            elif registration[1] != "weight":
+                raise ValueError("A storage cannot be charged as both weight and cache")
+
+    def register_model_outputs(self, outputs):
+        if self.is_analyzed:
+            raise RuntimeError("Register outputs before analysis")
+        self._resolved_boundaries = None
+        self._returned_tensors.extend(self._extract_tensors(outputs))
+
+    def get_forward_memory_summary(self):
+        if not self.is_analyzed:
+            raise RuntimeError("Analyze the trace before reading activation memory")
+        return self._forward_summary
+
+    def bind_region_identity_registry(self, identity_registry: RegionIdentityRegistry) -> None:
+        """Use the owning Runtime's registry to resolve Region tensor aliases."""
+        if identity_registry is None:
+            raise ValueError("identity_registry is required")
+        self.region_identity_registry = identity_registry
 
     def _extract_tensors(self, data: Any) -> List[torch.Tensor]:
         """A helper function to recursively find all torch.Tensor objects
@@ -198,7 +291,11 @@ class MemoryTracker:
         return tensors
 
     def _get_real_tensor_id(self, tensor, repeat_id) -> TensorKey:
-        tensor_id, repeat_id = Region.get_tensor_id(tensor, repeat_id)
+        tensor_id, repeat_id = Region.get_tensor_id(
+            tensor,
+            repeat_id,
+            identity_registry=self.region_identity_registry,
+        )
         return TensorKey(tensor_id=tensor_id, repeat_id=repeat_id)
 
     def _schema_arg_names(self, op_invoke_info: OpInvokeInfo) -> List[str]:
@@ -383,7 +480,12 @@ class MemoryTracker:
             if tensor_id not in self.tensor_infos:
                 # If a tensor is used before it's defined, it's a model input.
                 # We initialize its info here.
-                self.tensor_infos[tensor_id] = _TensorInfo(size_bytes=int(bytes_of_tensor(tensor)))
+                self.tensor_infos[tensor_id] = _TensorInfo(
+                    size_bytes=int(bytes_of_tensor(tensor)),
+                    storage_ptr=_storage_ptr(tensor),
+                    base_id=_base_root_id(tensor),
+                    obj_id=id(tensor),
+                )
             if tensor_id in zero_storage_tensor_ids:
                 self.tensor_infos[tensor_id].size_bytes = 0
             self.tensor_infos[tensor_id].use_op_indices.append(op_idx)
@@ -406,14 +508,54 @@ class MemoryTracker:
         self.op_input_tensor_ids.append(input_tensor_ids)
         self.op_output_tensor_ids.append(output_tensor_ids)
 
+    def resolve_memory_boundaries(self):
+        """Resolve identities while Region mappings are available (also for frozen replay)."""
+        # Region copies virtualize internal outputs, but an external tensor
+        # without a definition in that copy still refers to its original storage.
+        for key, info in self.tensor_infos.items():
+            original = TensorKey(key.tensor_id, 0)
+            if key.repeat_id and info.def_op_idx == -1 and original in self.tensor_infos:
+                self.alias_info.setdefault(key, original)
+        for key in self.alias_info:
+            root = self.alias_info[key]
+            while root in self.alias_info:
+                root = self.alias_info[root]
+            self.alias_info[key] = root
+        owners = {}
+        for tensor, owner in self._resident_tensors.values():
+            key = self._get_real_tensor_id(tensor, 0)
+            root = self.alias_info.get(key, key)
+            if owners.setdefault(root, owner) != owner:
+                raise ValueError("A storage cannot be charged as both weight and cache")
+        resident = set(owners)
+        for key in self.tensor_infos:
+            registration = self._resident_tensors.get(key.tensor_id)
+            # A shared static tensor can also be read inside a repeated region
+            # without belonging to its representative module subtree.
+            if registration is not None:
+                resident.add(self.alias_info.get(key, key))
+        returned_keys = (self._get_real_tensor_id(t, 0) for t in self._returned_tensors)
+        returned = {self.alias_info.get(key, key) for key in returned_keys}
+        self._resolved_boundaries = (resident, returned)
+        return self._resolved_boundaries
+
     def analyze(self):
         """
         Analyze the memory usage of the executed PyTorch program by simulating
         the allocation and deallocation of tensors based on their lifecycles.
         """
+        if self.is_analyzed:
+            return
         if not self.op_invoke_infos_with_repeat_id:
             self.is_analyzed = True
             return
+
+        resident, returned = self._resolved_boundaries or self.resolve_memory_boundaries()
+        # Include uses of external aliases introduced by Region normalization.
+        for alias, root in self.alias_info.items():
+            info = self.tensor_infos.get(alias)
+            if info is not None:
+                self.tensor_infos[root].use_op_indices_by_alias.extend(info.use_op_indices)
 
         # Step 1: Finalize tensor lifecycle info (inputs, outputs, last use).
         for tensor_id, info in self.tensor_infos.items():
@@ -438,9 +580,28 @@ class MemoryTracker:
 
         # Step 2: Simulate memory usage over the sequence of operations.
         # Start with memory consumed by model inputs, which are pre-allocated.
-        current_memory_usage = sum(self.tensor_infos[t_id].size_bytes for t_id in self.model_input_tensors)
+        # Region replay can expose the same external resident storage through
+        # several repeat keys. Count each physical tensor identity once in the
+        # legacy graph working-set profile.
+        counted_resident_tensor_ids: Set[int] = set()
+        initial_usage = 0
+        for t_id in self.model_input_tensors:
+            size = self.tensor_infos[t_id].size_bytes
+            if t_id in resident:
+                if t_id.tensor_id in counted_resident_tensor_ids:
+                    continue
+                counted_resident_tensor_ids.add(t_id.tensor_id)
+            initial_usage += size
+        current_memory_usage = initial_usage
         freed_roots: Set[TensorKey] = set()
 
+        # Region replay gives the same external request tensor multiple keys.
+        # It remains one allocation; only graph-created repeat outputs are distinct.
+        request_sizes = {}
+        for key in self.model_input_tensors - resident:
+            request_sizes[key.tensor_id] = self.tensor_infos[key].size_bytes
+        request_bytes = sum(request_sizes.values())
+        activation = peak = 0
         for op_idx, (op_info, _) in enumerate(self.op_invoke_infos_with_repeat_id):
             usage_before_call = current_memory_usage
 
@@ -461,6 +622,15 @@ class MemoryTracker:
 
             self.memory_profiles.append(OpMemoryProfile(op_info, usage_before_call, usage_after_call))
 
+            new_roots = {
+                k
+                for k in output_tensor_ids
+                if k not in self.alias_info and k not in resident and self.tensor_infos[k].def_op_idx == op_idx
+            }
+            activation += sum(self.tensor_infos[k].size_bytes for k in new_roots)
+            if activation > peak:
+                peak = activation
+
             # Update memory state for the beginning of the next operation.
             current_memory_usage = usage_after_call
 
@@ -468,6 +638,10 @@ class MemoryTracker:
             input_tensor_ids = self.op_input_tensor_ids[op_idx]
             mem_freed = 0
             input_root_ids = {self.alias_info.get(t_id, t_id) for t_id in input_tensor_ids}
+            for key in (input_root_ids | new_roots) - resident - returned:
+                info = self.tensor_infos[key]
+                if info.def_op_idx >= 0 and max(info.last_use_op_idx, info.def_op_idx) == op_idx:
+                    activation -= info.size_bytes
             for root_id in input_root_ids:
                 if root_id in freed_roots:
                     continue
@@ -486,8 +660,14 @@ class MemoryTracker:
 
         # memory usage after model execution, all intermediate tensors should be freed
         self.memory_profiles.append(OpMemoryProfile(None, current_memory_usage, current_memory_usage))
+        self._forward_summary = ForwardMemorySummary(request_bytes, peak)
 
         self.is_analyzed = True
+
+    def _ensure_analyzed(self, caller: str) -> None:
+        """Shared pre-condition guard for all post-``analyze()`` accessors."""
+        if not self.is_analyzed:
+            raise RuntimeError(f"`analyze()` must be called before `{caller}`.")
 
     def get_profile(self, initial_mem_usage_bytes: float = 0.0) -> List[OpMemoryProfile]:
         """
@@ -496,8 +676,7 @@ class MemoryTracker:
         Args:
             initial_mem_usage_bytes: memory usage before executing the PyTorch program.
         """
-        if not self.is_analyzed:
-            raise RuntimeError("`analyze()` must be called before `get_profile()`.")
+        self._ensure_analyzed("get_profile()")
 
         # Adjust the calculated profile with the initial memory offset.
         if initial_mem_usage_bytes == 0:
@@ -520,4 +699,7 @@ class MemoryTracker:
         ``max_i max(U_i, P_i)``, not ``max_i U_i``.
         """
         profiles = self.get_profile(initial_mem_usage_bytes)
-        return max(max(p.usage_before_call_bytes, p.usage_after_call_bytes) for p in profiles)
+        return max(
+            (max(p.usage_before_call_bytes, p.usage_after_call_bytes) for p in profiles),
+            default=initial_mem_usage_bytes,
+        )

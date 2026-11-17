@@ -57,11 +57,12 @@ CANN version upgrade:
 """
 
 import logging
+import json
 import math
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -72,7 +73,18 @@ from ... import config
 from ...device import DeviceProfile
 from ...ops.mla import local_mla_phase_token_counts
 from ..op_invoke_info import get_named_args, is_hif8_op_from_info
-from .backend_projector import CANNBackendProjector
+from .backend_projector import (
+    _V4_CONTRACT,
+    _V4_RUNTIME_WORKLOAD,
+    CANNBackendProjector,
+    V4_CACHE_CONTRACT,
+    V4_GROUPED_CONTRACT,
+    _v4_lengths,
+    _v4_row_workload,
+    _v4_semantic_workload,
+    project_v4_cache_leaf,
+    v4_grouped_row_workload,
+)
 from .data_source import (
     DataSourcePerformanceModel,
     QueryResult,
@@ -81,6 +93,7 @@ from .data_source import (
     SubKernelShapeInfo,
 )
 
+from .query_demand import KernelQueryDemand
 
 if TYPE_CHECKING:
     from ...device import CommGrid
@@ -199,6 +212,35 @@ def _normalize_func_name(func) -> str:
     return s.removeprefix("torch.ops.")
 
 
+def _is_varlen_encoder_attention(op_invoke_info: "OpInvokeInfo") -> bool:
+    """Encoder varlen attention call (e.g. VL vision tower).
+
+    Flattened 2-D query ``[total_tokens, hidden]`` with no paged-KV metadata
+    (attention_meta is None, so attention_mask / block_table /
+    query_start_loc / seq_lens are all absent). These calls must not run the
+    paged FIA projection: they resolve through ``varlen_encoder_kernel_type``
+    instead. Shared by the base exact lookup and the interpolating wrapper
+    dispatch so the two layers never disagree on the call type.
+
+    ``tensor_cast.attention`` positional arg layout (see
+    ``tensor_cast/ops/attention.py``): 0=query, 1=key, 2=value,
+    3=attention_mask, 4=block_table, 5=query_start_loc, 6=seq_lens,
+    7=query_lens.
+    """
+    args = op_invoke_info.args
+    if len(args) < 7:
+        return False
+    query = args[0]
+    return (
+        isinstance(query, torch.Tensor)
+        and query.ndim == 2
+        and not isinstance(args[3], torch.Tensor)  # attention_mask absent
+        and not isinstance(args[4], torch.Tensor)  # block_table absent
+        and not isinstance(args[5], torch.Tensor)  # query_start_loc absent
+        and not isinstance(args[6], torch.Tensor)  # seq_lens absent
+    )
+
+
 def _parse_shape_str(
     s: str,
     *,
@@ -209,8 +251,8 @@ def _parse_shape_str(
     e.g. '"20000,64,256;"' -> [(20000,64,256), ()]
 
     Output shape fields use an empty slot for a scalar tensor on some CANN
-    versions. Input fields also use empty slots for absent optional operands,
-    so their callers explicitly disable slot preservation.
+    versions. Input fields also use empty slots for absent optional operands;
+    drop these together with their dtype/format slots when comparing tensors.
     """
     s = s.strip().strip('"')
     parts = s.split(";")
@@ -232,6 +274,19 @@ def _parse_str_list(s: str) -> List[str]:
     """Parse 'A;B;C' -> ['A', 'B', 'C']"""
     s = s.strip().strip('"')
     return [x.strip() for x in s.split(";") if x.strip()]
+
+
+def _aligned_input_metadata(row):
+    """Remove absent operands together with their dtype and format slots."""
+    shapes = _parse_shape_str(str(row.get("Input Shapes", "")), preserve_empty_slots=True)
+    dtypes = str(row.get("Input Data Types", "")).strip().strip('"').split(";")
+    formats = str(row.get("Input Formats", "")).strip().strip('"').split(";")
+    present = [index for index, shape in enumerate(shapes) if shape]
+    return (
+        [shapes[index] for index in present],
+        [dtypes[index].strip() if index < len(dtypes) else "" for index in present],
+        [formats[index].strip() if index < len(formats) else "" for index in present],
+    )
 
 
 def _tensor_int_values(value: Any) -> Optional[List[int]]:
@@ -960,6 +1015,75 @@ def _project_grouped_moe_inputs(
     ]
 
 
+def _v4_grouped_workload(op_invoke_info: "OpInvokeInfo", mapping: dict) -> dict[str, int]:
+    """Lower expert lists once, keeping packed rows separate from one expert M."""
+    if mapping.get("physical_projection", {}).get("contract") != V4_GROUPED_CONTRACT:
+        raise ValueError("v4_grouped_contract_required")
+    named = get_named_args(op_invoke_info)
+    kernel = mapping.get("kernel_type")
+    func = _normalize_func_name(op_invoke_info.func)
+    expected_func = (
+        "tensor_cast.grouped_matmul_quant_swiglu.quantized"
+        if kernel == "GroupedMatmulSwigluQuant"
+        else "tensor_cast.grouped_matmul_quant.packed"
+    )
+    if func != expected_func or named.get("is_mtp_unfused", False):
+        raise ValueError("v4_grouped_context_mismatch")
+    activations, weights = named.get("x"), named.get("w")
+    if not isinstance(activations, (list, tuple)) or not activations or not isinstance(weights, (list, tuple)):
+        raise ValueError("v4_grouped_lists_required")
+    e = len(activations)
+    if len(weights) != e or not all(isinstance(t, torch.Tensor) and t.ndim == 2 for t in (*activations, *weights)):
+        raise ValueError("v4_grouped_expert_shape_invalid")
+    k, n = int(activations[0].shape[1]), int(weights[0].shape[1])
+    if any(t.dtype != torch.int8 or t.shape[1] != k or t.shape[0] < 0 for t in activations):
+        raise ValueError("v4_grouped_activation_invalid")
+    if any(t.dtype != torch.int8 or tuple(t.shape) != (k, n) for t in weights):
+        raise ValueError("v4_grouped_weight_invalid")
+    for key in ("w_offset", "x_offset", "bias"):
+        if any(item is not None for item in (named.get(key) or [])):
+            raise ValueError("v4_grouped_optional_input_unsupported")
+    for key, widths in (("w_scale", [(n,)] * e), ("x_scale", [(int(x.shape[0]),) for x in activations])):
+        scales = named.get(key)
+        if not isinstance(scales, (list, tuple)) or len(scales) != e:
+            raise ValueError("v4_grouped_scale_invalid")
+        if any(
+            not isinstance(t, torch.Tensor)
+            or t.dtype not in ((torch.float32,) if key == "x_scale" else (torch.float32, torch.bfloat16))
+            or tuple(t.shape) not in ((), width, (*width, 1))
+            for t, width in zip(scales, widths)
+        ):
+            raise ValueError("v4_grouped_scale_invalid")
+    m = sum(int(t.shape[0]) for t in activations)
+    if min(m, k, n) <= 0:
+        raise ValueError("v4_grouped_empty_workload")
+    out = op_invoke_info.out
+    if kernel == "GroupedMatmulSwigluQuant":
+        if n % 32 or k % 16 or not isinstance(out, (tuple, list)) or len(out) != 2:
+            raise ValueError("v4_grouped_up_output_invalid")
+        if (
+            out[0].dtype != torch.int8
+            or out[1].dtype != torch.float32
+            or tuple(out[0].shape) != (m, n // 2)
+            or tuple(out[1].shape) != (m,)
+        ):
+            raise ValueError("v4_grouped_up_output_invalid")
+    elif (
+        kernel != "GroupedMatmul"
+        or not isinstance(out, torch.Tensor)
+        or out.dtype != torch.bfloat16
+        or tuple(out.shape) != (m, n)
+    ):
+        raise ValueError("v4_grouped_down_output_invalid")
+    workload = {"tokens": m, "experts": e, "input_width": k, "output_width": n}
+    if kernel == "GroupedMatmulSwigluQuant":
+        limit = float(named.get("swiglu_limit", 0.0))
+        if not math.isfinite(limit) or limit < 0:
+            raise ValueError("v4_grouped_swiglu_limit_invalid")
+        workload["swiglu_limit"] = limit
+    return workload
+
+
 def _is_decode_mla(args: tuple) -> bool:
     """Determine if MLA op is in decode mode.
 
@@ -1248,6 +1372,8 @@ def _decompose_mla_common(
                     "avg_seq_len": avg_seq_len,
                     "sparse_mode": 0,  # decode uses no_mask
                     "num_kv_heads": 1,  # MLA compressed attention: single KV head
+                    # BNSD_NBSD anchors are indexed by the per-rank batch.
+                    "batch_size": batch_size,
                 },
                 is_attention=True,
             )
@@ -1261,14 +1387,6 @@ def _decompose_mla_common(
             logger.debug("MLA prefill: projected KV is empty, fallback to analytic")
             return None
         kv_lora_rank = args[9]
-        # Fix MISS #4: FIA prefill uses TND layout: (num_tokens, num_heads, qk_nope_head_dim).
-        # qk_head_dim = q.shape[2], qk_rope_head_dim = head_dim - kv_lora_rank,
-        # qk_nope_head_dim = qk_head_dim - qk_rope_head_dim.
-        qk_head_dim = q.shape[2]
-        qk_rope_head_dim = head_dim - kv_lora_rank
-        qk_nope_head_dim_pf = qk_head_dim - qk_rope_head_dim
-        fia_q_shape_3d = (num_tokens, num_heads, qk_nope_head_dim_pf)
-
         if attention_kernel_type == "SparseFlashAttention":
             # GLM5's SFA call consumes the latent 512-wide ql_nope tensor,
             # not the 192-wide pre-absorption MLA query.  With sequence
@@ -1336,6 +1454,12 @@ def _decompose_mla_common(
                 specs.append(tail_spec)
             return specs
         else:
+            # Some FIA implementations profile Q with the RoPE dimensions
+            # still attached, while legacy mappings query the no-PE width.
+            fia_q_head_dim = q.shape[2]
+            if not decomposer_options.get("prefill_fia_q_includes_rope"):
+                fia_q_head_dim -= head_dim - kv_lora_rank
+            fia_q_shape_3d = (num_tokens, num_heads, fia_q_head_dim)
             prefill_attn_spec = SubKernelSpec(
                 kernel_type=attention_kernel_type,
                 input_shapes=[],
@@ -1358,6 +1482,28 @@ def _decompose_mla_common(
                 },
                 is_attention=True,
             )
+
+            if decomposer_options.get("prefill_fia_split_context") and batch_size == 1:
+                # The sequence length includes the current query. The unmasked
+                # FIA branch only attends to the preceding cached tokens.
+                context_len = avg_seq_len - num_tokens
+                if context_len < 0:
+                    return None
+                prefill_attn_spec.attention_params.update(
+                    avg_seq_len=num_tokens,
+                    input_layout="TND",
+                )
+                if context_len == 0:
+                    return [prefill_attn_spec]
+                context_attn_spec = replace(
+                    prefill_attn_spec,
+                    attention_params={
+                        **prefill_attn_spec.attention_params,
+                        "avg_seq_len": context_len,
+                        "sparse_mode": 0,
+                    },
+                )
+                return [prefill_attn_spec, context_attn_spec]
 
         return [prefill_attn_spec]
 
@@ -1925,6 +2071,79 @@ def _decompose_dsa_indexer(op_invoke_info, mapping):
     ]
 
 
+def _decompose_hc_pre(op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[List[SubKernelSpec]]:
+    """Project the existing HC current mode onto the measured HcPre v2 ABI."""
+    args = get_named_args(op_invoke_info)
+    # HcPre_run.py fixes these scalar values. Incoming V4.1 mixing has a
+    # different input/output contract and must keep the analytic fallback.
+    if (
+        args.get("pre_mix_mode", "incoming") != "current"
+        or args.get("pre_mix") is not None
+        or args.get("sinkhorn_iters") != 20
+        or args.get("norm_eps") != 1e-6
+        or args.get("hc_eps") != 1e-6
+    ):
+        return None
+    tensors = [args[name] for name in ("hidden_states", "hc_fn", "hc_scale", "hc_base")]
+    if [tensor.dtype for tensor in tensors] != [torch.bfloat16, torch.float32, torch.float32, torch.float32]:
+        return None
+    x = tensors[0]
+    if x.ndim < 2 or x.numel() == 0:
+        return None
+    streams, hidden = int(x.shape[-2]), int(x.shape[-1])
+    mix = (2 + streams) * streams
+    if (
+        args.get("hc_mult") != streams
+        or tuple(tensors[1].shape) != (mix, streams * hidden)
+        or tuple(tensors[2].shape) != (3,)
+        or tuple(tensors[3].shape) != (mix,)
+    ):
+        return None
+    tokens = math.prod(x.shape[:-2])
+    return [
+        SubKernelSpec(
+            kernel_type=mapping["kernel_type"],
+            input_shapes=[(tokens, *x.shape[-2:]), *(tuple(t.shape) for t in tensors[1:])],
+            dtype="DT_BF16",
+            input_dtypes=["DT_BF16", "FLOAT", "FLOAT", "FLOAT"],
+        )
+    ]
+
+
+def _decompose_v4_indexer_prepare(op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[List[SubKernelSpec]]:
+    """Ascend rotation/INT8 preparation, before the independently billed QLI."""
+    q = get_named_args(op_invoke_info).get("q")
+    if not isinstance(q, torch.Tensor) or q.dtype != torch.bfloat16 or q.ndim not in (3, 4) or q.shape[0] != 1:
+        return None
+    physical = tuple(q.shape[1:])
+    m, d = math.prod(physical[:-1]), physical[-1]
+    if m <= 0 or d != 128:
+        return None
+
+    def spec(kernel, inputs, dtypes, outputs, output_dtypes):
+        return SubKernelSpec(
+            kernel_type=kernel,
+            input_shapes=inputs,
+            dtype=dtypes[0],
+            input_dtypes=dtypes,
+            query_mode="physical",
+            runtime_params={
+                "physical_output_shapes": outputs,
+                "physical_output_dtypes": output_dtypes,
+            },
+        )
+
+    # rotate_activation flattens the GEMM and scaling, then restores Q's
+    # [T,H,D] shape. K scales gain a singleton axis before their FP16 cast.
+    scale_shape = physical[:-1] if len(physical) == 3 else (m, 1)
+    return [
+        spec("MatMulV2", [(m, d), (d, d)], ["DT_BF16", "DT_BF16"], [(m, d)], ["DT_BF16"]),
+        spec("Muls", [(m, d)], ["DT_BF16"], [(m, d)], ["DT_BF16"]),
+        spec("DynamicQuant", [physical], ["DT_BF16"], [physical, physical[:-1]], ["INT8", "FLOAT"]),
+        spec("Cast", [scale_shape], ["FLOAT"], [scale_shape], ["FLOAT16"]),
+    ]
+
+
 COMPOSITE_DECOMPOSERS: Dict[
     str,
     Callable[["OpInvokeInfo", dict], Optional[List[SubKernelSpec]]],
@@ -1935,6 +2154,8 @@ COMPOSITE_DECOMPOSERS: Dict[
     #   2. Add "tensor_cast.<op>.default": _decompose_<op> entry below
     #   3. Set composite: true + decomposer: true in op_mapping.yaml
     # See §14 in OP_PLUGIN_MAPPING_TUTORIAL.md for the full SOP.
+    "tensor_cast.hc_pre_v3.default": _decompose_hc_pre,
+    "tensor_cast.v4_indexer_query_quant.default": _decompose_v4_indexer_prepare,
     "tensor_cast.multihead_latent_attention.default": _decompose_mla,
     "tensor_cast.multihead_latent_attention_quant.default": _decompose_mla_quant,
     "tensor_cast.mla_kv_projection.default": _decompose_mla_projection_preprocess,
@@ -2248,6 +2469,15 @@ class ProfilingDataSource(DataSourcePerformanceModel):
     ) -> None:
         if not self._backend_projector.enabled:
             return
+        if _normalize_func_name(op_invoke_info.func) == "tensor_cast.quant_lightning_indexer.default":
+            named = get_named_args(op_invoke_info)
+            attributes = dict(attributes or {})
+            attributes.update(
+                query_lengths=_v4_lengths(named.get("query_lens")),
+                kv_lengths=_v4_lengths(named.get("seq_lens")),
+                tp_world_size=int(named.get("tp_world_size", 1)),
+                physical_projection="v4_indexer_int8_core_v1",
+            )
         if inputs is not None:
             input_shapes, input_dtypes = self._profile_shapes_and_dtypes(inputs)
         if output_shapes is None or output_dtypes is None:
@@ -2507,6 +2737,9 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         num_devices: int,
         topology_tier: Optional[int],
         interpolation_method: str = "alpha_beta",
+        dtype: Optional[str] = None,
+        input_split_sizes: Optional[List[int]] = None,
+        output_split_sizes: Optional[List[int]] = None,
     ) -> Optional[Tuple[float, bool]]:
         """Shared comm CSV query with interpolation fallback.
 
@@ -2532,6 +2765,49 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             self.last_miss_reason = "csv_format_raw"
             return None
 
+        if dtype is not None:
+            aliases = {
+                "FLOAT": "FP32",
+                "DT_FLOAT": "FP32",
+                "FLOAT32": "FP32",
+                "BFP16": "DT_BF16",
+                "BF16": "DT_BF16",
+                "DT_INT32": "INT32",
+                "DT_INT8": "INT8",
+            }
+            normalized = aliases.get(dtype, dtype)
+            if "dtype" not in df.columns:
+                self.last_miss_reason = "comm_dtype_column_missing"
+                return None
+            df = df[df["dtype"].map(lambda value: aliases.get(str(value), str(value))) == normalized]
+            if df.empty:
+                self.last_miss_reason = f"comm_dtype_unmatched:{dtype}"
+                return None
+
+        if input_split_sizes is not None or output_split_sizes is not None:
+            for column, requested in (
+                ("input_split_sizes", input_split_sizes),
+                ("output_split_sizes", output_split_sizes),
+            ):
+                if requested is None or column not in df.columns:
+                    self.last_miss_reason = "comm_split_metadata_missing"
+                    return None
+
+                def matches_split(value):
+                    try:
+                        recorded = json.loads(str(value))
+                    except (ValueError, TypeError):
+                        return False
+                    return (
+                        isinstance(recorded, list)
+                        and all(type(item) is int and item >= 0 for item in recorded)
+                        and recorded == requested
+                    )
+
+                df = df[df[column].map(matches_split)]
+                if df.empty:
+                    self.last_miss_reason = "comm_split_pattern_unmatched"
+                    return None
         lat_col = self._latency_col(df)
 
         # --- Exact match ---
@@ -2685,8 +2961,25 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             )
         if mapping.get("category") == "communication":
             return self._lookup_comm(op_invoke_info, mapping)
+        if mapping.get("query_mode") == "v4_cache":
+            return self._lookup_v4_cache(op_invoke_info, mapping)
+        if (
+            mapping.get("query_mode") == "attention_lightning_indexer"
+            and func_str == "tensor_cast.quant_lightning_indexer.default"
+            and mapping.get("kernel_type") == "VllmQuantLightningIndexer"
+        ):
+            return self._lookup_v4_cache(op_invoke_info, mapping)
+        if (
+            mapping.get("query_mode") == "scatter_nd_update_mla"
+            and func_str == "tensor_cast.scatter_nd_update_mla.default"
+            and (op_invoke_info.args[5] if len(op_invoke_info.args) > 5 else op_invoke_info.kwargs.get("cache_layout"))
+            == "PA_BSND"
+        ):
+            return self._lookup_v4_cache(op_invoke_info, mapping)
         if mapping.get("query_mode") == "attention_special":
             return self._lookup_attention(op_invoke_info, mapping)
+        if mapping.get("query_mode") == "v4_physical":
+            return self._lookup_v4_physical(op_invoke_info, mapping)
         if mapping.get("query_mode") == "elementwise":
             return self._lookup_elementwise(op_invoke_info, mapping)
         if mapping.get("query_mode") == "moe_fused":
@@ -2697,6 +2990,8 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             return self._lookup_moe_distribute(op_invoke_info, mapping)
         if mapping.get("query_mode") == "grouped_moe":
             return self._lookup_grouped_moe(op_invoke_info, mapping)
+        if mapping.get("query_mode") == "v4_grouped_moe":
+            return self._lookup_v4_grouped_moe(op_invoke_info, mapping)
         if mapping.get("compute_subcategory") == "compute_scale":
             return self._lookup_compute_scale(op_invoke_info, mapping)
 
@@ -2742,6 +3037,102 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             )
 
         return self._lookup_compute(op_invoke_info, mapping)
+
+    def _v4_cache_query_demand(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[KernelQueryDemand]:
+        """Build the shared logical contract for exact and physical interpolation."""
+        if (
+            mapping.get("query_mode") == "v4_cache"
+            and mapping.get("physical_projection", {}).get("contract") != V4_CACHE_CONTRACT
+        ):
+            self.last_miss_reason = "v4_cache_contract_required"
+            return None
+        try:
+            named = get_named_args(op_invoke_info)
+        except AttributeError:
+            self.last_miss_reason = "v4_cache_metadata_required"
+            return None
+        kernel = mapping["kernel_type"]
+        attrs = {"cache_layout": named.get("cache_layout", "BND")}
+        if kernel == "VllmQuantLightningIndexer":
+            tensors = [named.get(key) for key in ("q_states", "weights", "indexer_cache", "query_scale")]
+            for name, arg in (("query_lengths", "query_lens"), ("kv_lengths", "seq_lens")):
+                value = named.get(arg)
+                try:
+                    attrs[name] = (
+                        value.tolist() if isinstance(value, torch.Tensor) and value.device.type == "cpu" else None
+                    )
+                except (RuntimeError, TypeError):
+                    attrs[name] = None
+            attrs.update(tp_world_size=named.get("tp_world_size", 1), topk=named.get("topk_limit"))
+        else:
+            tensors = [named.get(key) for key in ("kv", "kv_cache", "slot_mapping")]
+            attrs["boundary_rows"] = named.get("boundary_rows", 0)
+        if not all(isinstance(value, torch.Tensor) for value in tensors):
+            self.last_miss_reason = "v4_cache_metadata_required"
+            return None
+        shapes = tuple(tuple(value.shape) for value in tensors)
+        dtypes = tuple(_compute_scale_profiling_dtype(value.dtype) or "" for value in tensors)
+        return KernelQueryDemand(
+            projector_version=V4_CACHE_CONTRACT,
+            op_name=_normalize_func_name(op_invoke_info.func),
+            kernel_type=kernel,
+            query_mode="v4_cache",
+            input_shapes=shapes,
+            input_dtypes=dtypes,
+            attributes=attrs,
+        )
+
+    def _lookup_physical_candidates(self, kernel, checker, *, miss_reason):
+        hit = self._find_candidates([kernel], checker, select="nearest")
+        if hit is None:
+            if miss_reason and self.last_miss_reason != "csv_not_found":
+                self.last_miss_reason = miss_reason
+            return None
+        self.last_shape_match_info = hit.shape_match_info
+        return QueryResult(
+            latency_us=hit.latency_us,
+            confidence=hit.confidence,
+            source=QuerySource.MEASURED,
+            details={"kernel_type": kernel, **hit.details},
+            shape_match_info=hit.shape_match_info,
+        )
+
+    def _lookup_v4_cache(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
+        """Match V4 leaves only after lowering their explicit paged-cache ABI."""
+        demand = self._v4_cache_query_demand(op_invoke_info, mapping)
+        if demand is None:
+            return None
+        kernel = demand.kernel_type
+        shapes, dtypes, attrs = (demand.input_shapes, demand.input_dtypes, demand.attributes)
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel],
+            query_mode="v4_cache",
+            input_shapes=list(shapes),
+            input_dtypes=list(dtypes),
+            attributes=attrs,
+        )
+
+        def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
+            projected = project_v4_cache_leaf(demand, row)
+            if projected is None:
+                return None
+            if tuple(_parse_shape_str(str(row.get("Input Shapes", "")))) != projected.input_shapes:
+                return None
+            if tuple(_parse_shape_str(str(row.get("Output Shapes", "")))) != projected.output_shapes:
+                return None
+            return Candidate(
+                latency_us=float(row[lat_col]),
+                kernel_type=kt,
+                details={"physical_projection": V4_CACHE_CONTRACT, "query_mode": "v4_cache"},
+                shape_match_info=ShapeMatchInfo(
+                    simulation_shapes=[list(shape) for shape in shapes],
+                    kernel_shapes=[list(shape) for shape in projected.input_shapes],
+                    shape_match_rule="v4_cache_physical",
+                ),
+            )
+
+        return self._lookup_physical_candidates(kernel, checker, miss_reason="v4_cache_contract_or_shape_mismatch")
 
     # ---- Composite op lookup ----
 
@@ -3077,12 +3468,53 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 query_mode=f"composite_{spec.query_mode}",
                 input_shapes=list(spec.input_shapes),
                 input_dtypes=list(spec.input_dtypes or [spec.dtype] * len(spec.input_shapes)),
-                output_shapes=[],
-                output_dtypes=[],
+                output_shapes=list((spec.runtime_params or {}).get("physical_output_shapes", [])),
+                output_dtypes=list((spec.runtime_params or {}).get("physical_output_dtypes", [])),
                 attributes=spec_attributes,
             )
 
-            if spec.query_mode == "mlapo_preprocess" and spec.runtime_params:
+            if spec.query_mode == "physical" and spec.runtime_params:
+                expected_outputs = spec.runtime_params["physical_output_shapes"]
+                expected_dtypes = spec.runtime_params["physical_output_dtypes"]
+
+                def prepare_checker(row, kernel_type, lat_col):
+                    shapes, dtypes, formats = _aligned_input_metadata(row)
+                    if shapes != spec.input_shapes or dtypes != spec.input_dtypes:
+                        return None
+                    if formats != ["ND"] * len(shapes) or _parse_str_list(str(row.get("Output Formats", ""))) != [
+                        "ND"
+                    ] * len(expected_outputs):
+                        return None
+                    if _parse_shape_str(str(row.get("Output Shapes", ""))) != expected_outputs:
+                        return None
+                    if _parse_str_list(str(row.get("Output Data Types", ""))) != expected_dtypes:
+                        return None
+                    return Candidate(
+                        latency_us=float(row[lat_col]),
+                        kernel_type=kernel_type,
+                        shape_match_info=ShapeMatchInfo(
+                            simulation_shapes=[list(shape) for shape in spec.input_shapes],
+                            kernel_shapes=[list(shape) for shape in shapes],
+                            shape_match_rule="physical",
+                        ),
+                    )
+
+                hit = self._find_candidates(kernel_types, prepare_checker)
+                if hit is None:
+                    missed_kernels.append(spec.kernel_type)
+                else:
+                    total_latency += hit.latency_us
+                    hit_kernels.append(hit.kernel_type)
+                    sub_kernel_durations.append((hit.kernel_type, round(hit.latency_us, 2)))
+                    sub_kernel_shapes_list.append(
+                        SubKernelShapeInfo(
+                            kernel_type=hit.kernel_type,
+                            simulation_shapes=[list(shape) for shape in spec.input_shapes],
+                            kernel_shapes=hit.shape_match_info.kernel_shapes,
+                            shape_match_rule="physical",
+                        )
+                    )
+            elif spec.query_mode == "mlapo_preprocess" and spec.runtime_params:
                 hit = self._query_mlapo_preprocess(kernel_types, spec.runtime_params, spec.dtype)
                 if hit is not None:
                     total_latency += hit.latency_us
@@ -3648,6 +4080,15 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 return None
             if tc_N != csv_N or tc_D != csv_D:
                 return None
+            # 4D CSV q is BNSD with the batch at dim0; after 3D normalization it
+            # lands in the padded-T comparison which tolerates block gaps, so a
+            # wrong-batch anchor could still hit. Pin the batch exactly when the
+            # query carries batch_size (e.g. MLA decode) and the CSV row is 4D;
+            # 3D-q datasets without batch info keep the legacy behavior.
+            target_batch = params.get("batch_size")
+            if target_batch is not None and len(csv_q_raw) == 4:
+                if int(csv_q_raw[0]) != int(target_batch):
+                    return None
 
             if col_info.has_sparse and target_sparse is not None:
                 sparse_val = row["Runtime sparse_mode"]
@@ -4065,6 +4506,26 @@ class ProfilingDataSource(DataSourcePerformanceModel):
 
         # Resolve topology_tier from group via CommGrid
         topology_tier = self._resolve_topology_tier(list(rank_group))
+        dtype = DTYPE_MAP.get(tensor.dtype) if mapping.get("match_dtype", False) else None
+        if mapping.get("match_dtype", False) and dtype is None:
+            self.last_miss_reason = "comm_dtype_unmapped"
+            return None
+        split_metadata = {}
+        if func_str == "tensor_cast.all_to_all.default" and mapping.get("match_split_sizes", False):
+            row_elements = math.prod(tensor.shape[1:])
+            outgoing, incoming = op_invoke_info.args[2], op_invoke_info.args[1]
+            if any(
+                not isinstance(sizes, (list, tuple))
+                or len(sizes) != num_devices
+                or any(type(size) is not int or size < 0 for size in sizes)
+                for sizes in (outgoing, incoming)
+            ):
+                self.last_miss_reason = "comm_split_pattern_invalid"
+                return None
+            split_metadata = {
+                "input_split_sizes": [size * row_elements for size in outgoing],
+                "output_split_sizes": [size * row_elements for size in incoming],
+            }
         self._record_tensor_query(
             op_invoke_info,
             [kernel_type],
@@ -4077,10 +4538,14 @@ class ProfilingDataSource(DataSourcePerformanceModel):
                 "message_bytes": int(message_bytes),
                 "num_devices": num_devices,
                 "topology_tier": topology_tier,
+                "dtype": dtype,
+                **split_metadata,
             },
         )
 
-        result = self._query_comm_csv(kernel_type, message_bytes, num_devices, topology_tier)
+        result = self._query_comm_csv(
+            kernel_type, message_bytes, num_devices, topology_tier, dtype=dtype, **split_metadata
+        )
         if result is None:
             return None
 
@@ -4099,7 +4564,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             latency_us=latency,
             confidence=0.8 if is_interpolated else 0.9,
             source=source,
-            details={"kernel_type": kernel_type, "topology_tier": topology_tier},
+            details={"kernel_type": kernel_type, "topology_tier": topology_tier, **({"dtype": dtype} if dtype else {})},
             shape_match_info=ShapeMatchInfo(
                 simulation_shapes=[[message_bytes]],
                 kernel_shapes=[[message_bytes]],
@@ -4127,6 +4592,17 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             return None
 
         query = args[0]
+
+        # Encoder varlen attention (e.g. VL vision tower): flattened query
+        # [total_tokens, hidden] with no paged-KV metadata (attention_meta is
+        # None, so block_table / query_start_loc / seq_lens are all absent).
+        # The paged FIA projection (avg_seq_len / sparse_mode) does not apply;
+        # route to the encoder kernel via `varlen_encoder_kernel_type` so the
+        # kernel label and shape demand are recorded for collection planning
+        # instead of failing with missing_seq_lens.
+        if _is_varlen_encoder_attention(op_invoke_info):
+            return self._lookup_varlen_encoder_attention(op_invoke_info, mapping)
+
         key = args[1]
         seq_lens = args[6] if len(args) > 6 else None
         query_lens = args[7] if len(args) > 7 else None
@@ -4257,6 +4733,99 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             ),
         )
 
+    # ---- Varlen encoder attention lookup (VL vision tower) ----
+
+    def _varlen_encoder_segment_signature(self, op_invoke_info: "OpInvokeInfo") -> Optional[tuple]:
+        """Validated image-segment signature for a varlen encoder call, or None.
+
+        ``tensor_cast.attention`` does not carry cu_seqlens across the op
+        boundary (``flash_attention_forward`` receives it as a kwarg that the
+        op call drops), so the segmentation behind a flattened
+        ``[total_tokens, hidden]`` query is not observable at this layer.
+        Carrying an explicit segment signature end-to-end is the prerequisite
+        for re-enabling measured varlen lookups: UnpadFlashAttention CSV rows
+        record cu_seqlens as a kernel input and must never be matched against
+        segment-ambiguous queries.
+        """
+        return None
+
+    def _lookup_varlen_encoder_attention(
+        self,
+        op_invoke_info: "OpInvokeInfo",
+        mapping: dict,
+    ) -> Optional[QueryResult]:
+        """Encoder varlen attention lookup (VL vision tower, no paged KV).
+
+        The call carries no paged-KV metadata, so the FIA enriched-CSV
+        projection (avg_seq_len / sparse_mode / block_table) cannot apply.
+        Resolve the kernel from ``varlen_encoder_kernel_type`` (plus optional
+        ``varlen_encoder_alternate_kernel_types``) only — do NOT fall back to
+        the paged ``kernel_type``, whose CSV rows encode seq-len semantics a
+        varlen encoder call never had.
+
+        Segment-ambiguity gate: the op contract does not carry cu_seqlens, so
+        calls with different image segmentations share one (shape, dtype)
+        signature. A measured row must not be reused across segmentations
+        whose ΣL² work differs, so until a validated segment signature is
+        carried end-to-end the exact match is refused: the kernel label and
+        shape demand recorded above stay (PR-9 collection planning) and the
+        latency falls back to the analytic model.
+        """
+        kernel_type = mapping.get("varlen_encoder_kernel_type")
+        if not isinstance(kernel_type, str) or not kernel_type:
+            self.last_miss_reason = "varlen_encoder_kernel_type_missing"
+            return None
+
+        tc_inputs = self._extract_tensor_inputs(op_invoke_info)
+        simulation_shapes = [list(s) for s, _ in tc_inputs]
+        query_inputs = tc_inputs if self._backend_projector.enabled else None
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel_type],
+            query_mode="varlen_encoder",
+            inputs=query_inputs,
+            attributes={"varlen_encoder": True},
+        )
+
+        # Segment-ambiguity gate (PR #1101 review): e.g. cu_seqlens
+        # [0, 4080, 8160] and [0, 2040, 8160] both present as query=[8160, 1152]
+        # with K/V=[1, 8160, 16, 72], although their full-attention ΣL² differs
+        # (33,292,800 vs 41,616,000). Refuse MEASURED hits until the segment
+        # signature is carried and validated; keep the demand records above.
+        if self._varlen_encoder_segment_signature(op_invoke_info) is None:
+            self.last_miss_reason = "varlen_encoder_segment_signature_unavailable"
+            self.last_shape_match_info = ShapeMatchInfo(
+                simulation_shapes=simulation_shapes,
+                kernel_shapes=[],
+                shape_match_rule=self.last_miss_reason,
+            )
+            return None
+
+        kernel_types = [kernel_type]
+        for alt in mapping.get("varlen_encoder_alternate_kernel_types", []):
+            if isinstance(alt, str) and alt not in kernel_types:
+                kernel_types.append(alt)
+        tc_input_count = mapping.get("tc_input_count")
+        checker = self._make_compute_checker(tc_inputs, tc_input_count, simulation_shapes)
+        hit = self._find_candidates(kernel_types, checker, select="nearest")
+        if hit is None:
+            if not self.last_miss_reason:
+                self.last_miss_reason = "varlen_encoder_shape_mismatch"
+            self.last_shape_match_info = ShapeMatchInfo(
+                simulation_shapes=simulation_shapes,
+                kernel_shapes=[],
+                shape_match_rule=self.last_miss_reason,
+            )
+            return None
+        self.last_shape_match_info = hit.shape_match_info
+        return QueryResult(
+            latency_us=hit.latency_us,
+            confidence=hit.confidence,
+            source=QuerySource.MEASURED,
+            details={"kernel_type": hit.kernel_type, **hit.details},
+            shape_match_info=hit.shape_match_info,
+        )
+
     # ---- Elementwise op lookup (output-shape matching) ----
 
     def _lookup_elementwise(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
@@ -4289,7 +4858,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             [kernel_type],
             query_mode="elementwise",
             inputs=_ew_inputs,
-            output_shapes=[tuple(tc_output_shape)],
+            output_shapes=[tuple(out.shape)],
             output_dtypes=[tc_dtype_str or "DT_UNDEFINED"],
         )
 
@@ -4949,6 +5518,49 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             shape_match_info=hit.shape_match_info,
         )
 
+    def _lookup_v4_grouped_moe(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
+        """Query the versioned V4 packed W8A8 ABI, never the GLM5 capacity path."""
+        try:
+            workload = _v4_grouped_workload(op_invoke_info, mapping)
+        except (ValueError, TypeError, AttributeError) as error:
+            self.last_miss_reason = str(error)
+            return None
+        kernel = mapping["kernel_type"]
+        m, e, k, n = (workload[key] for key in ("tokens", "experts", "input_width", "output_width"))
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel],
+            query_mode="v4_grouped_moe",
+            input_shapes=[(m, k), (e, k, n)],
+            input_dtypes=["INT8", "INT8"],
+            attributes={
+                "contract": V4_GROUPED_CONTRACT,
+                **workload,
+                "group_sizes": [int(t.shape[0]) for t in get_named_args(op_invoke_info)["x"]],
+                "group_list_type": 0 if kernel == "GroupedMatmulSwigluQuant" else 1,
+            },
+        )
+
+        def checker(row: pd.Series, kt: str, lat_col: str) -> Optional[Candidate]:
+            try:
+                actual = v4_grouped_row_workload(kt, row)
+                if actual != workload:
+                    return None
+            except (ValueError, TypeError, KeyError, IndexError):
+                return None
+            return Candidate(
+                latency_us=float(row[lat_col]),
+                kernel_type=kt,
+                details={"physical_projection": V4_GROUPED_CONTRACT, "packed_workload": workload},
+                shape_match_info=ShapeMatchInfo(
+                    simulation_shapes=[list(shape) for shape, _ in self._extract_tensor_inputs(op_invoke_info)],
+                    kernel_shapes=[list(shape) for shape in _parse_shape_str(str(row["Input Shapes"]))],
+                    shape_match_rule="v4_grouped_physical",
+                ),
+            )
+
+        return self._lookup_physical_candidates(kernel, checker, miss_reason="v4_grouped_physical_sample_missing")
+
     # ---- Compute op lookup ----
 
     @staticmethod
@@ -5105,8 +5717,63 @@ class ProfilingDataSource(DataSourcePerformanceModel):
             shape_match_info=hit.shape_match_info,
         )
 
+    def _v4_workload(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Dict[str, Any]:
+        return _v4_semantic_workload(
+            mapping["kernel_type"], get_named_args(op_invoke_info), mapping.get("physical_projection", {})
+        )
+
+    def _lookup_v4_physical(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
+        kernel = mapping["kernel_type"]
+        try:
+            workload = self._v4_workload(op_invoke_info, mapping)
+        except (ValueError, TypeError, KeyError) as error:
+            self.last_miss_reason = str(error)
+            self._record_tensor_query(
+                op_invoke_info,
+                [kernel],
+                query_mode="v4_physical",
+                attributes={"projection_rejected_reason": str(error)},
+            )
+            return None
+        self._record_tensor_query(
+            op_invoke_info,
+            [kernel],
+            query_mode="v4_physical",
+            attributes=workload,
+        )
+        simulation = [list(shape) for shape, _ in self._extract_tensor_inputs(op_invoke_info)]
+
+        def checker(row, kernel_type, latency_col):
+            try:
+                # Validate the recorded ABI before using it as an allocation template.
+                recorded = _v4_row_workload(kernel, row)
+                if recorded != workload:
+                    return None
+            except (ValueError, TypeError, KeyError, IndexError):
+                return None
+            runtime_metadata = row.get(_V4_RUNTIME_WORKLOAD)
+            has_runtime_metadata = isinstance(runtime_metadata, str) and bool(runtime_metadata.strip())
+            return Candidate(
+                latency_us=float(row[latency_col]),
+                kernel_type=kernel_type,
+                details={"physical_projection": _V4_CONTRACT, "workload": workload},
+                distance=0.0 if has_runtime_metadata else 1.0,
+                shape_match_info=ShapeMatchInfo(
+                    simulation_shapes=simulation,
+                    kernel_shapes=[list(shape) for shape in _parse_shape_str(str(row["Input Shapes"]))],
+                    shape_match_rule="v4_physical_projection",
+                ),
+            )
+
+        return self._lookup_physical_candidates(kernel, checker, miss_reason="v4_physical_shape_mismatch")
+
     def _lookup_compute(self, op_invoke_info: "OpInvokeInfo", mapping: dict) -> Optional[QueryResult]:
         if not mapping.get("kernel_type"):
+            return None
+
+        # Layout projections such as varlen packing belong to the wrapper.
+        if mapping.get("skip_base_exact"):
+            self.last_miss_reason = "base_exact_skipped_by_mapping"
             return None
 
         kernel_types = [mapping["kernel_type"]]
@@ -5247,9 +5914,7 @@ class ProfilingDataSource(DataSourcePerformanceModel):
         - ND weight transpose for matmul kernels (CSV stores (N,K), TC sees (K,N))
         - Block-padding tolerance (TC pads seq to NPU tile alignment)
         """
-        csv_shapes = _parse_shape_str(str(csv_row.get("Input Shapes", "")), preserve_empty_slots=False)
-        csv_dtypes = _parse_str_list(str(csv_row.get("Input Data Types", "")))
-        csv_formats = _parse_str_list(str(csv_row.get("Input Formats", "")))
+        csv_shapes, csv_dtypes, csv_formats = _aligned_input_metadata(csv_row)
 
         # Truncate CSV shapes/dtypes/formats when tc_input_count is set.
         # NPU profiling CSVs may include internal parameters beyond what TC passes;
