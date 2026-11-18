@@ -526,6 +526,49 @@ def check_new_tests(args: argparse.Namespace) -> None:
     print(json.dumps({"checked_files": len(files)}))
 
 
+def _attach_ast_parents(tree: ast.AST) -> None:
+    """Annotate an AST so a builder call can be checked in its statement context."""
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            child._parent = parent
+
+
+def _l2_builder_usage(path: Path) -> tuple[set[str], list[str]]:
+    """Return consumed canonical builders and discarded-call violations."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    _attach_ast_parents(tree)
+    builders: set[str] = set()
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        builder = _name(node.func)
+        if builder not in L2_BUILDERS:
+            continue
+        builders.add(builder)
+        if isinstance(node._parent, ast.Expr):
+            violations.append(f"{path}:{node.lineno}: discards {builder} result")
+    return builders, violations
+
+
+def _l2_exemption_reason(path: Path) -> str:
+    """Read a file-level or enclosing module-level canonical-artifact exemption."""
+    candidates = [path]
+    parent = path.parent
+    while "module" in parent.parts:
+        candidates.append(parent / "__init__.py")
+        if parent.name == "module":
+            break
+        parent = parent.parent
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            if "L2_ARTIFACT_EXEMPT:" in line:
+                return line.split("L2_ARTIFACT_EXEMPT:", 1)[1].strip()
+    return ""
+
+
 def check_l2_layers(args: argparse.Namespace) -> None:
     """Reject real model construction from every L2 helper and module test."""
     helper = Path("tests/helpers/l2_artifacts.py")
@@ -534,14 +577,30 @@ def check_l2_layers(args: argparse.Namespace) -> None:
     violations = [violation for path in files if path.is_file() for violation in find_l2_model_violations_in_file(path)]
     if violations:
         raise GateError("L2 model-construction violations:\n" + "\n".join(violations))
+    usage = {
+        path: _l2_builder_usage(path)
+        for path in module_files
+        if path.name.startswith("test") and path.name != "test_l2_artifacts.py"
+    }
+    discarded = [violation for _, path_violations in usage.values() for violation in path_violations]
+    if discarded:
+        raise GateError("discarded canonical L2 artifacts:\n" + "\n".join(discarded))
     consumers = {
-        builder: sorted(
-            path.as_posix()
-            for path in module_files
-            if path.name != "test_l2_artifacts.py" and f"{builder}(" in path.read_text(encoding="utf-8")
-        )
+        builder: sorted(path.as_posix() for path, (builders, _) in usage.items() if builder in builders)
         for builder in L2_BUILDERS
     }
+    exemptions: dict[str, str] = {}
+    unclassified: list[str] = []
+    for path, (builders, _) in usage.items():
+        if builders:
+            continue
+        marker = _l2_exemption_reason(path)
+        if len(marker) < 20:
+            unclassified.append(f"{path}: use a canonical builder or add a specific L2_ARTIFACT_EXEMPT reason")
+        else:
+            exemptions[path.as_posix()] = marker
+    if unclassified:
+        raise GateError("unclassified L2 module tests:\n" + "\n".join(unclassified))
     if helper.is_file() and "L2_CONTRACTS" in helper.read_text(encoding="utf-8"):
         missing = [builder for builder, paths in consumers.items() if not paths]
         if missing:
@@ -552,6 +611,7 @@ def check_l2_layers(args: argparse.Namespace) -> None:
                 "checked_l2_files": len(files),
                 "violations": 0,
                 "canonical_builder_consumers": {builder: len(paths) for builder, paths in consumers.items()},
+                "explicit_exemptions": len(exemptions),
             }
         )
     )

@@ -13,6 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+# L2_ARTIFACT_EXEMPT: validates concrete operator replay adapters and NPU dispatch contracts, not the generic replay request
 
 """Smoke tests for tools/perf_data_collection/op_replay/ scripts."""
 

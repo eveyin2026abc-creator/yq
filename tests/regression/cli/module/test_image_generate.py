@@ -13,6 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+# L2_ARTIFACT_EXEMPT: validates image CLI lifecycle ordering across runner, cache, collectives, and trace export
 
 """Regression tests for the Core image-generation CLI contract."""
 

@@ -13,6 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+# L2_ARTIFACT_EXEMPT: validates interpolation data-source coordination across CSV lookup, candidate selection, and fallback
 
 """Tests for InterpolatingDataSource."""
 

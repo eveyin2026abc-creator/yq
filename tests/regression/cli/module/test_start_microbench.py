@@ -13,6 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+# L2_ARTIFACT_EXEMPT: validates multiprocess microbench orchestration, artifact merging, reporting, and NPU scheduling
 
 """Tests for tools/perf_data_collection/start_microbench.py.
 

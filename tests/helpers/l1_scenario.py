@@ -57,6 +57,48 @@ from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.runtime import Runtime
 
+
+def assert_l1_inference_metrics(test_case, result, test_name: str = "") -> dict:
+    """Assert the shared numeric and reporting contract of an L1 result."""
+    metrics = dataclasses.asdict(result) if isinstance(result, ModelRunnerMetrics) else result
+    test_case.assertIsInstance(metrics, dict, f"{test_name}: Result should be a dict")
+
+    required_keys = (
+        "total_device_memory_gb",
+        "model_weight_size_gb",
+        "peak_memory_usage_gb",
+        "kv_cache_size_gb",
+        "model_activation_size_gb",
+        "device_memory_available_gb",
+        "execution_time_s",
+        "table_result",
+        "breakdowns",
+    )
+    for key in required_keys:
+        test_case.assertIn(key, metrics, f"{test_name}: Missing key '{key}' in result")
+
+    for key, label in (
+        ("total_device_memory_gb", "Total device memory"),
+        ("model_weight_size_gb", "Model weight size"),
+        ("peak_memory_usage_gb", "Peak memory usage"),
+        ("kv_cache_size_gb", "KV cache size"),
+    ):
+        test_case.assertGreaterEqual(metrics[key], 0, f"{test_name}: {label} should be non-negative")
+    test_case.assertGreater(
+        metrics["model_activation_size_gb"],
+        0,
+        f"{test_name}: Model activation size should be positive (Issue #463)",
+    )
+
+    execution_time = metrics["execution_time_s"]
+    if isinstance(execution_time, dict):
+        execution_time = next(iter(execution_time.values()))
+    test_case.assertGreater(execution_time, 0, f"{test_name}: Execution time should be positive")
+    test_case.assertIsInstance(metrics["table_result"], str, f"{test_name}: Table result should be a string")
+    test_case.assertGreater(len(metrics["table_result"]), 0, f"{test_name}: Table result should not be empty")
+    return metrics
+
+
 # Workload and runtime fields. Each name here is a claim that the field cannot
 # change the built graph, verified by test_l1_scenario.py.
 RUN_FIELDS = frozenset(

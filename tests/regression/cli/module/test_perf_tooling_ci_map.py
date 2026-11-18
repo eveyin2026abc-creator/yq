@@ -13,6 +13,7 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
+# L2_ARTIFACT_EXEMPT: validates cross-tool CI symbol mapping across shape generation, replay, profiling, and DFC helpers
 
 """Non-NPU coverage anchors for perf collection CI test_map.
 

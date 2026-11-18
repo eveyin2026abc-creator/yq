@@ -27,6 +27,8 @@ from scripts.helpers.architecture.main import (
     GateError,
     _changed_test_files,
     _classify_file,
+    _l2_exemption_reason,
+    _l2_builder_usage,
     _name,
     build_parser,
     check_assertions,
@@ -391,7 +393,11 @@ def test_check_l2_layers_scans_helpers_and_module_tests(tmp_path: Path, monkeypa
     helper.parent.mkdir(parents=True)
     module.parent.mkdir(parents=True)
     helper.write_text("def artifact(): return object()\n", encoding="utf-8")
-    module.write_text("def test_demo(): assert True\n", encoding="utf-8")
+    module.write_text(
+        "# L2_ARTIFACT_EXEMPT: synthetic gate fixture has no product integration boundary\n"
+        "def test_demo(): assert True\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     check_l2_layers(argparse.Namespace())
 
@@ -408,11 +414,41 @@ def test_check_l2_layers_requires_real_consumers_for_every_canonical_builder(
     helper.parent.mkdir(parents=True)
     module.parent.mkdir(parents=True)
     helper.write_text("L2_CONTRACTS = ()\n", encoding="utf-8")
-    module.write_text("def test_demo(): pass\n", encoding="utf-8")
+    module.write_text(
+        "# L2_ARTIFACT_EXEMPT: synthetic gate fixture has no product integration boundary\ndef test_demo(): pass\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(GateError, match="lack real module consumers"):
         check_l2_layers(argparse.Namespace())
+
+
+def test_l2_builder_usage_requires_the_artifact_to_be_consumed(tmp_path: Path) -> None:
+    module = tmp_path / "test_demo.py"
+    module.write_text(
+        "def test_demo():\n    artifact = fx_artifact(lambda x: x)\n    assert artifact is not None\n",
+        encoding="utf-8",
+    )
+    builders, violations = _l2_builder_usage(module)
+    assert builders == {"fx_artifact"}
+    assert violations == []
+
+    module.write_text("def test_demo():\n    fx_artifact(lambda x: x)\n", encoding="utf-8")
+    builders, violations = _l2_builder_usage(module)
+    assert builders == {"fx_artifact"}
+    assert violations == [f"{module}:2: discards fx_artifact result"]
+
+
+def test_l2_exemption_reason_inherits_from_module_boundary(tmp_path: Path) -> None:
+    module_dir = tmp_path / "tests/regression/demo/module"
+    test_file = module_dir / "application/test_demo.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_demo(): pass\n", encoding="utf-8")
+    reason = "typed integration boundary uses real domain contracts"
+    (module_dir / "__init__.py").write_text(f"# L2_ARTIFACT_EXEMPT: {reason}\n", encoding="utf-8")
+
+    assert _l2_exemption_reason(test_file) == reason
 
 
 def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

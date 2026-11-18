@@ -16,7 +16,6 @@
 
 import unittest
 from dataclasses import asdict
-from typing import Union
 
 import pytest
 import torch
@@ -25,7 +24,7 @@ from tensor_cast.core.model_runner import ModelRunnerMetrics
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 
-from tests.helpers.l1_scenario import isolated_l1_executor
+from tests.helpers.l1_scenario import assert_l1_inference_metrics, isolated_l1_executor
 
 
 @pytest.mark.nightly
@@ -37,80 +36,6 @@ class TestKimiK25(unittest.TestCase):
         self.device = "ATLAS_800_A3_560T_128G_DIE"
         self.model_id = "moonshotai/Kimi-K2.5"
         torch.compiler.reset()
-
-    def _validate_inference_result(self, result: Union[dict, ModelRunnerMetrics], test_name: str = ""):
-        """
-        Validate the result from run_inference.
-
-        Args:
-            result: Dictionary containing inference metrics
-            test_name: Name of the test for better error messages
-        """
-        if isinstance(result, ModelRunnerMetrics):
-            result = asdict(result)
-
-        # Check that result is a dictionary
-        self.assertIsInstance(result, dict, f"{test_name}: Result should be a dict")
-
-        # Check required keys exist
-        required_keys = [
-            "total_device_memory_gb",
-            "model_weight_size_gb",
-            "peak_memory_usage_gb",
-            "kv_cache_size_gb",
-            "model_activation_size_gb",
-            "device_memory_available_gb",
-            "execution_time_s",
-            "table_result",
-            "breakdowns",
-        ]
-        for key in required_keys:
-            self.assertIn(key, result, f"{test_name}: Missing key '{key}' in result")
-
-        # Validate memory metrics are non-negative
-        self.assertGreaterEqual(
-            result["total_device_memory_gb"],
-            0,
-            f"{test_name}: Total device memory should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["model_weight_size_gb"],
-            0,
-            f"{test_name}: Model weight size should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["peak_memory_usage_gb"],
-            0,
-            f"{test_name}: Peak memory usage should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["kv_cache_size_gb"],
-            0,
-            f"{test_name}: KV cache size should be non-negative",
-        )
-        self.assertGreater(
-            result["model_activation_size_gb"],
-            0,
-            f"{test_name}: Model activation size should be positive (Issue #463)",
-        )
-
-        # Validate execution time is positive
-        exec_time = result["execution_time_s"]
-        if isinstance(exec_time, dict):
-            exec_time = next(iter(exec_time.values()))
-        self.assertGreater(
-            exec_time,
-            0,
-            f"{test_name}: Execution time should be positive",
-        )
-
-        # Validate table result is a string
-        self.assertIsInstance(result["table_result"], str, f"{test_name}: Table result should be a string")
-        self.assertGreater(
-            len(result["table_result"]),
-            0,
-            f"{test_name}: Table result should not be empty",
-        )
 
     def test_kimi_k25_text_only_generation(self):
         """
@@ -142,7 +67,7 @@ class TestKimiK25(unittest.TestCase):
             result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_text_only_generation")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_text_only_generation")
 
         # Additional checks specific to Kimi K2.5 with MoE and MLA
         if isinstance(result, ModelRunnerMetrics):
@@ -222,7 +147,7 @@ class TestKimiK25(unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_vision_language_generation")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_vision_language_generation")
 
         # Additional checks for VLM-specific operations
         if isinstance(result, ModelRunnerMetrics):
@@ -273,7 +198,7 @@ class TestKimiK25(unittest.TestCase):
             result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_long_context_text_generation")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_long_context_text_generation")
 
         # Additional checks specific to long context scenarios
         if isinstance(result, ModelRunnerMetrics):
@@ -348,7 +273,7 @@ class TestKimiK25(unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_long_context_vision_language_generation")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_long_context_vision_language_generation")
 
         # Additional checks for VLM-specific operations
         if isinstance(result, ModelRunnerMetrics):
@@ -406,7 +331,7 @@ class TestKimiK25(unittest.TestCase):
             result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_text_only_decode_with_mtp")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_text_only_decode_with_mtp")
 
         # Additional checks specific to Kimi K2.5 with MoE and MLA
         if isinstance(result, ModelRunnerMetrics):
@@ -468,7 +393,7 @@ class TestKimiK25(unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k25_vision_language_decode_with_mtp")
+        assert_l1_inference_metrics(self, result, "test_kimi_k25_vision_language_decode_with_mtp")
 
         # Additional checks for VLM-specific operations
         if isinstance(result, ModelRunnerMetrics):

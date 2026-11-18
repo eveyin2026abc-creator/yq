@@ -17,7 +17,6 @@
 import unittest
 from dataclasses import asdict
 from types import SimpleNamespace
-from typing import Union
 from unittest import mock
 
 import pytest
@@ -25,7 +24,7 @@ import torch
 from tensor_cast.core.input_generator import generate_inputs
 from tensor_cast.core.model_runner import ModelRunnerMetrics
 
-from tests.helpers.l1_scenario import isolated_l1_executor
+from tests.helpers.l1_scenario import assert_l1_inference_metrics, isolated_l1_executor
 from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
 from tensor_cast.core.user_config import UserInputConfig
 from tensor_cast.performance_model.op_invoke_info import OpInvokeInfo
@@ -49,80 +48,6 @@ class TestKimiK3(unittest.TestCase):
         self.device = "ATLAS_800_A3_560T_128G_DIE"
         self.model_id = "moonshotai/Kimi-K3"
         torch.compiler.reset()
-
-    def _validate_inference_result(self, result: Union[dict, ModelRunnerMetrics], test_name: str = ""):
-        """
-        Validate the result from run_inference.
-
-        Args:
-            result: Dictionary containing inference metrics
-            test_name: Name of the test for better error messages
-        """
-        if isinstance(result, ModelRunnerMetrics):
-            result = asdict(result)
-
-        # Check that result is a dictionary
-        self.assertIsInstance(result, dict, f"{test_name}: Result should be a dict")
-
-        # Check required keys exist
-        required_keys = [
-            "total_device_memory_gb",
-            "model_weight_size_gb",
-            "peak_memory_usage_gb",
-            "kv_cache_size_gb",
-            "model_activation_size_gb",
-            "device_memory_available_gb",
-            "execution_time_s",
-            "table_result",
-            "breakdowns",
-        ]
-        for key in required_keys:
-            self.assertIn(key, result, f"{test_name}: Missing key '{key}' in result")
-
-        # Validate memory metrics are non-negative
-        self.assertGreaterEqual(
-            result["total_device_memory_gb"],
-            0,
-            f"{test_name}: Total device memory should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["model_weight_size_gb"],
-            0,
-            f"{test_name}: Model weight size should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["peak_memory_usage_gb"],
-            0,
-            f"{test_name}: Peak memory usage should be non-negative",
-        )
-        self.assertGreaterEqual(
-            result["kv_cache_size_gb"],
-            0,
-            f"{test_name}: KV cache size should be non-negative",
-        )
-        self.assertGreater(
-            result["model_activation_size_gb"],
-            0,
-            f"{test_name}: Model activation size should be positive (Issue #463)",
-        )
-
-        # Validate execution time is positive
-        exec_time = result["execution_time_s"]
-        if isinstance(exec_time, dict):
-            exec_time = next(iter(exec_time.values()))
-        self.assertGreater(
-            exec_time,
-            0,
-            f"{test_name}: Execution time should be positive",
-        )
-
-        # Validate table result is a string
-        self.assertIsInstance(result["table_result"], str, f"{test_name}: Table result should be a string")
-        self.assertGreater(
-            len(result["table_result"]),
-            0,
-            f"{test_name}: Table result should not be empty",
-        )
 
     def _assert_k3_operators_present(self, result_dict: dict, test_name: str = ""):
         """Verify K3-specific operators are present in the operation trace."""
@@ -211,7 +136,7 @@ class TestKimiK3(unittest.TestCase):
             result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k3_text_prefill")
+        assert_l1_inference_metrics(self, result, "test_kimi_k3_text_prefill")
 
         # Additional K3-specific operator checks
         result_dict = asdict(result) if isinstance(result, ModelRunnerMetrics) else result
@@ -251,7 +176,7 @@ class TestKimiK3(unittest.TestCase):
             result = executor.run(user_input, generate_inputs_func=generate_inputs).metrics
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k3_text_decode")
+        assert_l1_inference_metrics(self, result, "test_kimi_k3_text_decode")
 
         # Additional K3-specific operator checks
         result_dict = asdict(result) if isinstance(result, ModelRunnerMetrics) else result
@@ -334,7 +259,7 @@ class TestKimiK3(unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k3_vision_language_prefill")
+        assert_l1_inference_metrics(self, result, "test_kimi_k3_vision_language_prefill")
 
         # Additional K3-specific operator checks
         result_dict = asdict(result) if isinstance(result, ModelRunnerMetrics) else result
@@ -461,7 +386,7 @@ class TestKimiK3(unittest.TestCase):
         result = model_runner.run_inference(generate_inputs_func=generate_inputs)
 
         # Validate the inference result
-        self._validate_inference_result(result, "test_kimi_k3_vision_language_decode")
+        assert_l1_inference_metrics(self, result, "test_kimi_k3_vision_language_decode")
 
         # Additional K3-specific operator checks
         result_dict = asdict(result) if isinstance(result, ModelRunnerMetrics) else result
