@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import torch
 
@@ -62,6 +63,7 @@ class ParallelArtifact:
 class FxArtifact:
     kind: str
     node_ops: tuple[str, ...]
+    graph_module: torch.fx.GraphModule
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ class DiagnosticsArtifact:
     kind: str
     region_id: str
     status: str
+    finding: object
 
 
 @dataclass(frozen=True)
@@ -147,14 +150,25 @@ def parallel_artifact(
     return ParallelArtifact("parallel", world_size, tensor_parallel, expert_parallel)
 
 
-def fx_artifact(**rejected: object) -> FxArtifact:
-    """A one-node graph that does not trace a module."""
+def fx_artifact(
+    *,
+    trace_func: Callable[..., object] | None = None,
+    trace_args: tuple[object, ...] = (),
+    **rejected: object,
+) -> FxArtifact:
+    """A synthetic FX graph, optionally traced from one component callable."""
     _reject_identity(rejected)
+    if trace_func is not None:
+        from torch.fx.experimental.proxy_tensor import make_fx
+
+        graph_module = make_fx(trace_func)(*trace_args)
+        return FxArtifact("fx", tuple(node.op for node in graph_module.graph.nodes), graph_module)
     graph = torch.fx.Graph()
     value = graph.placeholder("x")
     graph.output(value)
     graph.lint()
-    return FxArtifact("fx", tuple(node.op for node in graph.nodes))
+    graph_module = torch.fx.GraphModule({}, graph)
+    return FxArtifact("fx", tuple(node.op for node in graph.nodes), graph_module)
 
 
 def runtime_event_artifact(
@@ -179,12 +193,44 @@ def runtime_event_artifact(
     return RuntimeEventArtifact("runtime_event", op_name, duration_us, invocation)
 
 
-def diagnostics_artifact(*, region_id: str, status: str, **rejected: object) -> DiagnosticsArtifact:
-    """One synthetic diagnostics finding."""
+def diagnostics_artifact(
+    *,
+    region_id: str,
+    status: str,
+    layer_index: int | None = 0,
+    stage_id: str = "synthetic",
+    rule_id: str = "synthetic.rule",
+    comparison_kind: str = "contract",
+    message: str = "synthetic diagnostic finding",
+    expected: object = None,
+    actual: object = None,
+    left_evidence: tuple[object, ...] = (),
+    right_evidence: tuple[object, ...] = (),
+    **rejected: object,
+) -> DiagnosticsArtifact:
+    """One real diagnostics Finding built without a model identity."""
     _reject_identity(rejected)
-    if status not in {"PASS", "FAIL"}:
-        raise ValueError("diagnostics status must be PASS or FAIL")
-    return DiagnosticsArtifact("diagnostics", region_id, status)
+    from tools.model_diagnostics.domain import Finding, FindingStatus
+
+    try:
+        finding_status = FindingStatus[status]
+    except KeyError as error:
+        raise ValueError(f"invalid diagnostics status: {status}") from error
+    finding = Finding(
+        region_id=region_id,
+        layer_index=layer_index,
+        stage_id=stage_id,
+        rule_id=rule_id,
+        comparison_kind=comparison_kind,
+        status=finding_status,
+        message_code=f"synthetic.{finding_status.value}",
+        message=message,
+        expected=expected,
+        actual=actual,
+        left_evidence=left_evidence,
+        right_evidence=right_evidence,
+    )
+    return DiagnosticsArtifact("diagnostics", region_id, status, finding)
 
 
 def replay_artifact(
@@ -253,7 +299,7 @@ L2_CONTRACTS = (
         ("world_size", "tensor_parallel"),
         ("expert_parallel",),
     ),
-    L2BuilderContract("fx", fx_artifact, FxArtifact, ()),
+    L2BuilderContract("fx", fx_artifact, FxArtifact, (), ("trace_func", "trace_args")),
     L2BuilderContract(
         "runtime_event",
         runtime_event_artifact,
@@ -261,7 +307,23 @@ L2_CONTRACTS = (
         ("op_name", "duration_us"),
         ("args", "kwargs", "out"),
     ),
-    L2BuilderContract("diagnostics", diagnostics_artifact, DiagnosticsArtifact, ("region_id", "status")),
+    L2BuilderContract(
+        "diagnostics",
+        diagnostics_artifact,
+        DiagnosticsArtifact,
+        ("region_id", "status"),
+        (
+            "layer_index",
+            "stage_id",
+            "rule_id",
+            "comparison_kind",
+            "message",
+            "expected",
+            "actual",
+            "left_evidence",
+            "right_evidence",
+        ),
+    ),
     L2BuilderContract("replay", replay_artifact, ReplayArtifact, ("num_queries", "query_len"), ("decode", "fields")),
     L2BuilderContract(
         "microbench",

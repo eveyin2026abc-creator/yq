@@ -400,6 +400,21 @@ def test_check_l2_layers_scans_helpers_and_module_tests(tmp_path: Path, monkeypa
         check_l2_layers(argparse.Namespace())
 
 
+def test_check_l2_layers_requires_real_consumers_for_every_canonical_builder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = tmp_path / "tests/helpers/l2_artifacts.py"
+    module = tmp_path / "tests/regression/demo/module/test_demo.py"
+    helper.parent.mkdir(parents=True)
+    module.parent.mkdir(parents=True)
+    helper.write_text("L2_CONTRACTS = ()\n", encoding="utf-8")
+    module.write_text("def test_demo(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(GateError, match="lack real module consumers"):
+        check_l2_layers(argparse.Namespace())
+
+
 def test_main_reports_gate_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     parser = argparse.Namespace(
         parse_args=lambda: argparse.Namespace(func=lambda _args: (_ for _ in ()).throw(GateError("boom")))

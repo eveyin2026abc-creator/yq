@@ -100,6 +100,7 @@ def test_parallel_artifact_rejects_an_uneven_world():
 def test_fx_artifact_is_a_placeholder_graph():
     artifact = fx_artifact()
     assert artifact.node_ops == ("placeholder", "output")
+    assert artifact.graph_module("value") == "value"
 
 
 def test_runtime_event_artifact_matches_runtime_capture_protocol():
@@ -119,7 +120,7 @@ def test_runtime_event_artifact_matches_runtime_capture_protocol():
 
 
 def test_diagnostics_and_replay_reject_empty_contracts():
-    with pytest.raises(ValueError, match="PASS or FAIL"):
+    with pytest.raises(ValueError, match="invalid diagnostics status"):
         diagnostics_artifact(region_id="input", status="WARN")
     with pytest.raises(ValueError, match="positive"):
         replay_artifact(num_queries=0, query_len=4)

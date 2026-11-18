@@ -30,6 +30,15 @@ from typing import Iterable
 from tests.architecture.layer_guard import find_l2_model_violations_in_file
 
 ASSERTION_GROUPS = {"numeric", "structural", "capability"}
+L2_BUILDERS = (
+    "quant_artifact",
+    "parallel_artifact",
+    "fx_artifact",
+    "runtime_event_artifact",
+    "diagnostics_artifact",
+    "replay_artifact",
+    "microbench_artifact",
+)
 INVENTORY_FIELDS = ("node_id", "current_file", "current_layer", "target_layer", "target_file", "status")
 
 
@@ -500,12 +509,33 @@ def check_new_tests(args: argparse.Namespace) -> None:
 
 def check_l2_layers(args: argparse.Namespace) -> None:
     """Reject real model construction from every L2 helper and module test."""
-    files = [Path("tests/helpers/l2_artifacts.py")]
-    files.extend(sorted(Path("tests/regression").glob("*/module/**/*.py")))
+    helper = Path("tests/helpers/l2_artifacts.py")
+    module_files = sorted(Path("tests/regression").glob("*/module/**/*.py"))
+    files = [helper, *module_files]
     violations = [violation for path in files if path.is_file() for violation in find_l2_model_violations_in_file(path)]
     if violations:
         raise GateError("L2 model-construction violations:\n" + "\n".join(violations))
-    print(json.dumps({"checked_l2_files": len(files), "violations": 0}))
+    consumers = {
+        builder: sorted(
+            path.as_posix()
+            for path in module_files
+            if path.name != "test_l2_artifacts.py" and f"{builder}(" in path.read_text(encoding="utf-8")
+        )
+        for builder in L2_BUILDERS
+    }
+    if helper.is_file() and "L2_CONTRACTS" in helper.read_text(encoding="utf-8"):
+        missing = [builder for builder, paths in consumers.items() if not paths]
+        if missing:
+            raise GateError(f"canonical L2 builders lack real module consumers: {', '.join(missing)}")
+    print(
+        json.dumps(
+            {
+                "checked_l2_files": len(files),
+                "violations": 0,
+                "canonical_builder_consumers": {builder: len(paths) for builder, paths in consumers.items()},
+            }
+        )
+    )
 
 
 def check_test_policy(args: argparse.Namespace) -> None:

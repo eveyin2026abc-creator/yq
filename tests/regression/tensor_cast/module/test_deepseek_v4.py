@@ -181,7 +181,7 @@ def test_fused_hc_pre_accounts_for_projection_and_only_external_memory(use_kwarg
 
 @pytest.mark.parametrize("batch_shape", [(1, 7), (2, 3)])
 def test_emit_hc_pre_trace_has_one_fused_node(batch_shape):
-    from torch.fx.experimental.proxy_tensor import make_fx
+    from tests.helpers.l2_artifacts import fx_artifact
 
     config = _tiny_v4_config(num_hidden_layers=1, compress_ratios=[0], hc_mult=4, hc_sinkhorn_iters=20)
     with torch.device("meta"):
@@ -189,7 +189,10 @@ def test_emit_hc_pre_trace_has_one_fused_node(batch_shape):
     x = torch.empty(*batch_shape, config.hc_mult, config.hidden_size, device="meta", dtype=torch.bfloat16)
     args = (x, layer.hc_attn_fn, layer.hc_attn_scale, layer.hc_attn_base)
 
-    graph = make_fx(lambda x, fn, scale, base: layer._emit_hc_pre(x, fn, scale, base))(*args)
+    graph = fx_artifact(
+        trace_func=lambda x, fn, scale, base: layer._emit_hc_pre(x, fn, scale, base),
+        trace_args=args,
+    ).graph_module
     operators = [node.target for node in graph.graph.nodes if node.op == "call_function"]
     assert operators.count(torch.ops.tensor_cast.hc_pre_v3.default) == 1
     for excluded in (

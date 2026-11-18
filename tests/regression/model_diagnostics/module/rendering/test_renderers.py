@@ -23,7 +23,6 @@ from tools.model_diagnostics.domain import (
     DiagnosticsResult,
     EvidenceRef,
     ExecutionPhase,
-    Finding,
     FindingStatus,
     Limitation,
     ModelRunContextSummary,
@@ -44,23 +43,23 @@ from tools.model_diagnostics.rendering import (
     RuntimeHtmlRenderer,
     write_html_report,
 )
+from tests.helpers.l2_artifacts import diagnostics_artifact
 
 
 def _result(status: FindingStatus, *, message="shape differs") -> DiagnosticsResult:
-    finding = Finding(
+    finding = diagnostics_artifact(
         region_id="language",
+        status=status.name,
         layer_index=0,
         stage_id="attention",
         rule_id="output.shape",
         comparison_kind="shape",
-        status=status,
-        message_code=f"tensor.{status.value}",
         message=message,
         expected=(2, 4),
         actual=(2, 5),
         left_evidence=(EvidenceRef(SourceKind.THEORY, 1, 0, "attention"),),
         right_evidence=(EvidenceRef(SourceKind.RUNTIME, 3, 0, "tensor_cast.attention.default"),),
-    )
+    ).finding
     findings = (finding,)
     return DiagnosticsResult(
         schema_version="1",
