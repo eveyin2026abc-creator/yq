@@ -65,7 +65,9 @@ source "${SCRIPT_DIR}/lib/common.sh"
 architecture_status=0
 run_py "${HELPERS_DIR}/architecture/main.py" check-assertions || architecture_status=$?
 run_py "${HELPERS_DIR}/architecture/main.py" check-scenarios --budget 180 || architecture_status=$?
+run_py "${HELPERS_DIR}/architecture/main.py" check-family-batches || architecture_status=$?
 run_py "${HELPERS_DIR}/architecture/main.py" check-l2-layers || architecture_status=$?
+run_py "${HELPERS_DIR}/architecture/main.py" check-cov-helpers || architecture_status=$?
 run_py "${HELPERS_DIR}/architecture/main.py" check-new-tests \
   --base "origin/${MSMODELING_TEST_BASE_BRANCH}" || architecture_status=$?
 
@@ -74,12 +76,20 @@ run_py "${HELPERS_DIR}/ci_gate/main.py" || ci_gate_status=$?
 
 l1_watcher_status=0
 if [[ ${architecture_status} -eq 0 && ${ci_gate_status} -eq 0 ]]; then
+  mkdir -p artifacts
+  l1_merge_base=$(git merge-base HEAD "${MSMODELING_TEST_BASE_BRANCH}")
+  git diff --name-only "${l1_merge_base}" HEAD > artifacts/l1_changed_paths.txt
   run_py "${HELPERS_DIR}/architecture/l1_watchers.py" \
     --output "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
+    --changed-paths-file artifacts/l1_changed_paths.txt \
+    --selection-output artifacts/l1_watcher_selection.json \
     || l1_watcher_status=$?
   if [[ ${l1_watcher_status} -eq 0 ]]; then
     run_py "${HELPERS_DIR}/architecture/main.py" check-watchers \
       --test-map "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
+      --baseline-test-map "${MSMODELING_TEST_MAP_PATH}" \
+      --selection artifacts/l1_watcher_selection.json \
+      --evidence-output "artifacts/l1_watcher_conservation.json" \
       || l1_watcher_status=$?
   fi
 fi

@@ -251,27 +251,160 @@ def check_scenarios(args: argparse.Namespace) -> None:
         raise GateError(f"incremental L1 scenario budget exceeded: {total:.3f}s > {args.budget:.3f}s")
 
 
+def _load_test_map(path: Path) -> dict[str, dict[str, list[str]]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mapping = payload.get("map", payload)
+    if not isinstance(mapping, dict):
+        raise GateError(f"{path}: test map must contain an object-valued map")
+    return mapping
+
+
+def _test_map_commit(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    value = payload.get("built_from_commit")
+    return value if isinstance(value, str) else None
+
+
+def _symbol_watchers(mapping: dict[str, dict[str, list[str]]], product_symbol: str) -> set[str]:
+    source_file, symbol = product_symbol.split("::", 1)
+    return {node for node, sources in mapping.items() if symbol in sources.get(source_file, [])}
+
+
 def check_watchers(args: argparse.Namespace) -> None:
     rows = _read_csv(args.watchers)
     required = ("family", "source_node", "product_symbol", "required")
     _require_columns(args.watchers, rows, required)
-    payload = json.loads(args.test_map.read_text(encoding="utf-8"))
-    mapping = payload.get("map", {})
+    mapping = _load_test_map(args.test_map)
+    baseline_mapping = _load_test_map(args.baseline_test_map) if args.baseline_test_map else None
+    selected_families = {"qwen", "dense", "moe", "multimodal"}
+    if args.selection:
+        selection_payload = json.loads(args.selection.read_text(encoding="utf-8"))
+        selected_families = set(selection_payload.get("families", []))
+        invalid = selected_families - {"qwen", "dense", "moe", "multimodal"}
+        if invalid:
+            raise GateError(f"invalid selected L1 families: {sorted(invalid)}")
     covered_families = set()
+    required_watchers = 0
     missing = []
+    missing_from_baseline = []
+    family_evidence: dict[str, dict[str, set[str]]] = defaultdict(
+        lambda: {
+            "baseline_nodes": set(),
+            "candidate_nodes": set(),
+            "baseline_symbols": set(),
+            "candidate_symbols": set(),
+        }
+    )
     for row in rows:
-        if row["required"].lower() != "true":
+        if row["required"].lower() != "true" or row["family"] not in selected_families:
             continue
+        required_watchers += 1
         source_file, symbol = row["product_symbol"].split("::", 1)
         symbols = mapping.get(row["source_node"], {}).get(source_file, [])
         if symbol not in symbols:
             missing.append(f"{row['family']}: {row['source_node']} -> {row['product_symbol']}")
+        else:
+            family_evidence[row["family"]]["candidate_nodes"].add(row["source_node"])
+            family_evidence[row["family"]]["candidate_symbols"].add(row["product_symbol"])
+        if baseline_mapping is not None:
+            baseline_nodes = _symbol_watchers(baseline_mapping, row["product_symbol"])
+            if not baseline_nodes:
+                missing_from_baseline.append(f"{row['family']}: {row['product_symbol']}")
+            else:
+                family_evidence[row["family"]]["baseline_nodes"].update(baseline_nodes)
+                family_evidence[row["family"]]["baseline_symbols"].add(row["product_symbol"])
         covered_families.add(row["family"])
-    if covered_families != {"qwen", "dense", "moe", "multimodal"}:
-        raise GateError("watcher manifest must cover qwen/dense/moe/multimodal")
+    if covered_families != selected_families:
+        raise GateError(f"watcher manifest must cover selected families: {sorted(selected_families)}")
     if missing:
         raise GateError("required watcher paths disappeared:\n" + "\n".join(missing))
-    print(json.dumps({"families": len(covered_families), "required_watchers": len(rows)}))
+    if missing_from_baseline:
+        raise GateError(
+            "required symbols have no watcher in the baseline test map:\n" + "\n".join(missing_from_baseline)
+        )
+    evidence = []
+    lost_symbols = []
+    for family in sorted(covered_families):
+        item = family_evidence[family]
+        lost = item["baseline_symbols"] - item["candidate_symbols"]
+        lost_symbols.extend(f"{family}: {symbol}" for symbol in sorted(lost))
+        evidence.append(
+            {
+                "family": family,
+                "baseline_nodes": sorted(item["baseline_nodes"]),
+                "candidate_nodes": sorted(item["candidate_nodes"]),
+                "baseline_symbols": sorted(item["baseline_symbols"]),
+                "candidate_symbols": sorted(item["candidate_symbols"]),
+                "lost_symbols": sorted(lost),
+            }
+        )
+    if lost_symbols:
+        raise GateError("candidate watcher coverage lost baseline symbols:\n" + "\n".join(lost_symbols))
+    if args.evidence_output:
+        args.evidence_output.parent.mkdir(parents=True, exist_ok=True)
+        args.evidence_output.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "coverage_context": "test",
+                    "baseline_commit": _test_map_commit(args.baseline_test_map),
+                    "candidate_commit": _test_map_commit(args.test_map),
+                    "baseline_test_map": str(args.baseline_test_map) if args.baseline_test_map else None,
+                    "candidate_test_map": str(args.test_map),
+                    "families": evidence,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    print(
+        json.dumps(
+            {
+                "families": len(covered_families),
+                "required_watchers": required_watchers,
+                "conserved_symbols": sum(len(item["candidate_symbols"]) for item in family_evidence.values()),
+            }
+        )
+    )
+
+
+def check_family_batches(args: argparse.Namespace) -> None:
+    registry = json.loads(args.registry.read_text(encoding="utf-8"))
+    families = registry.get("families", {})
+    scenarios = _read_csv(args.scenarios)
+    assertions = _read_csv(args.assertions)
+    watchers = _read_csv(args.watchers)
+    expected_families = {"qwen", "dense", "moe", "multimodal"}
+    if set(families) != expected_families:
+        raise GateError("family batch registry must contain exactly qwen/dense/moe/multimodal")
+    orders = set()
+    errors = []
+    for family, record in families.items():
+        order = record.get("order")
+        orders.add(order)
+        evidence = record.get("evidence", {})
+        actual = {
+            "scenarios": sum(row["family"] == family for row in scenarios),
+            "assertions": sum(row["family"] == family for row in assertions),
+            "watchers": sum(row["family"] == family and row["required"].lower() == "true" for row in watchers),
+        }
+        if evidence.get("status") != "passed":
+            errors.append(f"{family}: batch evidence status must be passed")
+        for key, count in actual.items():
+            if evidence.get(key) != count:
+                errors.append(f"{family}: evidence {key}={evidence.get(key)!r}, actual={count}")
+        rollback = record.get("rollback", {})
+        if not rollback.get("selector") or not rollback.get("scope"):
+            errors.append(f"{family}: rollback selector and scope are required")
+    if orders != {1, 2, 3, 4}:
+        errors.append(f"family batch order must be 1..4, got {sorted(orders, key=str)}")
+    if errors:
+        raise GateError("\n".join(errors))
+    print(json.dumps({"families": 4, "batch_order": ["qwen", "dense", "moe", "multimodal"]}))
 
 
 def _changed_test_files(base: str) -> list[Path]:
@@ -291,6 +424,43 @@ def _name(node: ast.AST) -> str:
     if isinstance(node, ast.Call):
         return _name(node.func)
     return ""
+
+
+def _check_cov_helper(path: Path, source: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    errors = []
+    decorators = {_name(item) for item in node.decorator_list}
+    is_cov_helper = any(name.endswith("cov_helper") for name in decorators)
+    docstring = ast.get_docstring(node) or ""
+    coverage_only = "line coverage only" in docstring.lower()
+    if coverage_only and not is_cov_helper:
+        errors.append(f"{path}:{node.lineno}: coverage-only L3 test must use @pytest.mark.cov_helper")
+    if not is_cov_helper:
+        return errors
+    segment = ast.get_source_segment(source, node) or ""
+    marker_lines = [line.strip() for line in docstring.splitlines() if line.strip().startswith("COV_HELPER:")]
+    if len(marker_lines) != 1 or "::" not in marker_lines[0]:
+        errors.append(f"{path}:{node.lineno}: cov_helper needs one COV_HELPER: product/path.py::symbol line")
+    if any(token in segment for token in ('patch("tensor_cast.', 'patch("cli.', 'patch("serving_cast.')):
+        errors.append(f"{path}:{node.lineno}: cov_helper must not mock the product object under test")
+    return errors
+
+
+def check_cov_helpers(_args: argparse.Namespace) -> None:
+    errors = []
+    marked = 0
+    files = sorted(Path("tests").glob("**/unit/test_*.py"))
+    for path in files:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
+                continue
+            decorators = {_name(item) for item in node.decorator_list}
+            marked += any(name.endswith("cov_helper") for name in decorators)
+            errors.extend(_check_cov_helper(path, source, node))
+    if errors:
+        raise GateError("\n".join(errors))
+    print(json.dumps({"checked_l3_files": len(files), "cov_helpers": marked}))
 
 
 def check_new_tests(args: argparse.Namespace) -> None:
@@ -315,15 +485,7 @@ def check_new_tests(args: argparse.Namespace) -> None:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not node.name.startswith("test_"):
                 continue
-            decorators = {_name(item) for item in node.decorator_list}
-            if any(name.endswith("cov_helper") for name in decorators):
-                segment = ast.get_source_segment(source, node) or ""
-                if "COV_HELPER:" not in (ast.get_docstring(node) or ""):
-                    errors.append(
-                        f"{path}:{node.lineno}: cov_helper needs a COV_HELPER: product/path.py::symbol docstring"
-                    )
-                if any(token in segment for token in ('patch("tensor_cast.', 'patch("cli.', 'patch("serving_cast.')):
-                    errors.append(f"{path}:{node.lineno}: cov_helper must not mock the product object under test")
+            errors.extend(_check_cov_helper(path, source, node))
         if (
             uses_model_execution
             and not execution_exempt
@@ -371,13 +533,24 @@ def build_parser() -> argparse.ArgumentParser:
     watchers = sub.add_parser("check-watchers")
     watchers.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
     watchers.add_argument("--test-map", type=Path, default=Path("artifacts/l1_test_map.json"))
+    watchers.add_argument("--baseline-test-map", type=Path)
+    watchers.add_argument("--selection", type=Path)
+    watchers.add_argument("--evidence-output", type=Path, default=Path("artifacts/l1_watcher_conservation.json"))
     watchers.set_defaults(func=check_watchers)
+    batches = sub.add_parser("check-family-batches")
+    batches.add_argument("--registry", type=Path, default=Path("tests/.ci/l1_families.json"))
+    batches.add_argument("--scenarios", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
+    batches.add_argument("--assertions", type=Path, default=Path("tests/.ci/assertion_manifest.csv"))
+    batches.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    batches.set_defaults(func=check_family_batches)
     new_tests = sub.add_parser("check-new-tests")
     new_tests.add_argument("--base", default="origin/master")
     new_tests.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))
     new_tests.set_defaults(func=check_new_tests)
     layers = sub.add_parser("check-l2-layers")
     layers.set_defaults(func=check_l2_layers)
+    cov_helpers = sub.add_parser("check-cov-helpers")
+    cov_helpers.set_defaults(func=check_cov_helpers)
     return parser
 
 

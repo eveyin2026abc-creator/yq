@@ -1,9 +1,45 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "families": {
-    "qwen": {"batch": "qwen", "owner": "SIG-Test"},
-    "dense": {"batch": "dense", "owner": "SIG-Test"},
-    "moe": {"batch": "moe", "owner": "SIG-Test"},
-    "multimodal": {"batch": "multimodal", "owner": "SIG-Test"}
+    "qwen": {
+      "batch": "qwen",
+      "order": 1,
+      "owner": "SIG-Test",
+      "evidence": {"status": "passed", "scenarios": 1, "assertions": 3, "watchers": 3},
+      "rollback": {
+        "selector": "family=qwen",
+        "scope": "qwen rows in l1_scenarios.csv, assertion_manifest.csv and l1_watchers.csv"
+      }
+    },
+    "dense": {
+      "batch": "dense",
+      "order": 2,
+      "owner": "SIG-Test",
+      "evidence": {"status": "passed", "scenarios": 2, "assertions": 6, "watchers": 3},
+      "rollback": {
+        "selector": "family=dense",
+        "scope": "dense rows in l1_scenarios.csv, assertion_manifest.csv and l1_watchers.csv"
+      }
+    },
+    "moe": {
+      "batch": "moe",
+      "order": 3,
+      "owner": "SIG-Test",
+      "evidence": {"status": "passed", "scenarios": 5, "assertions": 15, "watchers": 3},
+      "rollback": {
+        "selector": "family=moe",
+        "scope": "moe rows in l1_scenarios.csv, assertion_manifest.csv and l1_watchers.csv"
+      }
+    },
+    "multimodal": {
+      "batch": "multimodal",
+      "order": 4,
+      "owner": "SIG-Test",
+      "evidence": {"status": "passed", "scenarios": 3, "assertions": 9, "watchers": 3},
+      "rollback": {
+        "selector": "family=multimodal",
+        "scope": "multimodal rows in l1_scenarios.csv, assertion_manifest.csv and l1_watchers.csv"
+      }
+    }
   }
 }
