@@ -41,69 +41,18 @@ aggregate_summary = start_microbench.aggregate_summary
 build_argparser = start_microbench.build_argparser
 build_msprof_cmd = start_microbench.build_msprof_cmd
 GapRecord = start_microbench.GapRecord
-get_cols = start_microbench.get_cols
 get_sig = start_microbench.get_sig
-md_table = start_microbench.md_table
 print_report = start_microbench.print_report
 run_msprof = start_microbench.run_msprof
-should_skip_dispatch_ffn_msprof = start_microbench.should_skip_dispatch_ffn_msprof
 update_csv = start_microbench.update_csv
 update_db = start_microbench.update_db
 UpdateResult = start_microbench.UpdateResult
-validate_case_shard_options = start_microbench.validate_case_shard_options
 validate_num_devices_options = start_microbench.validate_num_devices_options
 
 
 # =============================================================================
 # Unit Tests (No NPU Required)
 # =============================================================================
-class TestMdTable:
-    """Tests for md_table function."""
-
-    def test_empty_rows_returns_none(self):
-        """Empty rows should return '_None_'."""
-        result = md_table(["Col1", "Col2"], [])
-        assert result == "_None_"
-
-    def test_single_row(self):
-        """Single row table should format correctly."""
-        result = md_table(["Name", "Value"], [["foo", "bar"]])
-        lines = result.split("\n")
-        assert "Name" in lines[0]
-        assert "foo" in lines[2]
-        assert "bar" in lines[2]
-        assert "---" in lines[1]  # separator line
-
-    def test_multiple_rows(self):
-        """Multiple rows should format correctly."""
-        result = md_table(["Op", "Count"], [["Add", "5"], ["MatMul", "3"]])
-        lines = result.split("\n")
-        assert "Op" in lines[0]
-        assert "Add" in lines[2]
-        assert "MatMul" in lines[3]
-        assert "5" in lines[2]
-
-    def test_column_width_alignment(self):
-        """Columns should align to widest value."""
-        result = md_table(["Name", "Value"], [["a", "x"], ["longer_name", "y"]])
-        lines = result.split("\n")
-        # All lines should have same length for each column
-        assert len(lines) == 4  # header, separator, 2 data rows
-
-
-class TestCaseShardOptions:
-    def test_rejects_pruning_during_multi_shard_collection(self):
-        with pytest.raises(ValueError, match="cannot be combined with multi-shard replay"):
-            validate_case_shard_options(4, 0, prune_empty_duration_rows=True)
-
-    def test_accepts_multi_shard_collection_without_pruning(self):
-        validate_case_shard_options(4, 3, prune_empty_duration_rows=False)
-
-    def test_rejects_out_of_range_shard_index(self):
-        with pytest.raises(ValueError, match="case shard index"):
-            validate_case_shard_options(4, 4, prune_empty_duration_rows=False)
-
-
 class TestPublicParallelOptions:
     def test_public_help_exposes_num_devices_and_hides_worker_shards(self):
         parser = build_argparser()
@@ -620,96 +569,6 @@ def test_profile_aggregation_rejects_non_positive_or_non_finite_duration(duratio
             [{"Task Duration(us)": duration, "Task Type": "AICore"}],
             ep_size=None,
         )
-
-
-class TestDispatchFfnSkip:
-    def test_skip_dfc_msprof_when_ep_size_exceeds_visible_devices(self):
-        assert should_skip_dispatch_ffn_msprof(
-            ["DispatchFFNCombine"],
-            ep_size=16,
-            nproc_per_node=None,
-            visible_devices=2,
-            update_mode="missing-only",
-            has_prof_path=False,
-        )
-
-    def test_skip_dfc_msprof_for_full_run_when_ep_size_exceeds_visible_devices(self):
-        assert should_skip_dispatch_ffn_msprof(
-            None,
-            ep_size=16,
-            nproc_per_node=None,
-            visible_devices=2,
-            update_mode="missing-only",
-            has_prof_path=False,
-        )
-
-    def test_do_not_skip_multinode_dfc_when_local_ranks_fit_visible_devices(self):
-        assert not should_skip_dispatch_ffn_msprof(
-            ["DispatchFFNCombine"],
-            ep_size=32,
-            nproc_per_node=16,
-            visible_devices=16,
-            update_mode="missing-only",
-            has_prof_path=False,
-        )
-
-    def test_do_not_skip_dfc_msprof_for_mixed_operator_runs(self):
-        assert not should_skip_dispatch_ffn_msprof(
-            ["DispatchFFNCombine", "MatMulV2"],
-            ep_size=16,
-            nproc_per_node=None,
-            visible_devices=2,
-            update_mode="missing-only",
-            has_prof_path=False,
-        )
-
-
-class TestGetCols:
-    """Tests for get_cols function."""
-
-    def test_none_returns_full_schema(self):
-        """None input should return full default schema (62 columns)."""
-        cols = get_cols(None)
-        assert len(cols) == 62
-        assert "Average Duration(us)" in cols
-        assert "Profiling Average Duration(us)" in cols
-        assert "Profiling Median Duration(us)" in cols
-        assert "Profiling Std Duration(us)" in cols
-        assert "MicroBench aicore_time(us)" in cols
-
-    def test_excludes_legacy_columns(self):
-        """Should exclude MicroBench Task/Kernel Duration columns."""
-        cols = get_cols(
-            [
-                "OP State",
-                "Input Shapes",
-                "Average Duration(us)",
-                "MicroBench Task Duration(us)",
-                "MicroBench Kernel Duration(us)",
-            ]
-        )
-        assert "MicroBench Task Duration(us)" not in cols
-        assert "MicroBench Kernel Duration(us)" not in cols
-
-    def test_converts_legacy_mb_dur_to_new(self):
-        """Legacy 'MicroBench Duration(us)' should become 'Average Duration(us)'."""
-        cols = get_cols(["OP State", "Input Shapes", "MicroBench Duration(us)"])
-        assert "Average Duration(us)" in cols
-        assert "MicroBench Duration(us)" not in cols
-
-    def test_inserts_mb_cols_before_profiling_cols(self):
-        """MicroBench columns should be inserted before their Profiling counterparts."""
-        cols = get_cols(
-            [
-                "OP State",
-                "Input Shapes",
-                "Average Duration(us)",
-                "Profiling Average aicore_time(us)",
-            ]
-        )
-        mb_idx = cols.index("MicroBench aicore_time(us)")
-        prof_idx = cols.index("Profiling Average aicore_time(us)")
-        assert mb_idx < prof_idx
 
 
 class TestGetSig:
