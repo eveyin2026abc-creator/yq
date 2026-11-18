@@ -59,6 +59,7 @@ from tools.perf_data_collection.comm_bench.generate_comm_microbench import (
     resolve_topology_tier,
     run_benchmark,
 )
+from tests.helpers.l2_artifacts import parallel_artifact
 
 # NOTE: _run_bench_profiler_batch is imported locally in @pytest.mark.npu tests
 # to avoid importing it at module level (it requires torch_npu at import time).
@@ -885,14 +886,15 @@ class TestRunCommBenchShellMultiNode:
         )
         stub.chmod(0o755)
 
+        topology = parallel_artifact(world_size=2, tensor_parallel=1)
         env = os.environ.copy()
         env["PATH"] = f"{stub_dir}:{env['PATH']}"
         env.update(
             {
-                "NNODES": "2",
+                "NNODES": str(topology.world_size),
                 "NODE_RANK": "0",
                 "MASTER_ADDR": "127.0.0.1",
-                "NPROC": "1",  # world_size = 2 * 1 = 2 < 32 -> empty ND_LIST
+                "NPROC": str(topology.tensor_parallel),
             }
         )
 

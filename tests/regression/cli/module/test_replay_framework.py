@@ -23,6 +23,7 @@ import pytest
 
 # pylint: disable=no-name-in-module
 from tools.perf_data_collection.op_replay import replay_framework
+from tests.helpers.l2_artifacts import replay_artifact
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -276,11 +277,16 @@ def test_grouped_runtime_case_without_explicit_id_uses_row_identity(tmp_path):
 def test_runtime_replay_case_owns_fallback_identity_and_signature_context(
     tmp_path: Path,
 ):
+    request = replay_artifact(
+        num_queries=2,
+        query_len=16,
+        fields={"Input Shapes": "2,16", "Average Duration(us)": "1.0"},
+    )
     case = replay_framework.RuntimeReplayCase(
         kernel_type="AddRmsNormBias",
         csv_path=tmp_path / "AddRmsNormBias.csv",
         row_index=4,
-        row={"Input Shapes": "2,16", "Average Duration(us)": "1.0"},
+        row=request.row,
         exact_runtime_match=True,
     )
 

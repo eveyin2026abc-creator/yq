@@ -20,15 +20,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from tensor_cast.core.quantization.config import create_attention_quant_config
-from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction
+from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 from tensor_cast.transformers.transformations import _exclude_unquantized_dsa_linears
+from tests.helpers.l2_artifacts import quant_artifact
+
+
+def _attention_config(action: QuantizeAttentionAction):
+    return quant_artifact(
+        linear_action=QuantizeLinearAction.DISABLED,
+        attention_action=action,
+    ).attention_config
 
 
 @pytest.mark.parametrize("action", [None, QuantizeAttentionAction.INT8, QuantizeAttentionAction.FP8])
 @pytest.mark.parametrize("existing", [None, ["custom.proj"]])
 def test_dsa_cp_quantization_exclusions(action, existing):
-    quant = create_attention_quant_config(action) if action is not None else None
+    quant = _attention_config(action) if action is not None else None
     config = SimpleNamespace(
         quant_config=SimpleNamespace(
             modules_to_not_convert=list(existing) if existing is not None else None,
@@ -54,6 +61,6 @@ def test_none_attention_entry_is_not_quantized_and_user_exclusion_survives():
     )
     _exclude_unquantized_dsa_linears(config)
     assert "*.kv_b_proj" in config.quant_config.modules_to_not_convert
-    config.quant_config.attention_configs = {-1: create_attention_quant_config(QuantizeAttentionAction.INT8)}
+    config.quant_config.attention_configs = {-1: _attention_config(QuantizeAttentionAction.INT8)}
     _exclude_unquantized_dsa_linears(config)
     assert "*.kv_b_proj" in config.quant_config.modules_to_not_convert

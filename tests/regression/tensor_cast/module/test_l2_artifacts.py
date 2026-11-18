@@ -102,11 +102,60 @@ def test_fx_artifact_is_a_placeholder_graph():
     assert artifact.node_ops == ("placeholder", "output")
 
 
+def test_runtime_event_artifact_matches_runtime_capture_protocol():
+    output = object()
+    artifact = runtime_event_artifact(
+        op_name="aten.mm.default",
+        duration_us=10,
+        args=("input",),
+        kwargs={"weight": "weight"},
+        out=output,
+    )
+
+    assert str(artifact.op_invoke_info.func) == "aten.mm.default"
+    assert artifact.op_invoke_info.args == ("input",)
+    assert artifact.op_invoke_info.kwargs == {"weight": "weight"}
+    assert artifact.op_invoke_info.out is output
+
+
 def test_diagnostics_and_replay_reject_empty_contracts():
     with pytest.raises(ValueError, match="PASS or FAIL"):
         diagnostics_artifact(region_id="input", status="WARN")
     with pytest.raises(ValueError, match="positive"):
         replay_artifact(num_queries=0, query_len=4)
+
+
+def test_replay_artifact_exposes_the_row_consumed_by_replay_components():
+    artifact = replay_artifact(
+        num_queries=2,
+        query_len=16,
+        fields={"Input Shapes": "2,16", "Average Duration(us)": "1.0"},
+    )
+
+    assert artifact.row == {
+        "num_queries": 2,
+        "query_len": 16,
+        "decode": False,
+        "Input Shapes": "2,16",
+        "Average Duration(us)": "1.0",
+    }
+
+
+def test_microbench_artifact_exposes_a_replay_row_request():
+    artifact = microbench_artifact(op_name="ArgMaxV2", shape=(2, 4), dtype="DT_BF16")
+
+    assert artifact.request == {
+        "schema_version": 1,
+        "kernel_type": "ArgMaxV2",
+        "replay_row": {
+            "Input Shapes": "2,4",
+            "Input Data Types": "DT_BF16",
+            "Input Formats": "ND",
+            "Output Shapes": "2,4",
+            "Output Data Types": "DT_BF16",
+            "Output Formats": "ND",
+        },
+    }
 
 
 def test_l2_module_has_no_model_construction():

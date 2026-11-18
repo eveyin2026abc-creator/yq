@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import torch
 
+from tensor_cast.core.quantization.config import create_attention_quant_config
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
 
 L2_KINDS = (
@@ -46,6 +47,7 @@ class QuantArtifact:
     kind: str
     linear_action: str
     attention_action: str
+    attention_config: object
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,23 @@ class RuntimeEventArtifact:
     kind: str
     op_name: str
     duration_us: int
+    op_invoke_info: RuntimeInvocation
+
+
+@dataclass(frozen=True)
+class _SyntheticOp:
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
+@dataclass(frozen=True)
+class RuntimeInvocation:
+    func: _SyntheticOp
+    args: tuple[object, ...]
+    kwargs: dict[str, object]
+    out: object
 
 
 @dataclass(frozen=True)
@@ -82,6 +101,7 @@ class ReplayArtifact:
     num_queries: int
     query_len: int
     decode: bool
+    row: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -90,6 +110,7 @@ class MicrobenchArtifact:
     op_name: str
     shape: tuple[int, ...]
     dtype: str
+    request: dict[str, object]
 
 
 def quant_artifact(
@@ -100,7 +121,14 @@ def quant_artifact(
 ) -> QuantArtifact:
     """One quant configuration with no weights and no model."""
     _reject_identity(rejected)
-    return QuantArtifact("quant", linear_action.value, attention_action.value)
+    return QuantArtifact(
+        "quant",
+        linear_action.value,
+        attention_action.value,
+        None
+        if attention_action == QuantizeAttentionAction.DISABLED
+        else create_attention_quant_config(attention_action),
+    )
 
 
 def parallel_artifact(
@@ -129,12 +157,26 @@ def fx_artifact(**rejected: object) -> FxArtifact:
     return FxArtifact("fx", tuple(node.op for node in graph.nodes))
 
 
-def runtime_event_artifact(*, op_name: str, duration_us: int, **rejected: object) -> RuntimeEventArtifact:
-    """One timed operator event with no runtime attached."""
+def runtime_event_artifact(
+    *,
+    op_name: str,
+    duration_us: int,
+    args: tuple[object, ...] = (),
+    kwargs: dict[str, object] | None = None,
+    out: object = None,
+    **rejected: object,
+) -> RuntimeEventArtifact:
+    """One runtime-compatible operator event without a model or runtime."""
     _reject_identity(rejected)
     if not op_name or duration_us < 0:
         raise ValueError("runtime event needs a name and a non-negative duration")
-    return RuntimeEventArtifact("runtime_event", op_name, duration_us)
+    invocation = RuntimeInvocation(
+        func=_SyntheticOp(op_name),
+        args=args,
+        kwargs={} if kwargs is None else kwargs,
+        out=out,
+    )
+    return RuntimeEventArtifact("runtime_event", op_name, duration_us, invocation)
 
 
 def diagnostics_artifact(*, region_id: str, status: str, **rejected: object) -> DiagnosticsArtifact:
@@ -145,20 +187,50 @@ def diagnostics_artifact(*, region_id: str, status: str, **rejected: object) -> 
     return DiagnosticsArtifact("diagnostics", region_id, status)
 
 
-def replay_artifact(*, num_queries: int, query_len: int, decode: bool = False, **rejected: object) -> ReplayArtifact:
-    """One replay request. It does not build or run a model."""
+def replay_artifact(
+    *,
+    num_queries: int,
+    query_len: int,
+    decode: bool = False,
+    fields: dict[str, object] | None = None,
+    **rejected: object,
+) -> ReplayArtifact:
+    """One replay row plus its scheduling dimensions, without a model."""
     _reject_identity(rejected)
     if num_queries < 1 or query_len < 1:
         raise ValueError("replay request needs a positive batch and query length")
-    return ReplayArtifact("replay", num_queries, query_len, decode)
+    row = {
+        "num_queries": num_queries,
+        "query_len": query_len,
+        "decode": decode,
+        **({} if fields is None else fields),
+    }
+    return ReplayArtifact("replay", num_queries, query_len, decode, row)
 
 
-def microbench_artifact(*, op_name: str, shape: tuple[int, ...], dtype: str, **rejected: object) -> MicrobenchArtifact:
-    """One microbench case described by op, shape, and dtype."""
+def microbench_artifact(
+    *,
+    op_name: str,
+    shape: tuple[int, ...],
+    dtype: str,
+    replay_row: dict[str, object] | None = None,
+    **rejected: object,
+) -> MicrobenchArtifact:
+    """One microbench request described by op, shape, and dtype."""
     _reject_identity(rejected)
     if not op_name or not shape or any(dim < 1 for dim in shape):
         raise ValueError("microbench case needs an op name and a positive shape")
-    return MicrobenchArtifact("microbench", op_name, shape, dtype)
+    shape_text = ",".join(str(dim) for dim in shape)
+    row = replay_row or {
+        "Input Shapes": shape_text,
+        "Input Data Types": dtype,
+        "Input Formats": "ND",
+        "Output Shapes": shape_text,
+        "Output Data Types": dtype,
+        "Output Formats": "ND",
+    }
+    request = {"schema_version": 1, "kernel_type": op_name, "replay_row": row}
+    return MicrobenchArtifact("microbench", op_name, shape, dtype, request)
 
 
 @dataclass(frozen=True)
@@ -182,10 +254,22 @@ L2_CONTRACTS = (
         ("expert_parallel",),
     ),
     L2BuilderContract("fx", fx_artifact, FxArtifact, ()),
-    L2BuilderContract("runtime_event", runtime_event_artifact, RuntimeEventArtifact, ("op_name", "duration_us")),
+    L2BuilderContract(
+        "runtime_event",
+        runtime_event_artifact,
+        RuntimeEventArtifact,
+        ("op_name", "duration_us"),
+        ("args", "kwargs", "out"),
+    ),
     L2BuilderContract("diagnostics", diagnostics_artifact, DiagnosticsArtifact, ("region_id", "status")),
-    L2BuilderContract("replay", replay_artifact, ReplayArtifact, ("num_queries", "query_len"), ("decode",)),
-    L2BuilderContract("microbench", microbench_artifact, MicrobenchArtifact, ("op_name", "shape", "dtype")),
+    L2BuilderContract("replay", replay_artifact, ReplayArtifact, ("num_queries", "query_len"), ("decode", "fields")),
+    L2BuilderContract(
+        "microbench",
+        microbench_artifact,
+        MicrobenchArtifact,
+        ("op_name", "shape", "dtype"),
+        ("replay_row",),
+    ),
 )
 
 L2_BUILDERS = {contract.kind: contract.builder for contract in L2_CONTRACTS}

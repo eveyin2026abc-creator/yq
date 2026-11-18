@@ -31,6 +31,7 @@ import pytest
 from tools.perf_data_collection import run_op_microbench
 from tools.perf_data_collection.op_microbench import adapters
 from tools.perf_data_collection.op_microbench import worker as op_worker
+from tests.helpers.l2_artifacts import microbench_artifact
 
 
 HEADERS = [
@@ -852,9 +853,13 @@ def test_replay_row_preserves_optional_slots_and_derives_input_metadata() -> Non
         "Output Formats": "ND",
     }
 
-    request = run_op_microbench.normalize_request(
-        {"schema_version": 1, "kernel_type": "GroupedMatmul", "replay_row": replay_row}
+    artifact = microbench_artifact(
+        op_name="GroupedMatmul",
+        shape=(4, 8),
+        dtype="DT_INT8",
+        replay_row=replay_row,
     )
+    request = run_op_microbench.normalize_request(artifact.request)
 
     assert request["replay_row"] == replay_row
     assert [tensor["name"] for tensor in request["inputs"]] == [

@@ -27,20 +27,13 @@ from tools.model_diagnostics.domain import (
     TensorDirection,
 )
 from tools.model_diagnostics.sources.runtime_capture import RuntimeArtifactCapture
+from tests.helpers.l2_artifacts import runtime_event_artifact
 
 
 @dataclass(frozen=True)
 class _FakeTensor:
     shape: tuple[int, ...]
     dtype: str
-
-
-class _FakeOp:
-    def __init__(self, name: str) -> None:
-        self._name = name
-
-    def __str__(self) -> str:
-        return self._name
 
 
 def _context() -> ModelRunContext:
@@ -57,9 +50,14 @@ def _context() -> ModelRunContext:
     )
 
 
-def _event(name: str, args: tuple, kwargs: dict, out: object) -> SimpleNamespace:
-    invocation = SimpleNamespace(func=_FakeOp(name), args=args, kwargs=kwargs, out=out)
-    return SimpleNamespace(op_invoke_info=invocation)
+def _event(name: str, args: tuple, kwargs: dict, out: object):
+    return runtime_event_artifact(
+        op_name=name,
+        duration_us=0,
+        args=args,
+        kwargs=kwargs,
+        out=out,
+    )
 
 
 def test_capture_preserves_event_order_and_flattens_tensor_leaves() -> None:
@@ -118,7 +116,7 @@ def test_capture_fails_fast_on_malformed_runtime_event() -> None:
 
 def test_capture_does_not_mutate_runtime_invocations() -> None:
     args = ([_FakeTensor((2, 2), "float16")],)
-    invocation = SimpleNamespace(func=_FakeOp("aten.mm.default"), args=args, kwargs={}, out=None)
+    invocation = _event("aten.mm.default", args, {}, None).op_invoke_info
     runtime = SimpleNamespace(event_list=[SimpleNamespace(op_invoke_info=invocation)])
 
     RuntimeArtifactCapture.snapshot(runtime, run_context=_context(), producer=_producer(git_revision=None))
