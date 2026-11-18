@@ -47,6 +47,17 @@ def test_required_nodes_returns_all_four_families(tmp_path: Path) -> None:
     }
 
 
+def test_required_nodes_reads_the_authoritative_contract_registry() -> None:
+    nodes = l1_watcher_gate.required_nodes(Path("tests/.ci/l1_contracts.json"))
+
+    assert nodes == (
+        "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_dense_scenarios",
+        "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_moe_scenarios",
+        "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_multimodal_scenarios",
+        "tests/regression/tensor_cast/model/test_l1_family_scenarios.py::test_qwen_scenarios",
+    )
+
+
 def test_required_nodes_rejects_incomplete_contract(tmp_path: Path) -> None:
     watchers = tmp_path / "watchers.csv"
     _write_watchers(watchers, omit="moe")

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Iterable
 
 from tests.architecture.layer_guard import find_l2_model_violations_in_file
+from scripts.helpers.architecture.l1_contracts import contract_rows, load_contract
 
 ASSERTION_GROUPS = {"numeric", "structural", "capability"}
 L2_BUILDERS = (
@@ -49,6 +50,13 @@ class GateError(ValueError):
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as stream:
         return list(csv.DictReader(stream))
+
+
+def _contract_or_csv(args: argparse.Namespace, section: str, legacy_name: str) -> list[dict[str, str]]:
+    contract = getattr(args, "contract", None)
+    if contract is not None:
+        return contract_rows(contract, section)
+    return _read_csv(getattr(args, legacy_name))
 
 
 def _require_columns(path: Path, rows: list[dict[str, str]], required: Iterable[str]) -> None:
@@ -165,24 +173,25 @@ def compare_inventory(args: argparse.Namespace) -> None:
 
 def check_assertions(args: argparse.Namespace) -> None:
     required = ("family", "group", "assertion_id", "source_node", "product_symbol", "status", "reason", "approver")
-    rows = _read_csv(args.manifest)
-    _require_columns(args.manifest, rows, required)
+    rows = _contract_or_csv(args, "assertions", "manifest")
+    source = getattr(args, "contract", None) or args.manifest
+    _require_columns(source, rows, required)
     seen: set[tuple[str, str]] = set()
     groups: dict[str, set[str]] = defaultdict(set)
     active: set[tuple[str, str]] = set()
     for line, row in enumerate(rows, 2):
         key = (row["family"], row["assertion_id"])
         if not all(key) or key in seen:
-            raise GateError(f"{args.manifest}:{line}: empty or duplicate family/assertion_id")
+            raise GateError(f"{source}:{line}: empty or duplicate family/assertion_id")
         seen.add(key)
         if row["group"] not in ASSERTION_GROUPS:
-            raise GateError(f"{args.manifest}:{line}: invalid assertion group {row['group']!r}")
+            raise GateError(f"{source}:{line}: invalid assertion group {row['group']!r}")
         if not row["source_node"].startswith("tests/") or "::" not in row["source_node"]:
-            raise GateError(f"{args.manifest}:{line}: source_node must be a concrete pytest node")
+            raise GateError(f"{source}:{line}: source_node must be a concrete pytest node")
         if row["status"] not in {"active", "waived"}:
-            raise GateError(f"{args.manifest}:{line}: status must be active or waived")
+            raise GateError(f"{source}:{line}: status must be active or waived")
         if row["status"] == "waived" and not (row["reason"] and row["approver"]):
-            raise GateError(f"{args.manifest}:{line}: waived assertion requires reason and approver")
+            raise GateError(f"{source}:{line}: waived assertion requires reason and approver")
         groups[row["family"]].add(row["group"])
         if row["status"] == "active":
             active.add(key)
@@ -226,8 +235,9 @@ def check_scenarios(args: argparse.Namespace) -> None:
         "actual_seconds",
         "schedule",
     )
-    rows = _read_csv(args.matrix)
-    _require_columns(args.matrix, rows, required)
+    rows = _contract_or_csv(args, "scenarios", "matrix")
+    source = getattr(args, "contract", None) or args.matrix
+    _require_columns(source, rows, required)
     invalid = sorted({row["schedule"] for row in rows} - {"incremental", "nightly", "pending-approval"})
     if invalid:
         raise GateError(f"invalid schedules: {invalid}")
@@ -239,9 +249,9 @@ def check_scenarios(args: argparse.Namespace) -> None:
             builds_for_run = int(row["build_count"])
             forwards_for_run = int(row["forward_count"])
         except ValueError as error:
-            raise GateError(f"{args.matrix}:{line}: counts/actual_seconds must be numeric") from error
+            raise GateError(f"{source}:{line}: counts/actual_seconds must be numeric") from error
         if builds_for_run != 1 or forwards_for_run != 1:
-            raise GateError(f"{args.matrix}:{line}: every measured scenario must build once and run once")
+            raise GateError(f"{source}:{line}: every measured scenario must build once and run once")
         key = (row["build_signature"], row["run_signature"])
         scenarios[key] = max(scenarios.get(key, 0.0), seconds)
         builds.add(row["build_signature"])
@@ -282,7 +292,7 @@ def _symbol_watchers(mapping: dict[str, dict[str, list[str]]], product_symbol: s
 
 
 def check_watchers(args: argparse.Namespace) -> None:
-    rows = _read_csv(args.watchers)
+    rows = _contract_or_csv(args, "watchers", "watchers")
     required = ("family", "source_node", "product_symbol", "required")
     _require_columns(args.watchers, rows, required)
     mapping = _load_test_map(args.test_map)
@@ -382,11 +392,14 @@ def check_watchers(args: argparse.Namespace) -> None:
 
 
 def check_family_batches(args: argparse.Namespace) -> None:
-    registry = json.loads(args.registry.read_text(encoding="utf-8"))
+    contract = getattr(args, "contract", None)
+    registry = (
+        load_contract(contract) if contract is not None else json.loads(args.registry.read_text(encoding="utf-8"))
+    )
     families = registry.get("families", {})
-    scenarios = _read_csv(args.scenarios)
-    assertions = _read_csv(args.assertions)
-    watchers = _read_csv(args.watchers)
+    scenarios = contract_rows(contract, "scenarios") if contract is not None else _read_csv(args.scenarios)
+    assertions = contract_rows(contract, "assertions") if contract is not None else _read_csv(args.assertions)
+    watchers = contract_rows(contract, "watchers") if contract is not None else _read_csv(args.watchers)
     expected_families = {"qwen", "dense", "moe", "multimodal"}
     if set(families) != expected_families:
         raise GateError("family batch registry must contain exactly qwen/dense/moe/multimodal")
@@ -395,17 +408,18 @@ def check_family_batches(args: argparse.Namespace) -> None:
     for family, record in families.items():
         order = record.get("order")
         orders.add(order)
-        evidence = record.get("evidence", {})
         actual = {
             "scenarios": sum(row["family"] == family for row in scenarios),
             "assertions": sum(row["family"] == family for row in assertions),
             "watchers": sum(row["family"] == family and row["required"].lower() == "true" for row in watchers),
         }
-        if evidence.get("status") != "passed":
-            errors.append(f"{family}: batch evidence status must be passed")
-        for key, count in actual.items():
-            if evidence.get(key) != count:
-                errors.append(f"{family}: evidence {key}={evidence.get(key)!r}, actual={count}")
+        if contract is None:
+            evidence = record.get("evidence", {})
+            if evidence.get("status") != "passed":
+                errors.append(f"{family}: batch evidence status must be passed")
+            for key, count in actual.items():
+                if evidence.get(key) != count:
+                    errors.append(f"{family}: evidence {key}={evidence.get(key)!r}, actual={count}")
         rollback = record.get("rollback", {})
         if not rollback.get("selector") or not rollback.get("scope"):
             errors.append(f"{family}: rollback selector and scope are required")
@@ -473,7 +487,12 @@ def check_cov_helpers(_args: argparse.Namespace) -> None:
 
 
 def check_new_tests(args: argparse.Namespace) -> None:
-    registry = json.loads(args.family_registry.read_text(encoding="utf-8"))
+    contract = getattr(args, "contract", None)
+    registry = (
+        load_contract(contract)
+        if contract is not None
+        else json.loads(args.family_registry.read_text(encoding="utf-8"))
+    )
     registered = set(registry.get("families", {}))
     errors = []
     files = _changed_test_files(args.base)
@@ -545,7 +564,8 @@ def check_test_policy(args: argparse.Namespace) -> None:
             "assertions",
             check_assertions,
             argparse.Namespace(
-                manifest=args.assertion_manifest,
+                contract=args.contract,
+                manifest=None,
                 baseline=args.assertion_baseline,
                 inventory=args.inventory,
             ),
@@ -553,16 +573,17 @@ def check_test_policy(args: argparse.Namespace) -> None:
         (
             "scenarios",
             check_scenarios,
-            argparse.Namespace(matrix=args.scenario_matrix, budget=args.budget),
+            argparse.Namespace(contract=args.contract, matrix=None, budget=args.budget),
         ),
         (
             "family-batches",
             check_family_batches,
             argparse.Namespace(
-                registry=args.family_registry,
-                scenarios=args.scenario_matrix,
-                assertions=args.assertion_manifest,
-                watchers=args.watchers,
+                contract=args.contract,
+                registry=None,
+                scenarios=None,
+                assertions=None,
+                watchers=None,
             ),
         ),
         ("l2-layers", check_l2_layers, argparse.Namespace()),
@@ -570,7 +591,7 @@ def check_test_policy(args: argparse.Namespace) -> None:
         (
             "new-tests",
             check_new_tests,
-            argparse.Namespace(base=args.base, family_registry=args.family_registry),
+            argparse.Namespace(base=args.base, contract=args.contract, family_registry=None),
         ),
     )
     failures = []
@@ -585,7 +606,8 @@ def check_test_policy(args: argparse.Namespace) -> None:
 
 
 def _add_watcher_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    parser.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
+    parser.add_argument("--watchers", type=Path)
     parser.add_argument("--test-map", type=Path, default=Path("artifacts/l1_test_map.json"))
     parser.add_argument("--baseline-test-map", type=Path)
     parser.add_argument("--selection", type=Path)
@@ -606,12 +628,14 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output-dir", type=Path, required=True)
     compare.set_defaults(func=compare_inventory)
     assertions = sub.add_parser("check-assertions")
-    assertions.add_argument("--manifest", type=Path, default=Path("tests/.ci/assertion_manifest.csv"))
+    assertions.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
+    assertions.add_argument("--manifest", type=Path)
     assertions.add_argument("--baseline", type=Path)
     assertions.add_argument("--inventory", type=Path, default=Path("tests/.ci/inventory/master_test_inventory.csv"))
     assertions.set_defaults(func=check_assertions)
     scenarios = sub.add_parser("check-scenarios")
-    scenarios.add_argument("--matrix", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
+    scenarios.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
+    scenarios.add_argument("--matrix", type=Path)
     scenarios.add_argument("--budget", type=float, default=180.0)
     scenarios.set_defaults(func=check_scenarios)
     watchers = sub.add_parser("check-watchers")
@@ -621,14 +645,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_watcher_arguments(conservation)
     conservation.set_defaults(func=check_watchers)
     batches = sub.add_parser("check-family-batches")
-    batches.add_argument("--registry", type=Path, default=Path("tests/.ci/l1_families.json"))
-    batches.add_argument("--scenarios", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
-    batches.add_argument("--assertions", type=Path, default=Path("tests/.ci/assertion_manifest.csv"))
-    batches.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    batches.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
+    batches.add_argument("--registry", type=Path)
+    batches.add_argument("--scenarios", type=Path)
+    batches.add_argument("--assertions", type=Path)
+    batches.add_argument("--watchers", type=Path)
     batches.set_defaults(func=check_family_batches)
     new_tests = sub.add_parser("check-new-tests")
     new_tests.add_argument("--base", default="origin/master")
-    new_tests.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))
+    new_tests.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
+    new_tests.add_argument("--family-registry", type=Path)
     new_tests.set_defaults(func=check_new_tests)
     layers = sub.add_parser("check-l2-layers")
     layers.set_defaults(func=check_l2_layers)
@@ -637,12 +663,9 @@ def build_parser() -> argparse.ArgumentParser:
     policy = sub.add_parser("check-test-policy")
     policy.add_argument("--base", default="origin/master")
     policy.add_argument("--budget", type=float, default=180.0)
-    policy.add_argument("--assertion-manifest", type=Path, default=Path("tests/.ci/assertion_manifest.csv"))
+    policy.add_argument("--contract", type=Path, default=Path("tests/.ci/l1_contracts.json"))
     policy.add_argument("--assertion-baseline", type=Path)
     policy.add_argument("--inventory", type=Path, default=Path("tests/.ci/inventory/master_test_inventory.csv"))
-    policy.add_argument("--scenario-matrix", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
-    policy.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))
-    policy.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
     policy.set_defaults(func=check_test_policy)
     return parser
 

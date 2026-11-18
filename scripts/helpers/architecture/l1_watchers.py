@@ -33,6 +33,7 @@ from scripts.helpers._paths import REPO_ROOT
 from scripts.helpers.common.build_test_map import collect_from_coverage, write_test_map
 from scripts.helpers.common.coverage_config import cov_pytest_args
 from scripts.helpers.common.pytest_runner import PYTEST_IGNORE_ADDOPTS
+from scripts.helpers.architecture.l1_contracts import contract_rows
 
 _FAMILIES = frozenset({"qwen", "dense", "moe", "multimodal"})
 _ALL_FAMILY_PATHS = frozenset(
@@ -40,9 +41,7 @@ _ALL_FAMILY_PATHS = frozenset(
         "scripts/helpers/architecture/l1_watchers.py",
         "scripts/helpers/architecture/main.py",
         "scripts/run_ci_gate.sh",
-        "tests/.ci/l1_families.json",
-        "tests/.ci/l1_scenarios.csv",
-        "tests/.ci/l1_watchers.csv",
+        "tests/.ci/l1_contracts.json",
         "tests/helpers/l1_scenario.py",
         "tests/helpers/model_builder.py",
         "tests/helpers/model_cache.py",
@@ -57,10 +56,16 @@ _QWEN_PATHS = frozenset(
 )
 
 
+def _watcher_rows(path: Path) -> tuple[dict[str, str], ...]:
+    if path.suffix == ".json":
+        return tuple(contract_rows(path, "watchers"))
+    with path.open(newline="", encoding="utf-8") as stream:
+        return tuple(csv.DictReader(stream))
+
+
 def required_nodes(watchers_path: Path, families: frozenset[str] = _FAMILIES) -> tuple[str, ...]:
     """Return one stable, required L1 source node for every registered family."""
-    with watchers_path.open(newline="", encoding="utf-8") as stream:
-        rows = tuple(csv.DictReader(stream))
+    rows = _watcher_rows(watchers_path)
     nodes_by_family: dict[str, str] = {}
     for row in rows:
         if row.get("required", "").lower() != "true":
@@ -80,8 +85,7 @@ def required_nodes(watchers_path: Path, families: frozenset[str] = _FAMILIES) ->
 
 def select_families(watchers_path: Path, changed_paths: tuple[str, ...]) -> tuple[frozenset[str], dict[str, list[str]]]:
     """Select only L1 families affected by this PR's paths."""
-    with watchers_path.open(newline="", encoding="utf-8") as stream:
-        rows = tuple(csv.DictReader(stream))
+    rows = _watcher_rows(watchers_path)
     product_families: dict[str, set[str]] = {}
     for row in rows:
         if row.get("required", "").lower() != "true":
@@ -164,7 +168,7 @@ def generate_candidate(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    parser.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_contracts.json"))
     parser.add_argument(
         "--output",
         type=Path,

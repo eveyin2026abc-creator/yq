@@ -62,8 +62,8 @@ Only two markers: `@pytest.mark.nightly` (>300s compile), `@pytest.mark.npu` (NP
 
 1. Real `model_id` or `ModelRunner` execution? → **L1/model**. Declare
    `L1_FAMILY: <registered family>`, use `L1ScenarioExecutor`, register the family in
-   `tests/.ci/l1_families.json`, and register numeric/structural/capability assertions in
-   `tests/.ci/assertion_manifest.csv`. Never rebuild per assertion group.
+   the family, scenarios, assertions, and watcher symbols together in
+   `tests/.ci/l1_contracts.json`. Never rebuild per assertion group.
 2. One canonical synthetic builder? → **L2/module**. Import it from `tests/helpers/`;
    never call a real model execution entry. If a new artifact type has no builder, propose
    that builder first. Multimodal mechanisms without a canonical builder belong in L1
