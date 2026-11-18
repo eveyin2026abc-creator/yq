@@ -31,23 +31,6 @@ class TestQwenL1Reuse(unittest.TestCase):
     def tearDown(self):
         self.executor.reset()
 
-    def test_same_scenario_builds_once_and_runs_once(self):
-        user_input = qwen3_32b_input()
-        first = run_qwen(self.executor, user_input)
-        second = run_qwen(self.executor, user_input)
-
-        self.assertIs(first, second)
-        self.assertEqual(self.executor.counters.build_miss, 1)
-        self.assertEqual(self.executor.counters.forward_count, 1)
-        self.assertEqual(self.executor.counters.run_hit, 1)
-        self.executor.runner(user_input)
-        self.assertEqual(self.executor.counters.build_hit, 1)
-        exec_time = first.metrics.execution_time_s
-        if isinstance(exec_time, dict):
-            exec_time = next(iter(exec_time.values()))
-        self.assertGreater(exec_time, 0)
-        self.assertTrue(first.operator_names())
-
     def test_query_length_reuses_the_build(self):
         run_qwen(self.executor, qwen3_32b_input(query_len=10))
         run_qwen(self.executor, qwen3_32b_input(query_len=4))

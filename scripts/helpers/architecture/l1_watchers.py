@@ -46,9 +46,7 @@ _ALL_FAMILY_PATHS = frozenset(
         "tests/helpers/l1_scenario.py",
         "tests/helpers/model_builder.py",
         "tests/helpers/model_cache.py",
-        "tests/regression/tensor_cast/model/test_l1_families.py",
         "tests/regression/tensor_cast/model/test_l1_family_scenarios.py",
-        "tests/scenarios/l1/l1_families.py",
     }
 )
 _QWEN_PATHS = frozenset(
