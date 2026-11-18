@@ -508,6 +508,60 @@ def check_l2_layers(args: argparse.Namespace) -> None:
     print(json.dumps({"checked_l2_files": len(files), "violations": 0}))
 
 
+def check_test_policy(args: argparse.Namespace) -> None:
+    """Run every static test-policy rule while reporting all violations."""
+    checks = (
+        (
+            "assertions",
+            check_assertions,
+            argparse.Namespace(
+                manifest=args.assertion_manifest,
+                baseline=args.assertion_baseline,
+                inventory=args.inventory,
+            ),
+        ),
+        (
+            "scenarios",
+            check_scenarios,
+            argparse.Namespace(matrix=args.scenario_matrix, budget=args.budget),
+        ),
+        (
+            "family-batches",
+            check_family_batches,
+            argparse.Namespace(
+                registry=args.family_registry,
+                scenarios=args.scenario_matrix,
+                assertions=args.assertion_manifest,
+                watchers=args.watchers,
+            ),
+        ),
+        ("l2-layers", check_l2_layers, argparse.Namespace()),
+        ("cov-helpers", check_cov_helpers, argparse.Namespace()),
+        (
+            "new-tests",
+            check_new_tests,
+            argparse.Namespace(base=args.base, family_registry=args.family_registry),
+        ),
+    )
+    failures = []
+    for name, check, check_args in checks:
+        try:
+            check(check_args)
+        except (GateError, OSError, subprocess.CalledProcessError) as error:
+            failures.append(f"{name}: {error}")
+    if failures:
+        raise GateError("test policy violations:\n" + "\n".join(failures))
+    print(json.dumps({"stage": "check-test-policy", "checks": len(checks), "status": "passed"}))
+
+
+def _add_watcher_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    parser.add_argument("--test-map", type=Path, default=Path("artifacts/l1_test_map.json"))
+    parser.add_argument("--baseline-test-map", type=Path)
+    parser.add_argument("--selection", type=Path)
+    parser.add_argument("--evidence-output", type=Path, default=Path("artifacts/l1_watcher_conservation.json"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -531,12 +585,11 @@ def build_parser() -> argparse.ArgumentParser:
     scenarios.add_argument("--budget", type=float, default=180.0)
     scenarios.set_defaults(func=check_scenarios)
     watchers = sub.add_parser("check-watchers")
-    watchers.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
-    watchers.add_argument("--test-map", type=Path, default=Path("artifacts/l1_test_map.json"))
-    watchers.add_argument("--baseline-test-map", type=Path)
-    watchers.add_argument("--selection", type=Path)
-    watchers.add_argument("--evidence-output", type=Path, default=Path("artifacts/l1_watcher_conservation.json"))
+    _add_watcher_arguments(watchers)
     watchers.set_defaults(func=check_watchers)
+    conservation = sub.add_parser("check-test-conservation")
+    _add_watcher_arguments(conservation)
+    conservation.set_defaults(func=check_watchers)
     batches = sub.add_parser("check-family-batches")
     batches.add_argument("--registry", type=Path, default=Path("tests/.ci/l1_families.json"))
     batches.add_argument("--scenarios", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
@@ -551,6 +604,16 @@ def build_parser() -> argparse.ArgumentParser:
     layers.set_defaults(func=check_l2_layers)
     cov_helpers = sub.add_parser("check-cov-helpers")
     cov_helpers.set_defaults(func=check_cov_helpers)
+    policy = sub.add_parser("check-test-policy")
+    policy.add_argument("--base", default="origin/master")
+    policy.add_argument("--budget", type=float, default=180.0)
+    policy.add_argument("--assertion-manifest", type=Path, default=Path("tests/.ci/assertion_manifest.csv"))
+    policy.add_argument("--assertion-baseline", type=Path)
+    policy.add_argument("--inventory", type=Path, default=Path("tests/.ci/inventory/master_test_inventory.csv"))
+    policy.add_argument("--scenario-matrix", type=Path, default=Path("tests/.ci/l1_scenarios.csv"))
+    policy.add_argument("--family-registry", type=Path, default=Path("tests/.ci/l1_families.json"))
+    policy.add_argument("--watchers", type=Path, default=Path("tests/.ci/l1_watchers.csv"))
+    policy.set_defaults(func=check_test_policy)
     return parser
 
 

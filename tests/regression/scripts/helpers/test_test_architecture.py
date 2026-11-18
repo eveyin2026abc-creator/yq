@@ -35,6 +35,7 @@ from scripts.helpers.architecture.main import (
     check_l2_layers,
     check_new_tests,
     check_scenarios,
+    check_test_policy,
     check_watchers,
     compare_inventory,
     collect_inventory,
@@ -347,11 +348,41 @@ def test_build_parser_exposes_all_architecture_commands() -> None:
         "check-assertions",
         "check-scenarios",
         "check-watchers",
+        "check-test-conservation",
         "check-family-batches",
         "check-new-tests",
         "check-l2-layers",
         "check-cov-helpers",
+        "check-test-policy",
     }
+
+
+def test_check_test_policy_runs_all_static_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = []
+    for name in (
+        "check_assertions",
+        "check_scenarios",
+        "check_family_batches",
+        "check_l2_layers",
+        "check_cov_helpers",
+        "check_new_tests",
+    ):
+        monkeypatch.setattr(
+            f"scripts.helpers.architecture.main.{name}",
+            lambda _args, check_name=name: called.append(check_name),
+        )
+    args = build_parser().parse_args(["check-test-policy"])
+
+    check_test_policy(args)
+
+    assert called == [
+        "check_assertions",
+        "check_scenarios",
+        "check_family_batches",
+        "check_l2_layers",
+        "check_cov_helpers",
+        "check_new_tests",
+    ]
 
 
 def test_check_l2_layers_scans_helpers_and_module_tests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
