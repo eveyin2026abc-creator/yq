@@ -127,6 +127,11 @@
       "commit": "4a2c2dc5",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261119-0530.log": {
+      "commit": "8e2c018f",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
