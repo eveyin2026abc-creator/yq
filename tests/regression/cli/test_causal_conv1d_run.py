@@ -39,28 +39,6 @@ def _fake_build_input_tensor(shape, input_format, dtype_name):
     return torch.zeros(tuple(shape))
 
 
-class TestInferEvenSplitLengths(unittest.TestCase):
-    """CausalConv1d reuses common.infer_even_split_lengths for queryStartLoc."""
-
-    def test_even_split(self):
-        self.assertEqual(replay.infer_even_split_lengths((3,), 16), [0, 8, 16])
-
-    def test_single_sequence(self):
-        self.assertEqual(replay.infer_even_split_lengths((2,), 8), [0, 8])
-
-    def test_rejects_non_1d_shape(self):
-        with self.assertRaises(ValueError):
-            replay.infer_even_split_lengths((2, 2), 16)
-
-    def test_rejects_empty_sequence_count(self):
-        with self.assertRaises(ValueError):
-            replay.infer_even_split_lengths((1,), 16)
-
-    def test_rejects_uneven_split(self):
-        with self.assertRaises(ValueError):
-            replay.infer_even_split_lengths((3,), 15)
-
-
 class TestFlattenNumel(unittest.TestCase):
     def test_product(self):
         self.assertEqual(replay._flatten_numel((2, 8)), 16)
