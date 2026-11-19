@@ -23,8 +23,9 @@ from typing import Callable
 
 import torch
 
-from tensor_cast.core.quantization.config import create_attention_quant_config
+from tensor_cast.core.quantization.config import create_attention_quant_config, create_linear_quant_config
 from tensor_cast.core.quantization.datatypes import QuantizeAttentionAction, QuantizeLinearAction
+from tensor_cast.model_config import LinearQuantConfig, ParallelConfig
 
 L2_KINDS = (
     "quant",
@@ -46,17 +47,30 @@ def _reject_identity(rejected: dict[str, object]) -> None:
 @dataclass(frozen=True)
 class QuantArtifact:
     kind: str
-    linear_action: str
-    attention_action: str
+    linear_action: QuantizeLinearAction
+    attention_action: QuantizeAttentionAction
+    linear_config: LinearQuantConfig | None
     attention_config: object
+    input_tensor: torch.Tensor
+    weight: torch.Tensor
 
 
 @dataclass(frozen=True)
 class ParallelArtifact:
     kind: str
-    world_size: int
-    tensor_parallel: int
-    expert_parallel: int
+    config: ParallelConfig
+
+    @property
+    def world_size(self) -> int:
+        return self.config.world_size
+
+    @property
+    def tensor_parallel(self) -> int:
+        return self.config.tensor_parallel_size
+
+    @property
+    def expert_parallel(self) -> int:
+        return self.config.expert_parallel_size
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,7 @@ class ReplayArtifact:
     query_len: int
     decode: bool
     row: dict[str, object]
+    trace: tuple[dict[str, object], ...]
 
 
 @dataclass(frozen=True)
@@ -120,17 +135,24 @@ def quant_artifact(
     *,
     linear_action: QuantizeLinearAction,
     attention_action: QuantizeAttentionAction = QuantizeAttentionAction.DISABLED,
+    input_shape: tuple[int, int] = (2, 4),
+    output_features: int = 3,
     **rejected: object,
 ) -> QuantArtifact:
-    """One quant configuration with no weights and no model."""
+    """Real quant configs and the smallest tensors needed by a linear path."""
     _reject_identity(rejected)
+    if len(input_shape) != 2 or min(input_shape) < 1 or output_features < 1:
+        raise ValueError("quant input and output dimensions must be positive")
     return QuantArtifact(
         "quant",
-        linear_action.value,
-        attention_action.value,
+        linear_action,
+        attention_action,
+        None if linear_action == QuantizeLinearAction.DISABLED else create_linear_quant_config(linear_action),
         None
         if attention_action == QuantizeAttentionAction.DISABLED
         else create_attention_quant_config(attention_action),
+        torch.ones(input_shape, dtype=torch.float32),
+        torch.ones((output_features, input_shape[-1]), dtype=torch.float32),
     )
 
 
@@ -141,13 +163,14 @@ def parallel_artifact(
     expert_parallel: int = 1,
     **rejected: object,
 ) -> ParallelArtifact:
-    """One parallel degree tuple. world_size must divide evenly."""
+    """A product ParallelConfig; invalid topologies fail in product validation."""
     _reject_identity(rejected)
-    if min(world_size, tensor_parallel, expert_parallel) < 1:
-        raise ValueError("parallel degrees must be positive")
-    if world_size % tensor_parallel != 0 or world_size % expert_parallel != 0:
-        raise ValueError("world_size must be divisible by the parallel degrees")
-    return ParallelArtifact("parallel", world_size, tensor_parallel, expert_parallel)
+    config = ParallelConfig(
+        world_size=world_size,
+        tensor_parallel_size=tensor_parallel,
+        expert_parallel_size=expert_parallel,
+    )
+    return ParallelArtifact("parallel", config)
 
 
 def fx_artifact(
@@ -251,7 +274,16 @@ def replay_artifact(
         "decode": decode,
         **({} if fields is None else fields),
     }
-    return ReplayArtifact("replay", num_queries, query_len, decode, row)
+    trace = (
+        {
+            "event": "request",
+            "num_queries": num_queries,
+            "query_len": query_len,
+            "phase": "decode" if decode else "prefill",
+        },
+        {"event": "operator", "row": row},
+    )
+    return ReplayArtifact("replay", num_queries, query_len, decode, row, trace)
 
 
 def microbench_artifact(
@@ -291,7 +323,13 @@ class L2BuilderContract:
 
 
 L2_CONTRACTS = (
-    L2BuilderContract("quant", quant_artifact, QuantArtifact, ("linear_action",), ("attention_action",)),
+    L2BuilderContract(
+        "quant",
+        quant_artifact,
+        QuantArtifact,
+        ("linear_action",),
+        ("attention_action", "input_shape", "output_features"),
+    ),
     L2BuilderContract(
         "parallel",
         parallel_artifact,

@@ -286,10 +286,11 @@ def test_runtime_replay_case_owns_fallback_identity_and_signature_context(
         kernel_type="AddRmsNormBias",
         csv_path=tmp_path / "AddRmsNormBias.csv",
         row_index=4,
-        row=request.row,
+        row=request.trace[1]["row"],
         exact_runtime_match=True,
     )
 
+    assert request.trace[0]["phase"] == "prefill"
     assert case.case_id.endswith("AddRmsNormBias.csv:4")
     assert case.signature_context == {"Input Shapes": "2,16"}
 

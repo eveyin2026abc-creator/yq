@@ -93,8 +93,28 @@ def test_builders_reject_a_model_identity():
 
 
 def test_parallel_artifact_rejects_an_uneven_world():
-    with pytest.raises(ValueError, match="divisible"):
+    with pytest.raises(ValueError, match="must equal world_size"):
         parallel_artifact(world_size=4, tensor_parallel=3)
+
+
+def test_quant_artifact_provides_product_config_and_minimal_linear_inputs():
+    artifact = quant_artifact(
+        linear_action=QuantizeLinearAction.W8A8_DYNAMIC,
+        input_shape=(2, 4),
+        output_features=3,
+    )
+
+    assert artifact.linear_config.quant_type.name == "W8A8"
+    assert artifact.input_tensor.shape == (2, 4)
+    assert artifact.weight.shape == (3, 4)
+
+
+def test_parallel_artifact_provides_product_parallel_config():
+    artifact = parallel_artifact(world_size=8, tensor_parallel=4, expert_parallel=2)
+
+    assert artifact.config.world_size == 8
+    assert artifact.config.tensor_parallel_size == 4
+    assert artifact.config.expert_parallel_size == 2
 
 
 def test_fx_artifact_is_a_placeholder_graph():
@@ -140,6 +160,13 @@ def test_replay_artifact_exposes_the_row_consumed_by_replay_components():
         "Input Shapes": "2,16",
         "Average Duration(us)": "1.0",
     }
+    assert artifact.trace[0] == {
+        "event": "request",
+        "num_queries": 2,
+        "query_len": 16,
+        "phase": "prefill",
+    }
+    assert artifact.trace[1] == {"event": "operator", "row": artifact.row}
 
 
 def test_microbench_artifact_exposes_a_replay_row_request():
