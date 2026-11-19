@@ -66,6 +66,22 @@ class QuantLinearTestMixin:
         """Set up common resources for tests."""
         torch.compiler.reset()
 
+    def _run_full_model_forward(self, model, *, capture_runtime: bool = False):
+        """Run the shared meta-device full-model path and validate its shape."""
+        num_tokens = 100
+        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
+        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
+        if capture_runtime:
+            with Runtime(AnalyticPerformanceModel(TEST_DEVICE), TEST_DEVICE) as runtime, torch.no_grad():
+                outputs = model.forward(inputs, position_ids)
+            self.assertEqual(outputs.shape, (1, num_tokens, model.vocab_size))
+            return runtime.table_averages()
+
+        with torch.no_grad(), patch_torch():
+            outputs = model.forward(inputs, position_ids)
+        self.assertEqual(outputs.shape, (1, num_tokens, model.vocab_size))
+        return None
+
 
 class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
     def setUp(self):
@@ -81,19 +97,6 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
 
         torch.manual_seed(1)
         self.input_tensor = torch.randn(BATCH_SIZE, IN_FEATURES).to(DEVICE, dtype=MODEL_DTYPE)
-
-    # deprecated: migrated to test_dtype.py::test_pack_unpack_int4_roundtrip
-    def test_pack_unpack_int4_roundtrip(self):
-        """Tests if packing and then unpacking an int4 tensor restores the original."""
-        original_tensor = torch.randint(-8, 8, (OUT_FEATURES, IN_FEATURES), dtype=torch.int8, device=DEVICE)
-        dummy_layer = QuantLinearBase(
-            self.linear_layer_no_bias,
-            get_linear_quant_config(LinearQuantType.W4A8, torch.randn(1)),
-        )
-
-        packed_dim1 = dummy_layer.pack_int4(original_tensor)
-        unpacked_dim1 = dummy_layer.unpack_int4(packed_dim1)
-        self.assertTrue(torch.equal(original_tensor, unpacked_dim1))
 
     def test_dequantize_weight(self):
         """Tests that dequantized weight is close to the original float weight."""
@@ -209,15 +212,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         # lm_head will never be quantized
         self.assertEqual(num_linear_modules, 1)
 
-        num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        with (
-            torch.no_grad(),
-            patch_torch(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
+        self._run_full_model_forward(qmodel)
 
     @parameterized.expand(
         [
@@ -253,15 +248,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         # lm_head will never be quantized
         self.assertEqual(num_qlinear_modules + 1, num_linear_modules)
 
-        num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        with (
-            torch.no_grad(),
-            patch_torch(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
+        self._run_full_model_forward(qmodel)
 
     @parameterized.expand(
         [
@@ -300,18 +287,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         )
         qmodel = layer_transformer(model_id, model_config_with_quant)
 
-        num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        machine_config = TEST_DEVICE
-        perf_model = AnalyticPerformanceModel(machine_config)
-        with (
-            Runtime(perf_model, machine_config) as runtime,
-            torch.no_grad(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
-        result = runtime.table_averages()
+        result = self._run_full_model_forward(qmodel, capture_runtime=True)
         if symmetric:
             self.assertIn("tensor_cast.dynamic_quantize_symmetric.default", result)
         else:
@@ -338,9 +314,6 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         model = layer_transformer(model_id, model_config)
 
         num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-
         model_config_with_quant = ModelConfig(
             ParallelConfig(),
             get_quant_config(
@@ -354,15 +327,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
             hf_config=hf_config,
         )
         qmodel = layer_transformer(model_id, model_config_with_quant)
-        machine_config = TEST_DEVICE
-        perf_model = AnalyticPerformanceModel(machine_config)
-        with (
-            Runtime(perf_model, machine_config) as runtime,
-            torch.no_grad(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
-        result = runtime.table_averages()
+        result = self._run_full_model_forward(qmodel, capture_runtime=True)
         self.assertIn("tensor_cast.quantize.default", result)
         self.assertIn("tensor_cast.static_quant_linear.default", result)
 
@@ -500,7 +465,6 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         self.assertIn("tensor_cast.dynamic_quantize_symmetric.default", result)
         self.assertIn("tensor_cast.static_quant_linear.default", result)
 
-    # deprecated (asymmetric branch): migrated to test_dtype.py::test_fp8_rejects_asymmetric_scheme
     def test_fp8_validation(self):
         """Test that FP8 quantization validates configuration correctly."""
         # Test valid FP8 configuration
@@ -513,19 +477,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         fp8_layer = QuantLinearBase(self.linear_layer_no_bias, valid_config)
         self.assertEqual(fp8_layer.quant_config.quant_type, LinearQuantType.FP8)
 
-        # Test invalid configurations
-
-        # 1. Asymmetric scheme not allowed
-        with self.assertRaises(ValueError) as cm:
-            invalid_config = LinearQuantConfig(
-                quant_type=LinearQuantType.FP8,
-                weight_scale=torch.tensor(1.0),
-                dynamic_quant_scheme=QuantScheme.ASYMMETRIC,
-            )
-            QuantLinearBase(self.linear_layer_no_bias, invalid_config)
-        self.assertIn("symmetric scheme", str(cm.exception))
-
-        # 2. Static activation quantization not allowed
+        # Static activation quantization is not allowed.
         with self.assertRaises(ValueError) as cm:
             invalid_config = LinearQuantConfig(
                 quant_type=LinearQuantType.FP8,
@@ -610,21 +562,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         )
         qmodel = layer_transformer(model_id, model_config_with_fp8)
 
-        num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-
-        machine_config = TEST_DEVICE
-        perf_model = AnalyticPerformanceModel(machine_config)
-
-        with (
-            Runtime(perf_model, machine_config) as runtime,
-            torch.no_grad(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
-
-        result = runtime.table_averages()
+        result = self._run_full_model_forward(qmodel, capture_runtime=True)
         # Check that FP8 operations are being used
         self.assertIn("tensor_cast.dynamic_quantize_symmetric.default", result)
         self.assertIn("tensor_cast.fp8_linear.default", result)
@@ -675,21 +613,7 @@ class TestQuantLinear(QuantLinearTestMixin, unittest.TestCase):
         )
         qmodel = layer_transformer(model_id, model_config_with_mxfp4)
 
-        num_tokens = 100
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-
-        machine_config = TEST_DEVICE
-        perf_model = AnalyticPerformanceModel(machine_config)
-
-        with (
-            Runtime(perf_model, machine_config) as runtime,
-            torch.no_grad(),
-        ):
-            outputs = qmodel.forward(inputs, position_ids)
-            self.assertEqual(outputs.shape, (1, num_tokens, qmodel.vocab_size))
-
-        result = runtime.table_averages()
+        result = self._run_full_model_forward(qmodel, capture_runtime=True)
         # Check that MXFP4 operations are being used
         self.assertIn("tensor_cast.dynamic_quantize_mxfp4.default", result)
         self.assertIn("tensor_cast.mxfp4_linear.default", result)
