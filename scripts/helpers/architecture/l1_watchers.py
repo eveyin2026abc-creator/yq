@@ -24,7 +24,6 @@ import argparse
 import csv
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,24 +35,6 @@ from scripts.helpers.common.pytest_runner import PYTEST_IGNORE_ADDOPTS
 from scripts.helpers.architecture.l1_contracts import contract_rows
 
 _FAMILIES = frozenset({"qwen", "dense", "moe", "multimodal"})
-_ALL_FAMILY_PATHS = frozenset(
-    {
-        "scripts/helpers/architecture/l1_watchers.py",
-        "scripts/helpers/architecture/main.py",
-        "scripts/run_ci_gate.sh",
-        "tests/.ci/l1_contracts.json",
-        "tests/helpers/l1_scenario.py",
-        "tests/helpers/model_builder.py",
-        "tests/helpers/model_cache.py",
-        "tests/regression/tensor_cast/model/test_l1_family_scenarios.py",
-    }
-)
-_QWEN_PATHS = frozenset(
-    {
-        "tests/regression/tensor_cast/model/test_l1_qwen.py",
-        "tests/scenarios/l1/l1_qwen.py",
-    }
-)
 
 
 def _watcher_rows(path: Path) -> tuple[dict[str, str], ...]:
@@ -84,41 +65,23 @@ def required_nodes(watchers_path: Path, families: frozenset[str] = _FAMILIES) ->
 
 
 def select_families(watchers_path: Path, changed_paths: tuple[str, ...]) -> tuple[frozenset[str], dict[str, list[str]]]:
-    """Select only L1 families affected by this PR's paths."""
-    rows = _watcher_rows(watchers_path)
-    product_families: dict[str, set[str]] = {}
-    for row in rows:
-        if row.get("required", "").lower() != "true":
-            continue
-        product_path = row.get("product_symbol", "").split("::", 1)[0]
-        product_families.setdefault(product_path, set()).add(row.get("family", ""))
+    """Run all four families for every non-documentation change.
 
-    selected: set[str] = set()
-    reasons: dict[str, list[str]] = {family: [] for family in sorted(_FAMILIES)}
-    for raw_path in changed_paths:
-        path = raw_path.strip().replace("\\", "/")
-        if not path:
-            continue
-        if path in _ALL_FAMILY_PATHS:
-            for family in _FAMILIES:
-                selected.add(family)
-                reasons[family].append(path)
-            continue
-        if path in _QWEN_PATHS:
-            selected.add("qwen")
-            reasons["qwen"].append(path)
-        for family in product_families.get(path, set()):
-            if family in _FAMILIES:
-                selected.add(family)
-                reasons[family].append(path)
-        candidate = REPO_ROOT / path
-        if path.endswith(".py") and candidate.is_file() and path.startswith("tests/"):
-            source = candidate.read_text(encoding="utf-8")
-            for family in re.findall(r"L1_FAMILY:\s*([a-z0-9_-]+)", source):
-                if family in _FAMILIES:
-                    selected.add(family)
-                    reasons[family].append(path)
-    return frozenset(selected), {family: sorted(set(reasons[family])) for family in sorted(selected)}
+    Product paths frequently affect more than their nominal model family.  A
+    conservative all-family selection keeps the incremental gate predictable;
+    only files below ``docs/`` are allowed to skip executable evidence.
+    """
+    del watchers_path  # The contract is validated when required_nodes is called.
+    relevant = sorted(
+        {
+            raw_path.strip().replace("\\", "/")
+            for raw_path in changed_paths
+            if raw_path.strip() and not raw_path.strip().replace("\\", "/").startswith("docs/")
+        }
+    )
+    if not relevant:
+        return frozenset(), {}
+    return _FAMILIES, {family: relevant for family in sorted(_FAMILIES)}
 
 
 def pytest_command(nodes: tuple[str, ...]) -> list[str]:

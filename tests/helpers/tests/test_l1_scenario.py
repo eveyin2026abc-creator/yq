@@ -322,6 +322,32 @@ def test_one_executor_supports_multiple_compilation_configs(monkeypatch):
     assert applied == [(), ("enable_multistream",)]
 
 
+def test_query_length_reuses_the_built_runner(monkeypatch):
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda _config: None)
+
+    executor = L1ScenarioExecutor()
+    first = executor.runner(make_config(query_len=10))
+    second = executor.runner(make_config(query_len=4))
+
+    assert first is second
+    assert executor.counters.build_miss == 1
+    assert executor.counters.build_hit == 1
+
+
+def test_quantization_change_builds_a_distinct_runner(monkeypatch):
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda _config: None)
+
+    executor = L1ScenarioExecutor()
+    plain = executor.runner(make_config(quantize_linear_action=QuantizeLinearAction.DISABLED))
+    quantized = executor.runner(make_config(quantize_linear_action=QuantizeLinearAction.W8A8_DYNAMIC))
+
+    assert plain is not quantized
+    assert executor.counters.build_miss == 2
+    assert executor.counters.build_hit == 0
+
+
 def test_forward_reapplies_compilation_config_after_external_drift(monkeypatch):
     applied = []
     monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)

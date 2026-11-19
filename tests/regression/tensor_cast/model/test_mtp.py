@@ -32,9 +32,9 @@ from tensor_cast.layers.mtp import (
     _resolve_mtp_layer_cls,
     _rotary_emb_accepts_dtype,
 )
-from tensor_cast.layers.sampler import SamplingMetadata
-from tensor_cast.patch_torch import patch_torch
 from tensor_cast.transformers.custom_model_registry import get_mtp_block_module_name
+
+from tests.helpers.mtp_scenarios import run_mtp_forward
 
 from ..unit.test_common import (
     create_attn_metadata_and_kv_cache,
@@ -294,11 +294,8 @@ class MtpTestCase(MtpTestMixin, unittest.TestCase):
 
         # make sure all original attention modules have been replaced
         self.assertTrue(has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast"))
-        inputs = torch.empty([2, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([2, num_tokens], dtype=torch.long, device="meta")
-        with torch.no_grad(), patch_torch():
-            outputs = model.forward(inputs, position_ids, sampling_metadata=SamplingMetadata())
-            self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
+        outputs = run_mtp_forward(model, num_tokens=num_tokens, batch_size=2)
+        self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
 
     def _run_test_deepseek_prefill_with_kvcache(self, model_id, do_compile):
         num_mtp_layers = 3
@@ -310,17 +307,14 @@ class MtpTestCase(MtpTestMixin, unittest.TestCase):
         attn_meta, kv_cache_by_layers, num_tokens = create_mla_metadata_and_kv_cache(model, model.model_config)
         # make sure all original attention modules have been replaced
         self.assertTrue(has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast"))
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        with torch.no_grad(), patch_torch():
-            outputs = model.forward(
-                inputs,
-                position_ids,
-                attention_meta=attn_meta,
-                kv_cache_by_layers=kv_cache_by_layers,
-                sampling_metadata=SamplingMetadata(query_start_loc=attn_meta.query_start_loc),
-            )
-            self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
+        outputs = run_mtp_forward(
+            model,
+            num_tokens=num_tokens,
+            batch_size=1,
+            attention_meta=attn_meta,
+            kv_cache_by_layers=kv_cache_by_layers,
+        )
+        self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
 
     def _run_test_deepseek_decode_with_kvcache(self, model_id, do_compile):
         num_mtp_layers = 3
@@ -336,20 +330,15 @@ class MtpTestCase(MtpTestMixin, unittest.TestCase):
         )
         # make sure all original attention modules have been replaced
         self.assertTrue(has_submodule_with_cls_name(model, "MultiheadLatentAttentionTensorCast"))
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        with torch.no_grad(), patch_torch():
-            outputs = model.forward(
-                inputs,
-                position_ids,
-                attention_meta=attn_meta,
-                kv_cache_by_layers=kv_cache_by_layers,
-                sampling_metadata=SamplingMetadata(
-                    query_start_loc=attn_meta.query_start_loc,
-                    selected_token_indices=None,
-                ),
-            )
-            self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
+        outputs = run_mtp_forward(
+            model,
+            num_tokens=num_tokens,
+            batch_size=1,
+            attention_meta=attn_meta,
+            kv_cache_by_layers=kv_cache_by_layers,
+            selected_token_indices=None,
+        )
+        self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
 
     def _run_test_automatic_mtp_mode(self, model_id, do_compile):
         num_mtp_layers = 3
@@ -357,20 +346,15 @@ class MtpTestCase(MtpTestMixin, unittest.TestCase):
         model = self._get_model(user_config)
 
         attn_meta, kv_cache_by_layers, num_tokens = create_attn_metadata_and_kv_cache(model, model.model_config)
-        inputs = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        position_ids = torch.empty([1, num_tokens], dtype=torch.long, device="meta")
-        with torch.no_grad(), patch_torch():
-            outputs = model.forward(
-                inputs,
-                position_ids,
-                attention_meta=attn_meta,
-                kv_cache_by_layers=kv_cache_by_layers,
-                sampling_metadata=SamplingMetadata(
-                    query_start_loc=attn_meta.query_start_loc,
-                    selected_token_indices=None,
-                ),
-            )
-            self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
+        outputs = run_mtp_forward(
+            model,
+            num_tokens=num_tokens,
+            batch_size=1,
+            attention_meta=attn_meta,
+            kv_cache_by_layers=kv_cache_by_layers,
+            selected_token_indices=None,
+        )
+        self.assertEqual(outputs.shape, (2, num_mtp_layers + 1))
 
     @parameterized.expand(
         [

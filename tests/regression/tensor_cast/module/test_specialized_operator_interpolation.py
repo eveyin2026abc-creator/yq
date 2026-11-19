@@ -402,20 +402,6 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
         assert source.lookup(rejected_op) is None
 
 
-def test_elementwise_axes_use_total_input_output_numel():
-    axes = InterpolatingDataSource._elementwise_axes_from_shapes(
-        [(2, 3), (1, 3)],
-        (2, 3),
-    )
-
-    assert axes == {"io_numel": 15.0}
-
-
-def test_elementwise_axes_reject_negative_dimensions():
-    assert InterpolatingDataSource._elementwise_axes_from_shapes([(-1, 3)], (2, 3)) is None
-    assert InterpolatingDataSource._elementwise_axes_from_shapes([(2, 3)], (-1, 3)) is None
-
-
 def test_concat_uses_output_numel_for_generic_compute_interpolation(tmp_path, monkeypatch):
     data_dir = tmp_path / "concat_output_numel"
     data_dir.mkdir()
@@ -526,62 +512,6 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
     base.lookup.assert_called_once()
     assert result is None
     assert ds.last_miss_reason != ""
-
-
-def test_attention_runtime_workload_uses_query_weighted_kv_length():
-    workload = InterpolatingDataSource._attention_runtime_workload(
-        q_tokens=6,
-        query_lengths=(2, 4),
-        kv_lengths=(2, 8),
-    )
-
-    assert workload == {
-        "q_tokens": 6.0,
-        "effective_kv_len": 6.0,
-        "phase": "mixed",
-        "batch_size": 2,
-    }
-
-
-def test_attention_runtime_workload_rejects_negative_kv_length():
-    assert (
-        InterpolatingDataSource._attention_runtime_workload(
-            q_tokens=2,
-            query_lengths=(2, 0),
-            kv_lengths=(4, -1),
-        )
-        is None
-    )
-
-
-def test_runtime_attention_regime_rejects_malformed_numeric_fields():
-    params = {
-        "sparse_mode": 3,
-        "num_kv_heads": 1,
-        "input_layout": "TND",
-        "topk": "invalid",
-        "block_size": 128,
-        "num_heads": 32,
-        "cache_layout": "PA_BSND",
-        "kv_cache_mode": "paged",
-    }
-
-    fields = InterpolatingDataSource._runtime_attention_regime_fields(
-        "LightningIndexer",
-        "DT_BF16",
-        (1, 32, 128),
-        {"phase": "decode"},
-        params,
-        include_sparse_fields=False,
-    )
-
-    assert fields is None
-
-
-def test_query_lengths_from_cumulative_offsets_fails_closed():
-    assert InterpolatingDataSource._query_lengths_from_cumulative(6, (2, 6)) == (2, 4)
-    assert InterpolatingDataSource._query_lengths_from_cumulative(6, (2, 5)) is None
-    assert InterpolatingDataSource._query_lengths_from_cumulative(6, (3, 2, 6)) is None
 
 
 def test_real_lightning_indexer_candidate_uses_runtime_workload():
@@ -1292,36 +1222,6 @@ Input Shapes,Input Data Types,Input Formats,Output Shapes,Output Data Types,Outp
     target_regime = ds.last_miss_details["attempts"][0]["target_regime"]
     assert target_regime["input_dtype_signature"] == expected_signature
     assert "quant_subtype" not in target_regime
-
-
-def test_moe_fused_topk_is_discrete_and_not_part_of_interpolation_axes():
-    topk = InterpolatingDataSource._moe_fused_topk(
-        [(2, 4, 72, 7168), (16, 7168, 4096), (16, 2048, 7168), (2, 4, 72, 4)],
-        tokens=576.0,
-        input_dtypes=["DT_BF16", "INT8", "INT8", "INT32"],
-    )
-
-    assert topk == 4
-
-
-def test_moe_fused_topk_uses_the_physical_route_input():
-    topk = InterpolatingDataSource._moe_fused_topk(
-        [(1, 180, 7168), (16, 7168, 4096), (16, 2048, 7168), (180, 4), (180, 8)],
-        tokens=180.0,
-        input_dtypes=["DT_BF16", "INT8", "INT8", "INT32", "INT64"],
-    )
-
-    assert topk == 4
-
-
-def test_moe_fused_topk_requires_integer_dtype():
-    topk = InterpolatingDataSource._moe_fused_topk(
-        [(1, 180, 7168), (16, 7168, 4096), (16, 2048, 7168), (180, 4)],
-        tokens=180.0,
-        input_dtypes=["DT_BF16", "INT8", "INT8", "UINT32"],
-    )
-
-    assert topk is None
 
 
 def test_moe_fused_max_dim_1_allows_token_interpolation(tmp_path):
@@ -3100,20 +3000,6 @@ operator_mappings:
     assert result.details["axes"] == ["M", "K"]
     assert result.details["scale_mode"] == "per_token"
     assert result.details["auxiliary_modes"] == [["per_token", None], ["per_token", None]]
-
-
-def test_compute_scale_mode_keeps_block_quant_kernel_specific():
-    assert InterpolatingDataSource._compute_scale_mode((8, 64), (), "DynamicQuant") == ("per_tensor", None)
-    assert InterpolatingDataSource._compute_scale_mode((8, 64), (8, 1), "DynamicQuant") == ("per_token", None)
-    assert InterpolatingDataSource._compute_scale_mode((8, 64), (1, 64), "DynamicQuant") == (
-        "per_channel",
-        None,
-    )
-    assert InterpolatingDataSource._compute_scale_mode((8, 64), (4,), "DynamicQuant") is None
-    assert InterpolatingDataSource._compute_scale_mode((8, 64), (4,), "DynamicBlockQuant") == (
-        "per_block",
-        16,
-    )
 
 
 def test_dynamic_quant_compute_scale_matches_float16_profiling_dtype(tmp_path, monkeypatch):

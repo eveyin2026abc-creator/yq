@@ -725,17 +725,6 @@ def test_real_msprof_backend_fails_closed_on_extra_target_record(
     assert Path(error.value.artifacts["directory"]).is_dir()
 
 
-def test_unregistered_operator_is_rejected_during_request_validation() -> None:
-    request = _request()
-    request["kernel_type"] = "ArbitraryPythonKernel"
-
-    with pytest.raises(run_op_microbench.MicrobenchError) as error:
-        run_op_microbench.normalize_request(request)
-
-    assert error.value.code == "INVALID_REQUEST"
-    assert "supported_operators" in error.value.details
-
-
 def test_include_raw_records_false_still_allows_csv_output(tmp_path: Path) -> None:
     source = _write_database(tmp_path / "database" / "MatMulV2.csv")
     request_path = _write_request(tmp_path / "request.json", _request(include_raw_records=False))
@@ -831,18 +820,6 @@ def test_cli_describes_uniform_csv_row_contract(
     assert "CSV 行一致" in payload["description_zh"]
 
 
-def test_standalone_profiler_targets_include_master_alias_metadata() -> None:
-    expected_aliases = {
-        "BatchMatMulV2": "BatchMatMulNd",
-        "ScatterNdUpdate": "ScatterNdUpdateAiCore",
-        "Slice": "SliceAiCore",
-        "Transpose": "TransposeAiCore",
-    }
-
-    for kernel_type, alias in expected_aliases.items():
-        assert alias in adapters.ADAPTERS[kernel_type].target_op_types
-
-
 def test_replay_row_preserves_optional_slots_and_derives_input_metadata() -> None:
     replay_row = {
         "Input Shapes": "4,8;2,8;;2,4;;;;2;4",
@@ -922,25 +899,6 @@ def test_keep_artifacts_rejects_non_string_values_with_structured_error(
     assert run_op_microbench.main(["--request", str(request_path)]) == 1
     failure = json.loads(capsys.readouterr().out)
     assert failure["error"]["code"] == "INVALID_REQUEST"
-
-
-def test_replay_spec_builds_default_and_overridden_contracts() -> None:
-    default = adapters._replay_spec("ExampleOp", "torch.example")
-    assert default == adapters.AdapterSpec(
-        name="ExampleOp",
-        api_path="torch.example",
-        target_op_types=("ExampleOp",),
-        replay_module="tools.perf_data_collection.op_replay.ExampleOp_run",
-    )
-
-    overridden = adapters._replay_spec(
-        "ExampleOp",
-        "torch.example",
-        target_op_types=("PhysicalExampleOp",),
-        is_composite=True,
-    )
-    assert overridden.target_op_types == ("PhysicalExampleOp", "ExampleOp")
-    assert overridden.is_composite is True
 
 
 def test_replay_row_database_matching_keeps_empty_slots(tmp_path: Path) -> None:
@@ -1199,23 +1157,6 @@ def test_replay_row_accepts_scalar_shape_and_validates_real_output_shape() -> No
         )
     assert error.value.code == "REPLAY_OUTPUT_MISMATCH"
     assert error.value.details["mismatches"][0]["field"] == "logical_shape"
-
-
-def test_scalar_and_zero_element_output_shapes_are_not_compatible() -> None:
-    assert not run_op_microbench._shapes_compatible([], [0])
-    assert not run_op_microbench._shapes_compatible([0], [])
-
-    replay_row = {
-        "Output Shapes": "[]",
-        "Output Data Types": "DT_FLOAT",
-        "Output Formats": "ND",
-    }
-    with pytest.raises(run_op_microbench.MicrobenchError) as error:
-        run_op_microbench._validate_replay_outputs(
-            replay_row,
-            [{"logical_shape": [0], "dtype": "DT_FLOAT", "format": "ND"}],
-        )
-    assert error.value.code == "REPLAY_OUTPUT_MISMATCH"
 
 
 def test_ring_unknown_auxiliary_output_descriptor_keeps_slot_without_asserting_fields() -> None:

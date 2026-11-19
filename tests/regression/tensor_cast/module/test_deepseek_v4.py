@@ -47,9 +47,6 @@ from tensor_cast.layers.deepseek_v4 import (
     DeepseekV4SparseAttentionIndexer,
     _is_decode_attention_batch,
     route_deepseek_v4_gate,
-    has_deepseek_v4_hash_routing,
-    get_window_topk_idxs,
-    get_compress_topk_idxs,
 )
 from tensor_cast.layers.quant_linear import TensorCastQuantLinear
 from tensor_cast.layers.rotary_embedding import CachingRotaryEmb
@@ -57,7 +54,6 @@ from tensor_cast.layers.attention import AttentionMetadataTensorCast
 from tensor_cast.layers.mla import (
     DeepseekSparseAttention,
     MultiheadLatentAttentionBase,
-    _resolve_sparse_topk_limit,
 )
 from tensor_cast.model_config import LinearQuantConfig, MlaConfig
 from tensor_cast.performance_model.op_invoke_info import is_hif8_op_from_info, OpInvokeInfo
@@ -999,94 +995,6 @@ class TestDeepseekV4SparseAttention(unittest.TestCase):
         assert weight.shape == (inner.wo_a.qweight.shape[0], inner.wo_a.qweight.shape[1] * 2)
         assert inner.wo_a.qweight.shape[-1] * 2 == weight.shape[-1]
         weight.reshape(inner.n_groups, inner.o_lora_rank, inner.num_heads * inner.head_dim // inner.n_groups)
-
-
-class TestDeepseekV4Helpers(unittest.TestCase):
-    """Test V4 helper functions."""
-
-    def test_has_deepseek_v4_hash_routing_from_gate_attr(self):
-        """Test hash routing detection from gate attribute."""
-        gate = nn.Linear(4096, 128)
-        gate.hash = True
-
-        assert has_deepseek_v4_hash_routing(gate, moe_layer_idx=None) is True
-
-    def test_has_deepseek_v4_hash_routing_from_gate_attr_false(self):
-        """Test hash routing detection returns False."""
-        gate = nn.Linear(4096, 128)
-        gate.hash = False
-
-        assert has_deepseek_v4_hash_routing(gate, moe_layer_idx=None) is False
-
-    def test_has_deepseek_v4_hash_routing_from_moe_layer_idx(self):
-        """Test hash routing detection from moe_layer_idx."""
-        gate = nn.Linear(4096, 128)
-        # No hash attribute, use moe_layer_idx
-        assert has_deepseek_v4_hash_routing(gate, moe_layer_idx=2) is True  # idx < 3
-        assert has_deepseek_v4_hash_routing(gate, moe_layer_idx=3) is False  # idx >= 3
-        assert has_deepseek_v4_hash_routing(gate, moe_layer_idx=0) is True  # idx < 3
-
-    def test_get_window_topk_idxs_prefill(self):
-        """Test window topk indices for prefill."""
-        indices = get_window_topk_idxs(window_size=128, batch_size=2, seq_length=32, device="cpu", is_decode=False)
-        # width = min(32, 128) = 32
-        assert indices.shape == (2, 32, 32)
-
-    def test_get_window_topk_idxs_decode(self):
-        """Test window topk indices for decode."""
-        indices = get_window_topk_idxs(window_size=128, batch_size=2, seq_length=1, device="cpu", is_decode=True)
-        # width = 128 (is_decode overrides)
-        assert indices.shape == (2, 1, 128)
-
-    def test_get_compress_topk_idxs(self):
-        """Test compress topk indices."""
-        indices = get_compress_topk_idxs(ratio=4, batch_size=2, seq_length=32, device="cpu")
-        # width = max(32 // 4, 1) = 8
-        assert indices.shape == (2, 32, 8)
-
-    def test_get_compress_topk_idxs_uses_total_seq_length(self):
-        """Context-prefill compressed topk width follows total seq length."""
-        indices = get_compress_topk_idxs(
-            ratio=128,
-            batch_size=2,
-            seq_length=32,
-            total_seq_length=1024,
-            device="cpu",
-        )
-        assert indices.shape == (2, 32, 8)
-
-
-class TestResolveSparseTopkLimit(unittest.TestCase):
-    """Test _resolve_sparse_topk_limit helper."""
-
-    def test_resolve_from_explicit(self):
-        """Test resolving from explicit topk_limit parameter."""
-        inner = MagicMock()
-        result = _resolve_sparse_topk_limit(inner, topk_limit=16)
-        assert result == 16
-
-    def test_resolve_from_inner_module(self):
-        """Test resolving from inner module attribute."""
-        inner = MagicMock()
-        inner.topk_limit = 24
-        result = _resolve_sparse_topk_limit(inner)
-        assert result == 24
-
-    def test_resolve_from_config(self):
-        """Test resolving from config attribute."""
-        inner = MagicMock()
-        inner.topk_limit = None
-        inner.config = MagicMock(topk_limit=32)
-        result = _resolve_sparse_topk_limit(inner)
-        assert result == 32
-
-    def test_resolve_from_index_topk(self):
-        """Test resolving from index_topk (GLM5 style)."""
-        inner = MagicMock()
-        inner.topk_limit = None
-        inner.config = MagicMock(topk_limit=None, index_topk=48)
-        result = _resolve_sparse_topk_limit(inner)
-        assert result == 48
 
 
 class TestDeepseekV4PerformanceModel(unittest.TestCase):

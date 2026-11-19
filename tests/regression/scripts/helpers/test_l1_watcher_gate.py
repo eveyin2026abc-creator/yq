@@ -73,12 +73,12 @@ def test_select_families_skips_unrelated_change(tmp_path: Path) -> None:
     assert reasons == {}
 
 
-def test_select_families_uses_watched_product_paths(tmp_path: Path) -> None:
+def test_select_families_runs_all_for_product_change(tmp_path: Path) -> None:
     watchers = tmp_path / "watchers.csv"
     _write_watchers(watchers)
     families, reasons = l1_watcher_gate.select_families(watchers, ("product/moe.py",))
-    assert families == frozenset({"moe"})
-    assert reasons == {"moe": ["product/moe.py"]}
+    assert families == l1_watcher_gate._FAMILIES
+    assert reasons == {family: ["product/moe.py"] for family in sorted(l1_watcher_gate._FAMILIES)}
 
 
 def test_select_families_runs_all_for_shared_l1_infrastructure(tmp_path: Path) -> None:
