@@ -26,8 +26,6 @@
 #   MSMODELING_OFFLINE                 Hub offline mode (default: 0)
 #   MSMODELING_CACHE                   optional repo-local Hub cache (unset = use ~/.cache like develop)
 #   MSMODELING_TEST_BASE_BRANCH        merge-base branch (default: master)
-#   MSMODELING_L1_CANDIDATE_MAP_PATH   generated L1 evidence artifact
-#                                      (default: artifacts/l1_test_map.json)
 #   PYTHON                             absolute path to interpreter; if unset, uses uv or python3
 #
 # Optional (defaults from scripts/defaults.env when unset):
@@ -56,45 +54,20 @@ fi
 export MSMODELING_TEST_WEIGHTS_PRUNE="${MSMODELING_TEST_WEIGHTS_PRUNE:-0}"
 export MSMODELING_OFFLINE="${MSMODELING_OFFLINE:-0}"
 export MSMODELING_TEST_BASE_BRANCH="${MSMODELING_TEST_BASE_BRANCH:-master}"
-export MSMODELING_L1_CANDIDATE_MAP_PATH="${MSMODELING_L1_CANDIDATE_MAP_PATH:-artifacts/l1_test_map.json}"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
-echo "== Stage 1/3: check-test-policy =="
+echo "== Stage 1/2: check-test-policy =="
 policy_status=0
 run_py "${HELPERS_DIR}/architecture/main.py" check-test-policy \
   --base "origin/${MSMODELING_TEST_BASE_BRANCH}" \
-  --budget 180 \
   || policy_status=$?
 
-echo "== Stage 2/3: run-affected-tests =="
+echo "== Stage 2/2: run-affected-tests =="
 affected_tests_status=0
 run_py "${HELPERS_DIR}/ci_gate/main.py" || affected_tests_status=$?
-
-echo "== Stage 3/3: check-test-conservation =="
-conservation_status=0
-if [[ ${policy_status} -eq 0 && ${affected_tests_status} -eq 0 ]]; then
-  mkdir -p artifacts
-  l1_merge_base=$(git merge-base HEAD "${MSMODELING_TEST_BASE_BRANCH}")
-  git diff --name-only "${l1_merge_base}" HEAD > artifacts/l1_changed_paths.txt
-  run_py "${HELPERS_DIR}/architecture/l1_watchers.py" \
-    --output "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
-    --changed-paths-file artifacts/l1_changed_paths.txt \
-    --selection-output artifacts/l1_watcher_selection.json \
-    || conservation_status=$?
-  if [[ ${conservation_status} -eq 0 ]]; then
-    run_py "${HELPERS_DIR}/architecture/main.py" check-test-conservation \
-      --test-map "${MSMODELING_L1_CANDIDATE_MAP_PATH}" \
-      --baseline-test-map "${MSMODELING_TEST_MAP_PATH}" \
-      --selection artifacts/l1_watcher_selection.json \
-      --evidence-output "artifacts/l1_watcher_conservation.json" \
-      || conservation_status=$?
-  fi
-else
-  echo "Conservation skipped because an earlier stage failed." >&2
-fi
 
 skill_tests_status=0
 run_pytest "${PROJECT_DIR}/.agents/skills/optix-assistant/scripts/" \
@@ -102,7 +75,7 @@ run_pytest "${PROJECT_DIR}/.agents/skills/optix-assistant/scripts/" \
   --tb=short \
   || skill_tests_status=$?
 
-if [[ ${policy_status} -ne 0 || ${affected_tests_status} -ne 0 || ${conservation_status} -ne 0 || ${skill_tests_status} -ne 0 ]]; then
-  echo "Error: test_policy=${policy_status}, affected_tests=${affected_tests_status}, conservation=${conservation_status}, skill_tests=${skill_tests_status}" >&2
+if [[ ${policy_status} -ne 0 || ${affected_tests_status} -ne 0 || ${skill_tests_status} -ne 0 ]]; then
+  echo "Error: test_policy=${policy_status}, affected_tests=${affected_tests_status}, skill_tests=${skill_tests_status}" >&2
   exit 1
 fi

@@ -27,20 +27,16 @@ from scripts.helpers.architecture.main import (
     GateError,
     _changed_test_files,
     _classify_file,
-    _l2_exemption_reason,
     _l2_builder_usage,
+    _l2_exemption_reason,
     _name,
     build_parser,
-    check_assertions,
     check_cov_helpers,
-    check_family_batches,
     check_l2_layers,
     check_new_tests,
-    check_scenarios,
     check_test_policy,
-    check_watchers,
-    compare_inventory,
     collect_inventory,
+    compare_inventory,
     main,
 )
 
@@ -74,159 +70,6 @@ def test_classify_file_routes_model_and_pure_tests(tmp_path: Path) -> None:
 
     assert _classify_file(tmp_path, model.relative_to(tmp_path).as_posix()) == ("regression", "L1-model")
     assert _classify_file(tmp_path, unit.relative_to(tmp_path).as_posix()) == ("regression", "L3-unit")
-
-
-def test_assertion_manifest_requires_all_three_groups(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.csv"
-    fields = ("family", "group", "assertion_id", "source_node", "product_symbol", "status", "reason", "approver")
-    _write_csv(manifest, fields, [("qwen", "numeric", "n1", "tests/a.py::test_a", "p::s", "active", "", "")])
-    with pytest.raises(GateError, match="numeric/structural/capability"):
-        check_assertions(argparse.Namespace(manifest=manifest, baseline=None, inventory=None))
-
-
-def test_assertion_manifest_requires_signed_waiver(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.csv"
-    fields = ("family", "group", "assertion_id", "source_node", "product_symbol", "status", "reason", "approver")
-    rows = [
-        (
-            "qwen",
-            group,
-            group,
-            f"tests/a.py::test_{group}",
-            "p::s",
-            "waived" if group == "numeric" else "active",
-            "",
-            "",
-        )
-        for group in ("numeric", "structural", "capability")
-    ]
-    _write_csv(manifest, fields, rows)
-    with pytest.raises(GateError, match="requires reason and approver"):
-        check_assertions(argparse.Namespace(manifest=manifest, baseline=None, inventory=None))
-
-
-def test_scenario_budget_counts_unique_build_run_pairs(tmp_path: Path) -> None:
-    matrix = tmp_path / "scenarios.csv"
-    fields = (
-        "family",
-        "scenario_id",
-        "build_signature",
-        "run_signature",
-        "build_count",
-        "forward_count",
-        "actual_seconds",
-        "schedule",
-    )
-    rows = [
-        ("qwen", "numeric", "build-a", "run-a", "1", "1", "90", "incremental"),
-        ("qwen", "structural", "build-a", "run-a", "1", "1", "90", "incremental"),
-    ]
-    _write_csv(matrix, fields, rows)
-    check_scenarios(argparse.Namespace(matrix=matrix, budget=100.0))
-
-
-def test_scenario_budget_rejects_too_many_distinct_runs(tmp_path: Path) -> None:
-    matrix = tmp_path / "scenarios.csv"
-    fields = (
-        "family",
-        "scenario_id",
-        "build_signature",
-        "run_signature",
-        "build_count",
-        "forward_count",
-        "actual_seconds",
-        "schedule",
-    )
-    rows = [
-        ("qwen", "one", "build-a", "run-a", "1", "1", "100", "incremental"),
-        ("qwen", "two", "build-a", "run-b", "1", "1", "100", "incremental"),
-    ]
-    _write_csv(matrix, fields, rows)
-    with pytest.raises(GateError, match="budget exceeded"):
-        check_scenarios(argparse.Namespace(matrix=matrix, budget=180.0))
-
-
-def test_watcher_gate_requires_mapped_symbol(tmp_path: Path) -> None:
-    watchers = tmp_path / "watchers.csv"
-    fields = ("family", "source_node", "product_symbol", "required")
-    rows = [
-        (family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true")
-        for family in ("qwen", "dense", "moe", "multimodal")
-    ]
-    _write_csv(watchers, fields, rows)
-    test_map = tmp_path / "test_map.json"
-    test_map.write_text(
-        json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8"
-    )
-    baseline = tmp_path / "baseline.json"
-    baseline.write_text(
-        json.dumps({"map": {f"tests/old.py::test_{row[0]}": {f"product/{row[0]}.py": ["run"]} for row in rows}}),
-        encoding="utf-8",
-    )
-    evidence = tmp_path / "evidence.json"
-    check_watchers(
-        argparse.Namespace(
-            watchers=watchers,
-            test_map=test_map,
-            baseline_test_map=baseline,
-            evidence_output=evidence,
-            selection=None,
-        )
-    )
-    payload = json.loads(evidence.read_text(encoding="utf-8"))
-    assert payload["coverage_context"] == "test"
-    assert all(not item["lost_symbols"] for item in payload["families"])
-
-
-def test_watcher_gate_rejects_symbol_missing_from_baseline(tmp_path: Path) -> None:
-    watchers = tmp_path / "watchers.csv"
-    fields = ("family", "source_node", "product_symbol", "required")
-    rows = [
-        (family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true")
-        for family in ("qwen", "dense", "moe", "multimodal")
-    ]
-    _write_csv(watchers, fields, rows)
-    candidate = tmp_path / "candidate.json"
-    candidate.write_text(
-        json.dumps({"map": {row[1]: {f"product/{row[0]}.py": ["run"]} for row in rows}}), encoding="utf-8"
-    )
-    baseline = tmp_path / "baseline.json"
-    baseline.write_text(json.dumps({"map": {}}), encoding="utf-8")
-    with pytest.raises(GateError, match="no watcher in the baseline"):
-        check_watchers(
-            argparse.Namespace(
-                watchers=watchers,
-                test_map=candidate,
-                baseline_test_map=baseline,
-                evidence_output=tmp_path / "evidence.json",
-                selection=None,
-            )
-        )
-
-
-def test_watcher_gate_skips_unselected_families(tmp_path: Path) -> None:
-    watchers = tmp_path / "watchers.csv"
-    fields = ("family", "source_node", "product_symbol", "required")
-    rows = [
-        (family, f"tests/a.py::test_{family}", f"product/{family}.py::run", "true")
-        for family in ("qwen", "dense", "moe", "multimodal")
-    ]
-    _write_csv(watchers, fields, rows)
-    empty_map = tmp_path / "empty.json"
-    empty_map.write_text(json.dumps({"map": {}}), encoding="utf-8")
-    selection = tmp_path / "selection.json"
-    selection.write_text(json.dumps({"families": []}), encoding="utf-8")
-    evidence = tmp_path / "evidence.json"
-    check_watchers(
-        argparse.Namespace(
-            watchers=watchers,
-            test_map=empty_map,
-            baseline_test_map=empty_map,
-            evidence_output=evidence,
-            selection=selection,
-        )
-    )
-    assert json.loads(evidence.read_text(encoding="utf-8"))["families"] == []
 
 
 def test_compare_inventory_writes_empty_reports_for_matching_nodes(tmp_path: Path) -> None:
@@ -300,35 +143,6 @@ def test_check_new_tests_accepts_documented_non_tensor_cast_runner_exemption(
     check_new_tests(argparse.Namespace(base="origin/master", family_registry=registry))
 
 
-def test_check_family_batches_matches_recorded_evidence(tmp_path: Path) -> None:
-    families = ("qwen", "dense", "moe", "multimodal")
-    registry = tmp_path / "families.json"
-    registry.write_text(
-        json.dumps(
-            {
-                "families": {
-                    family: {
-                        "order": index,
-                        "evidence": {"status": "passed", "scenarios": 1, "assertions": 1, "watchers": 1},
-                        "rollback": {"selector": f"family={family}", "scope": f"{family} manifest rows"},
-                    }
-                    for index, family in enumerate(families, 1)
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    scenarios = tmp_path / "scenarios.csv"
-    _write_csv(scenarios, ("family",), [(family,) for family in families])
-    assertions = tmp_path / "assertions.csv"
-    _write_csv(assertions, ("family",), [(family,) for family in families])
-    watchers = tmp_path / "watchers.csv"
-    _write_csv(watchers, ("family", "required"), [(family, "true") for family in families])
-    check_family_batches(
-        argparse.Namespace(registry=registry, scenarios=scenarios, assertions=assertions, watchers=watchers)
-    )
-
-
 def test_check_cov_helpers_rejects_unmarked_coverage_only_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     test_file = tmp_path / "tests/demo/unit/test_demo.py"
     test_file.parent.mkdir(parents=True)
@@ -347,11 +161,6 @@ def test_build_parser_exposes_all_architecture_commands() -> None:
     assert set(choices) == {
         "collect-inventory",
         "compare-inventory",
-        "check-assertions",
-        "check-scenarios",
-        "check-watchers",
-        "check-test-conservation",
-        "check-family-batches",
         "check-new-tests",
         "check-l2-layers",
         "check-cov-helpers",
@@ -362,9 +171,6 @@ def test_build_parser_exposes_all_architecture_commands() -> None:
 def test_check_test_policy_runs_all_static_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     called = []
     for name in (
-        "check_assertions",
-        "check_scenarios",
-        "check_family_batches",
         "check_l2_layers",
         "check_cov_helpers",
         "check_new_tests",
@@ -378,9 +184,6 @@ def test_check_test_policy_runs_all_static_rules(monkeypatch: pytest.MonkeyPatch
     check_test_policy(args)
 
     assert called == [
-        "check_assertions",
-        "check_scenarios",
-        "check_family_batches",
         "check_l2_layers",
         "check_cov_helpers",
         "check_new_tests",
