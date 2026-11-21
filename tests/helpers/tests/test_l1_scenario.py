@@ -322,6 +322,31 @@ def test_one_executor_supports_multiple_compilation_configs(monkeypatch):
     assert applied == [(), ("enable_multistream",)]
 
 
+@pytest.mark.parametrize("option", ["enable_dispatch_ffn_combine", "enable_mlapo"])
+def test_executor_preserves_compilation_options_from_user_config(monkeypatch, option):
+    applied = []
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "Runtime", _FakeRuntime)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda config: applied.append(config))
+
+    executor = L1ScenarioExecutor()
+    executor.run(make_config(**{option: True}))
+
+    assert applied == [(option,), (option,)]
+
+
+def test_explicit_empty_compilation_config_disables_user_config_options(monkeypatch):
+    applied = []
+    monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
+    monkeypatch.setattr(l1_scenario_module, "Runtime", _FakeRuntime)
+    monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda config: applied.append(config))
+
+    executor = L1ScenarioExecutor()
+    executor.run(make_config(enable_mlapo=True), compilation_config=())
+
+    assert applied == [(), ()]
+
+
 def test_query_length_reuses_the_built_runner(monkeypatch):
     monkeypatch.setattr(l1_scenario_module, "ModelRunner", _FakeModelRunner)
     monkeypatch.setattr(l1_scenario_module, "apply_compilation_config", lambda _config: None)

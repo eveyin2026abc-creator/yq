@@ -51,7 +51,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 
 from torch import nn
 
-from tensor_cast.core.compilation_config import apply_compilation_config
+from tensor_cast.core.compilation_config import COMPILATION_CONFIG_OPTIONS, apply_compilation_config
 from tensor_cast.core.input_generator import generate_inputs_varlen
 from tensor_cast.core.model_runner import ModelRunner, ModelRunnerMetrics
 from tensor_cast.core.user_config import UserInputConfig
@@ -146,6 +146,21 @@ def _config_field_names() -> tuple[str, ...]:
 def build_field_names() -> tuple[str, ...]:
     """Config fields that participate in the build signature."""
     return tuple(name for name in _config_field_names() if name not in RUN_FIELDS | OBSERVABILITY_FIELDS)
+
+
+def resolve_compilation_config(
+    user_config: UserInputConfig,
+    compilation_config: Optional[Iterable[str]],
+) -> tuple[str, ...]:
+    """Resolve explicit options or infer them from ``UserInputConfig``.
+
+    ``None`` means that the caller did not override the scenario configuration,
+    so enabled compilation fields on ``UserInputConfig`` must be preserved.
+    An explicit empty iterable still means "disable every option".
+    """
+    if compilation_config is not None:
+        return tuple(sorted(compilation_config))
+    return tuple(option for option in COMPILATION_CONFIG_OPTIONS if getattr(user_config, option, False))
 
 
 def _normalize(value: object) -> Any:
@@ -352,7 +367,7 @@ class L1ScenarioExecutor:
         self,
         user_config: UserInputConfig,
         *,
-        compilation_config: Iterable[str] = (),
+        compilation_config: Optional[Iterable[str]] = None,
     ) -> ModelRunner:
         """Return the shared ``ModelRunner`` for this build signature.
 
@@ -362,7 +377,11 @@ class L1ScenarioExecutor:
         its own executor, so it does not perturb the counts of the executor
         that produced the artifact under test.
         """
-        signature = L1BuildSignature.from_user_config(user_config, compilation_config=compilation_config)
+        resolved_compilation_config = resolve_compilation_config(user_config, compilation_config)
+        signature = L1BuildSignature.from_user_config(
+            user_config,
+            compilation_config=resolved_compilation_config,
+        )
         cached = self._runners.get(signature)
         if cached is not None:
             self.counters.record_build(hit=True, signature=signature)
@@ -380,14 +399,18 @@ class L1ScenarioExecutor:
         self,
         user_config: UserInputConfig,
         *,
-        compilation_config: Iterable[str] = (),
+        compilation_config: Optional[Iterable[str]] = None,
         generate_inputs_func: Callable = generate_inputs_varlen,
         with_sampler: bool = False,
         requests: object = None,
     ) -> L1RunArtifact:
         """Run the scenario at most once and return its shared artifact."""
         materialized_requests = materialize_requests(requests)
-        build_signature = L1BuildSignature.from_user_config(user_config, compilation_config=compilation_config)
+        resolved_compilation_config = resolve_compilation_config(user_config, compilation_config)
+        build_signature = L1BuildSignature.from_user_config(
+            user_config,
+            compilation_config=resolved_compilation_config,
+        )
         run_signature = L1RunSignature.from_user_config(
             user_config,
             generate_inputs_func=generate_inputs_func,
@@ -399,7 +422,7 @@ class L1ScenarioExecutor:
             self.counters.run_hit += 1
             return cached
 
-        runner = self.runner(user_config, compilation_config=compilation_config)
+        runner = self.runner(user_config, compilation_config=resolved_compilation_config)
         # Compilation options are process-global and other tests can mutate them
         # without going through this executor. Re-apply immediately before every
         # forward, including forwards on cached runners.
