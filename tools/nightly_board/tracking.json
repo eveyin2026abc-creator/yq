@@ -137,6 +137,11 @@
       "commit": "0024665a",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-26.3.0-20261123-1536.log": {
+      "commit": "4a2c2dc5",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

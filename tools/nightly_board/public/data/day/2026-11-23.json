@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-23",
+  "today": "2026-11-23",
+  "runs": [
+    {
+      "log": "nightly-master-20261123-0530.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-23",
+      "started": "2026-11-23 05:30",
+      "exit_code": 0,
+      "passed": 12110,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3388,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 77.0
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.3.0-20261123-1536.log",
+      "label": "26.3.0",
+      "branch": "26.3.0",
+      "date": "2026-11-23",
+      "started": "2026-11-23 15:36",
+      "exit_code": 0,
+      "passed": 11976,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3420,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.8
+      },
+      "failures": [],
+      "commit": "4a2c2dc5",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
