@@ -142,6 +142,11 @@
       "commit": "4a2c2dc5",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261124-0400.log": {
+      "commit": "4060ee52",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

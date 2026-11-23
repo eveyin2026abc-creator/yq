@@ -1,6 +1,6 @@
 {
   "date": "2026-11-21",
-  "today": "2026-11-23",
+  "today": "2026-11-24",
   "runs": [
     {
       "log": "nightly-master-20261121-0530.log",
@@ -13,6 +13,29 @@
       "failed": 0,
       "errors": 0,
       "duration_sec": 3459,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 77.0
+      },
+      "failures": [],
+      "commit": "",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-master-pr1074-20261121-1546.log",
+      "label": "master-pr1074",
+      "branch": "master-pr1074",
+      "date": "2026-11-21",
+      "started": "2026-11-21 15:46",
+      "exit_code": 0,
+      "passed": 12146,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3451,
       "coverage": {
         "gate": "passed",
         "line": 85.0,

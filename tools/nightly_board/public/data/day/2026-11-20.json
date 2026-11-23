@@ -1,6 +1,6 @@
 {
   "date": "2026-11-20",
-  "today": "2026-11-23",
+  "today": "2026-11-24",
   "runs": [
     {
       "log": "nightly-master-20261120-0530.log",
@@ -20,6 +20,110 @@
       },
       "failures": [],
       "commit": "0024665a",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-master-pr1074-20261120-1713.log",
+      "label": "master-pr1074",
+      "branch": "master-pr1074",
+      "date": "2026-11-20",
+      "started": "2026-11-20 17:13",
+      "exit_code": 3,
+      "passed": 12118,
+      "failed": 10,
+      "errors": 0,
+      "duration_sec": 3537,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.9
+      },
+      "failures": [
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_0_prefill_w8a8_static",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_estimator_produces_nonzero_time",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_1_decode_w8a8_static",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_4_prefill_w4a8_dynamic",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_2_prefill_w8a8_dynamic",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_5_decode_w4a8_dynamic",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_ep_3_decode_w8a8_dynamic",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_dfc_pass.py::DfcPassNightlyTestCase::test_dfc_dsv3_w8a8_dynamic_profiling",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: False is not true : No DFC op found in table_result:"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_text_generate.py::TestTextGenerate::test_mlapo_quant_disabled_0_deepseek_ai_DeepSeek_V3_1",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: 'tensor_cast.mlapo.default' not found in '----------------------------------------------  --------------  ------------  ----------\\n                     Name                       analytic total  analytic avg  # of Calls\\n----------------------------------------------  --------------  ------------  ----------\\naten.mm.default                                         1.498s      33.221us       45091\\naten.cat.default                                      32.964ms       2.185us      …"
+        },
+        {
+          "node_id": "tests/regression/tensor_cast/model/test_text_generate.py::TestTextGenerate::test_mlapo_linear_quant_0_deepseek_ai_DeepSeek_V3_1",
+          "status": "Needs follow-up",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: 'tensor_cast.mlapo_quant.default' not found in '----------------------------------------------  --------------  ------------  ----------\\n                     Name                       analytic total  analytic avg  # of Calls\\n----------------------------------------------  --------------  ------------  ----------\\ntensor_cast.static_quant_linear.default              859.375ms      19.110us       44971\\ntensor_cast.quantize.default                          91.874ms       2.043us…"
+        }
+      ],
+      "commit": "",
       "ci_miss_reason": "",
       "issue_numbers": [],
       "issues": [],
