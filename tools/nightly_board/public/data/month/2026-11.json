@@ -20,6 +20,23 @@
       "runs": 2,
       "failed": 0
     },
+    "2026-11-24": {
+      "status": "pass",
+      "branches": [
+        {
+          "branch": "master",
+          "status": "pass",
+          "failed": 0
+        },
+        {
+          "branch": "26.3.0",
+          "status": "pass",
+          "failed": 0
+        }
+      ],
+      "runs": 2,
+      "failed": 0
+    },
     "2026-11-01": {
       "status": "pass",
       "branches": [
@@ -283,18 +300,6 @@
       "failed": 0
     },
     "2026-11-22": {
-      "status": "pass",
-      "branches": [
-        {
-          "branch": "master",
-          "status": "pass",
-          "failed": 0
-        }
-      ],
-      "runs": 1,
-      "failed": 0
-    },
-    "2026-11-24": {
       "status": "pass",
       "branches": [
         {

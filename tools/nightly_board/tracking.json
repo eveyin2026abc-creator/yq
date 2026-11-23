@@ -147,6 +147,11 @@
       "commit": "4060ee52",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-26.3.0-20261124-0600.log": {
+      "commit": "4a2c2dc5",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
