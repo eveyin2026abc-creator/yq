@@ -93,6 +93,7 @@ def test_html_marks_the_bound_change_and_top_operators() -> None:
     assert "id='point-readout'" in page
     assert "class='point'" in page
     assert "占整网" in page
+    assert "id='download-report'" in page
     assert page.count("<polyline") >= 3
     assert "aten.mm" in page
     assert "aten.add" in page

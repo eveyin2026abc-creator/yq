@@ -320,14 +320,18 @@ def report_payload(report: LatencyReport) -> dict[str, Any]:
     }
 
 
-def render_html(report: LatencyReport) -> str:
+def render_html(report: LatencyReport, *, download_name: Optional[str] = None) -> str:
     top = report.top_operators()
     network_summary = describe_bounds(report.points, lambda point: point.bound, "整网")
     batches = [point.batch_size for point in report.points]
     network_ms = [point.latency_s * 1e3 for point in report.points]
     network_bounds = [point.bound for point in report.points]
+    filename = download_name or _download_name(report)
     body = [
         "<h1>Batch size 时延与 bound 趋势</h1>",
+        "<p class='toolbar'><button type='button' id='download-report' data-name='"
+        + html.escape(filename, quote=True)
+        + "'>下载 HTML</button></p>",
         "<p class='meta'>" + html.escape(_meta_line(report)) + "</p>",
         "<p class='summary'>" + html.escape(network_summary) + "</p>",
         "<p id='point-readout' class='readout'>点曲线上的圆点，这里显示该 batch 的时延、整网占比和 bound。</p>",
@@ -428,6 +432,13 @@ def _share_sentence(series: Sequence[_OperatorView]) -> str:
         f" 占整网从 batch {first.batch_size} 的 {first.network_share:.1f}%"
         f" 到 batch {last.batch_size} 的 {last.network_share:.1f}%。"
     )
+
+
+def _download_name(report: LatencyReport) -> str:
+    stem = report.model_id.replace("\\", "/").rstrip("/").split("/")[-1] or "latency-trend"
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in stem).strip("-")
+    phase = report.phase if report.phase in {"decode", "prefill"} else "report"
+    return f"{cleaned or 'latency-trend'}-{phase}.html"
 
 
 def _meta_line(report: LatencyReport) -> str:
@@ -844,6 +855,9 @@ h1,h2,h3,p,section,div.legend{margin-left:auto;margin-right:auto}
 h1{max-width:1000px;padding:1.6rem 1.2rem 0}
 section{max-width:1000px;margin:0 auto 1.5rem;padding:0 1.2rem}
 h1{font-size:1.8rem;font-weight:600;margin-bottom:.2rem}
+.toolbar{padding:0 1.2rem .2rem}
+#download-report{border:1px solid #1c1915;background:#1c1915;color:#fffcf7;border-radius:999px;
+padding:.35rem .85rem;font:13px/1.3 ui-sans-serif,system-ui,sans-serif;cursor:pointer}
 h2{font-size:1.25rem;margin:1.4rem 0 .4rem}
 h3{font-size:1rem;margin:.8rem 0 .2rem}
 .meta,.note{color:#5e584f}
@@ -903,5 +917,17 @@ document.querySelectorAll('.point').forEach(el=>{
   el.addEventListener('keydown',event=>{
     if(event.key==='Enter' || event.key===' '){event.preventDefault(); showPoint(el);}
   });
+});
+const download=document.getElementById('download-report');
+if(download) download.addEventListener('click',()=>{
+  const name=download.dataset.name || 'latency-trend.html';
+  const html='<!doctype html>'+document.documentElement.outerHTML;
+  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=name;
+  link.click();
+  URL.revokeObjectURL(url);
 });
 """
