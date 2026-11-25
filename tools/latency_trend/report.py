@@ -291,6 +291,7 @@ def report_payload(report: LatencyReport) -> dict[str, Any]:
                     "calls": sample.calls,
                     "bound": sample.bound,
                     "components_percent": sample.share.percent(),
+                    "network_share_percent": _network_share(sample.latency_s, point.latency_s),
                 }
             )
         points.append(
@@ -329,6 +330,7 @@ def render_html(report: LatencyReport) -> str:
         "<h1>Batch size 时延与 bound 趋势</h1>",
         "<p class='meta'>" + html.escape(_meta_line(report)) + "</p>",
         "<p class='summary'>" + html.escape(network_summary) + "</p>",
+        "<p id='point-readout' class='readout'>点曲线上的圆点，这里显示该 batch 的时延、整网占比和 bound。</p>",
         _legend(),
         "<section><h2>整网时延</h2>",
         "<p class='note'>纵轴是解析模型调度后的设备执行时间。算子曲线是同名调用的 analytic 时间之和，多流重叠时可以大于整网时间。</p>",
@@ -339,7 +341,8 @@ def render_html(report: LatencyReport) -> str:
         _network_table(report),
         "</section>",
         "<section><h2>Top " + str(len(top)) + " 算子时延趋势</h2>",
-        "<p class='note'>点一个算子标签只看它自己的曲线，纵轴按这条曲线缩放，底色是它的主导 bound。再点「全部」回到对比。</p>",
+        "<p class='note'>点一个算子标签只看它自己的曲线。圆点可读出时延和占整网调度时间的比例，"
+        "底色是主导 bound。多流重叠时这个比例可以超过 100%。</p>",
         _operator_tags(top),
         _top_trend_chart(report),
         "<h3>单个算子</h3>",
@@ -347,7 +350,7 @@ def render_html(report: LatencyReport) -> str:
     ]
     for name in top:
         series = _operator_series(report.points, name)
-        caption = describe_bounds(series, lambda sample: sample.bound, name)
+        caption = describe_bounds(series, lambda sample: sample.bound, name) + _share_sentence(series)
         body.append(f"<article class='card op-card' data-op='{html.escape(name, quote=True)}'>")
         body.append("<h3>" + html.escape(name) + "</h3>")
         body.append("<p class='note'>" + html.escape(caption) + "</p>")
@@ -359,6 +362,7 @@ def render_html(report: LatencyReport) -> str:
                 [sample.bound for sample in series],
                 width=460,
                 height=240,
+                shares=[sample.network_share for sample in series],
             )
         )
         body.append("</article>")
@@ -386,6 +390,14 @@ class _OperatorView:
     batch_size: int
     latency_s: float
     bound: str
+    network_share: Optional[float]
+
+
+def _network_share(operator_s: float, network_s: float) -> Optional[float]:
+    """Operator analytic time as a percent of the scheduled network latency."""
+    if network_s <= 0:
+        return None
+    return operator_s / network_s * 100.0
 
 
 def _operator_series(points: Sequence[SweepPoint], name: str) -> list[_OperatorView]:
@@ -394,8 +406,28 @@ def _operator_series(points: Sequence[SweepPoint], name: str) -> list[_OperatorV
         match = next((sample for sample in point.operators if sample.name == name), None)
         if match is None:
             continue
-        series.append(_OperatorView(point.batch_size, match.latency_s, match.bound))
+        series.append(
+            _OperatorView(
+                point.batch_size,
+                match.latency_s,
+                match.bound,
+                _network_share(match.latency_s, point.latency_s),
+            )
+        )
     return series
+
+
+def _share_sentence(series: Sequence[_OperatorView]) -> str:
+    present = [sample for sample in series if sample.network_share is not None]
+    if not present:
+        return ""
+    first, last = present[0], present[-1]
+    if first.batch_size == last.batch_size:
+        return f" 占整网 {first.network_share:.1f}%。"
+    return (
+        f" 占整网从 batch {first.batch_size} 的 {first.network_share:.1f}%"
+        f" 到 batch {last.batch_size} 的 {last.network_share:.1f}%。"
+    )
 
 
 def _meta_line(report: LatencyReport) -> str:
@@ -470,6 +502,17 @@ def _operator_tags(names: Sequence[str]) -> str:
     return "<div class='tags' id='op-tags'>" + "".join(buttons) + "</div>"
 
 
+def _point_mark(x: float, y: float, radius: float, fill: str, tip: str, stroke: str = "") -> str:
+    """Clickable chart point. The value is stored for the readout, not only a hover title."""
+    stroke_attr = f" stroke='{stroke}' stroke-width='1.5'" if stroke else ""
+    return (
+        f"<g class='point' tabindex='0' data-tip='{html.escape(tip, quote=True)}'>"
+        f"<circle class='hit' cx='{x:.1f}' cy='{y:.1f}' r='12'/>"
+        f"<circle class='dot' cx='{x:.1f}' cy='{y:.1f}' r='{radius}' fill='{fill}'{stroke_attr}>"
+        f"<title>{html.escape(tip)}</title></circle></g>"
+    )
+
+
 def _legend() -> str:
     items = "".join(
         f"<span><i style='background:{BOUND_COLORS[key]}'></i>{html.escape(BOUND_LABELS[key])}</span>"
@@ -487,6 +530,7 @@ def _latency_chart(
     *,
     width: int,
     height: int,
+    shares: Optional[Sequence[Optional[float]]] = None,
 ) -> str:
     if not batches:
         return "<p class='note'>没有数据。</p>"
@@ -525,10 +569,20 @@ def _latency_chart(
         x = x_at(index)
         y = y_at(value)
         coords.append(f"{x:.1f},{y:.1f}")
-        label = f"batch {batch}: {value:.3f} ms · {BOUND_LABELS.get(bound, bound)}"
+        share = None if shares is None or index >= len(shares) else shares[index]
+        share_text = "" if share is None else f" · 占整网 {share:.1f}%"
+        label = (
+            f"{title} · batch {batch} · {value:.3f} ms · "
+            f"{BOUND_LABELS.get(bound, bound)}{share_text}"
+        )
         dots.append(
-            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='4.5' fill='{BOUND_COLORS.get(bound, BOUND_COLORS[UNKNOWN_BOUND])}'>"
-            f"<title>{html.escape(label)}</title></circle>"
+            _point_mark(
+                x,
+                y,
+                4.5,
+                BOUND_COLORS.get(bound, BOUND_COLORS[UNKNOWN_BOUND]),
+                label,
+            )
         )
     y_ticks = []
     for step in range(4):
@@ -572,18 +626,24 @@ def _latency_chart(
     )
 
 
-def _series_values(report: LatencyReport, name: str) -> tuple[list[Optional[float]], list[str]]:
+def _series_values(
+    report: LatencyReport,
+    name: str,
+) -> tuple[list[Optional[float]], list[str], list[Optional[float]]]:
     values: list[Optional[float]] = []
     bounds: list[str] = []
+    shares: list[Optional[float]] = []
     for point in report.points:
         match = next((sample for sample in point.operators if sample.name == name), None)
         if match is None:
             values.append(None)
             bounds.append(UNKNOWN_BOUND)
+            shares.append(None)
         else:
             values.append(match.latency_s * 1e3)
             bounds.append(match.bound)
-    return values, bounds
+            shares.append(_network_share(match.latency_s, point.latency_s))
+    return values, bounds, shares
 
 
 def _top_trend_chart(report: LatencyReport) -> str:
@@ -597,7 +657,7 @@ def _top_trend_chart(report: LatencyReport) -> str:
     plot_w = width - pad_l - pad_r
     plot_h = height - pad_t - pad_b
     prepared = [(name, *_series_values(report, name)) for name in names]
-    finite = [value for _name, values, _bounds in prepared for value in values if value is not None]
+    finite = [value for _name, values, _bounds, _shares in prepared for value in values if value is not None]
     y_max = max(finite) * 1.12 if finite else 1.0
     if y_max <= 0:
         y_max = 1.0
@@ -622,7 +682,7 @@ def _top_trend_chart(report: LatencyReport) -> str:
         parts.append(
             f"<text x='{x_at(index):.1f}' y='{height - 12}' text-anchor='middle' class='tick'>{batch}</text>"
         )
-    for series_index, (name, values, bounds) in enumerate(prepared):
+    for series_index, (name, values, bounds, shares) in enumerate(prepared):
         color = SERIES_COLORS[series_index % len(SERIES_COLORS)]
         segment: list[str] = []
         dots: list[str] = []
@@ -644,11 +704,22 @@ def _top_trend_chart(report: LatencyReport) -> str:
             if previous is not None and previous != bound:
                 change = f" · {BOUND_LABELS.get(previous, previous)} → {BOUND_LABELS.get(bound, bound)}"
             previous = bound
-            label = f"{name} batch {batches[index]}: {value:.3f} ms · {BOUND_LABELS.get(bound, bound)}{change}"
+            share = shares[index]
+            share_text = "" if share is None else f" · 占整网 {share:.1f}%"
+            label = (
+                f"{name} · batch {batches[index]} · {value:.3f} ms · "
+                f"{BOUND_LABELS.get(bound, bound)}{change}{share_text}"
+            )
             radius = 5 if change else 3.5
             dots.append(
-                f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{radius}' fill='{BOUND_COLORS.get(bound, color)}' "
-                f"stroke='{color}' stroke-width='1.5'><title>{html.escape(label)}</title></circle>"
+                _point_mark(
+                    x,
+                    y,
+                    radius,
+                    BOUND_COLORS.get(bound, color),
+                    label,
+                    stroke=color,
+                )
             )
         if len(segment) > 1:
             dots.insert(0, f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>")
@@ -670,10 +741,14 @@ def _top_latency_table(report: LatencyReport) -> str:
     header = "<th>算子</th>" + "".join(f"<th>{batch}</th>" for batch in batches) + "<th>bound 变化</th>"
     rows = []
     for name in names:
-        values, bounds = _series_values(report, name)
+        values, bounds, shares = _series_values(report, name)
         cells = []
-        for value in values:
-            cells.append("<td>—</td>" if value is None else f"<td>{value:.3f}</td>")
+        for value, share in zip(values, shares):
+            if value is None:
+                cells.append("<td>—</td>")
+                continue
+            share_text = "—" if share is None else f"{share:.1f}%"
+            cells.append(f"<td>{value:.3f}<div class='share'>{share_text}</div></td>")
         changes = bound_transitions(
             [item for item in zip(batches, bounds, values) if item[2] is not None],
             lambda item: item[1],
@@ -696,7 +771,7 @@ def _top_latency_table(report: LatencyReport) -> str:
             + "</td></tr>"
         )
     return (
-        "<table class='ops'><thead><tr>"
+        "<table class='ops'><caption>上面是毫秒，下面是占整网调度时间的比例。</caption><thead><tr>"
         + header
         + "</tr></thead><tbody>"
         + "".join(rows)
@@ -773,6 +848,13 @@ h2{font-size:1.25rem;margin:1.4rem 0 .4rem}
 h3{font-size:1rem;margin:.8rem 0 .2rem}
 .meta,.note{color:#5e584f}
 .summary{background:#fffcf7;border:1px solid #e3ddd2;border-radius:10px;padding:.8rem 1rem}
+.readout{position:sticky;top:0;z-index:2;background:#1c1915;color:#fffcf7;border-radius:10px;padding:.55rem .8rem}
+.point{cursor:pointer}
+.point .hit{fill:transparent}
+.point.on .dot{stroke:#1c1915;stroke-width:2.5}
+.share{color:#5e584f;font:11px/1.3 ui-sans-serif,system-ui,sans-serif}
+caption{caption-side:bottom;text-align:left;color:#5e584f;
+font:12px/1.4 ui-sans-serif,system-ui,sans-serif;padding-top:.3rem}
 .legend{display:flex;flex-wrap:wrap;gap:.8rem 1.2rem;padding:.4rem 1.2rem 1rem}
 .tags{display:flex;flex-wrap:wrap;gap:.45rem;margin:.2rem 0 .8rem}
 .tag{display:inline-flex;align-items:center;gap:.35rem;border:1px solid #e3ddd2;background:#fffcf7;
@@ -810,4 +892,16 @@ function selectOp(name){
   tags.forEach(btn=>btn.classList.toggle('on', btn.dataset.op===name));
 }
 tags.forEach(btn=>btn.addEventListener('click',()=>selectOp(btn.dataset.op)));
+const readout=document.getElementById('point-readout');
+function showPoint(el){
+  document.querySelectorAll('.point.on').forEach(node=>node.classList.remove('on'));
+  el.classList.add('on');
+  if(readout) readout.textContent=el.dataset.tip || '';
+}
+document.querySelectorAll('.point').forEach(el=>{
+  el.addEventListener('click',event=>{event.stopPropagation(); showPoint(el);});
+  el.addEventListener('keydown',event=>{
+    if(event.key==='Enter' || event.key===' '){event.preventDefault(); showPoint(el);}
+  });
+});
 """
