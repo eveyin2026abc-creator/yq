@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-25",
+  "today": "2026-11-25",
+  "runs": [
+    {
+      "log": "nightly-26.3.0-20261125-0927.log",
+      "label": "26.3.0",
+      "branch": "26.3.0",
+      "date": "2026-11-25",
+      "started": "2026-11-25 09:27",
+      "exit_code": 0,
+      "passed": 12034,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3409,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.8
+      },
+      "failures": [],
+      "commit": "f68c3ac4",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    }
+  ]
+}
