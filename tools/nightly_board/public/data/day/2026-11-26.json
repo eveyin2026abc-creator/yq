@@ -24,6 +24,29 @@
       "issue_numbers": [],
       "issues": [],
       "loop": "未建 issue"
+    },
+    {
+      "log": "nightly-26.3.0-20261126-0600.log",
+      "label": "26.3.0",
+      "branch": "26.3.0",
+      "date": "2026-11-26",
+      "started": "2026-11-26 06:00",
+      "exit_code": 0,
+      "passed": 12034,
+      "failed": 0,
+      "errors": 0,
+      "duration_sec": 3507,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 76.8
+      },
+      "failures": [],
+      "commit": "c1c9ed0c",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
     }
   ]
 }

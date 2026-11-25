@@ -27,9 +27,14 @@
           "branch": "master",
           "status": "pass",
           "failed": 0
+        },
+        {
+          "branch": "26.3.0",
+          "status": "pass",
+          "failed": 0
         }
       ],
-      "runs": 1,
+      "runs": 2,
       "failed": 0
     }
   }
