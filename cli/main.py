@@ -68,6 +68,10 @@ def _handle_inference_command(
         from cli.inference.image_generate import main as image_generate_main
 
         return _dispatch(image_generate_main, remaining)
+    if args.inference_command == "latency-trend":
+        from cli.inference.latency_trend import main as latency_trend_main
+
+        return _dispatch(latency_trend_main, remaining)
     if args.inference_command is None:
         inference_parser.print_help()
         return 0
@@ -92,6 +96,8 @@ def main() -> int:
             "msmodeling inference video-generate MODEL --batch-size 1 --seq-len 512\n"
             "# Image generate\n"
             "msmodeling inference image-generate MODEL --batch-size 1\n"
+            "# Batch-size latency and bound trend\n"
+            "msmodeling inference latency-trend MODEL --phase decode --batch-sizes 1,2,4,8,16\n"
             "# OptiX service parameter optimizer\n"
             "msmodeling optix -e vllm -b ais_bench"
         ),
@@ -112,7 +118,9 @@ def main() -> int:
             "msmodeling inference throughput-optimizer MODEL --device DEV --num-devices 8 "
             "--input-length 1024 --output-length 512\n"
             "# Image generate\n"
-            "msmodeling inference image-generate MODEL --batch-size 1"
+            "msmodeling inference image-generate MODEL --batch-size 1\n"
+            "# Batch-size latency and bound trend\n"
+            "msmodeling inference latency-trend MODEL --phase decode --batch-sizes 1,2,4,8,16"
         ),
     )
     add_version_option(inference_parser)
@@ -135,6 +143,11 @@ def main() -> int:
     inference_sub.add_parser(
         "image-generate",
         help="Run a simulated image generation pass",
+        add_help=False,
+    )
+    inference_sub.add_parser(
+        "latency-trend",
+        help="Plot latency versus batch size and annotate memory or compute bound",
         add_help=False,
     )
 

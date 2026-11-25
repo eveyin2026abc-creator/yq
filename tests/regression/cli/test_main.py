@@ -76,6 +76,7 @@ def test_handle_inference_command_rejects_unknown_subcommand(
         ("model-adapter", "cli.inference.model_adapter.main", ["--help"]),
         ("video-generate", "cli.inference.video_generate.main", ["MODEL", "--help"]),
         ("image-generate", "cli.inference.image_generate.main", ["MODEL", "--help"]),
+        ("latency-trend", "cli.inference.latency_trend.main", ["MODEL", "--help"]),
     ],
 )
 def test_handle_inference_command_dispatches_registered_subcommands(
