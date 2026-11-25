@@ -157,6 +157,11 @@
       "commit": "f68c3ac4",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261125-1009.log": {
+      "commit": "f2f2acc2",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }

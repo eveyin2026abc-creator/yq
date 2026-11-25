@@ -3,6 +3,38 @@
   "today": "2026-11-25",
   "runs": [
     {
+      "log": "nightly-master-20261125-1009.log",
+      "label": "master",
+      "branch": "master",
+      "date": "2026-11-25",
+      "started": "2026-11-25 10:09",
+      "exit_code": 1,
+      "passed": 12266,
+      "failed": 1,
+      "errors": 0,
+      "duration_sec": 3434,
+      "coverage": {
+        "gate": "passed",
+        "line": 85.0,
+        "branch": 77.0
+      },
+      "failures": [
+        {
+          "node_id": "tests/regression/serving_cast/test_service/test_parallel_runnner.py::test_runner_without_args_preserves_build_error_policy[unsupported_pp-2]",
+          "status": "Not reproduced",
+          "commit": "",
+          "author": "",
+          "subject": "",
+          "error": "AssertionError: assert 'example/model' in ''"
+        }
+      ],
+      "commit": "f2f2acc2",
+      "ci_miss_reason": "",
+      "issue_numbers": [],
+      "issues": [],
+      "loop": "未建 issue"
+    },
+    {
       "log": "nightly-26.3.0-20261125-0927.log",
       "label": "26.3.0",
       "branch": "26.3.0",

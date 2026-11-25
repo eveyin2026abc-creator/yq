@@ -4,16 +4,21 @@
   "today": "2026-11-25",
   "days": {
     "2026-11-25": {
-      "status": "pass",
+      "status": "fail",
       "branches": [
+        {
+          "branch": "master",
+          "status": "fail",
+          "failed": 1
+        },
         {
           "branch": "26.3.0",
           "status": "pass",
           "failed": 0
         }
       ],
-      "runs": 1,
-      "failed": 0
+      "runs": 2,
+      "failed": 1
     }
   }
 }
