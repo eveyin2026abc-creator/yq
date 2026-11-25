@@ -339,17 +339,16 @@ def render_html(report: LatencyReport) -> str:
         _network_table(report),
         "</section>",
         "<section><h2>Top " + str(len(top)) + " 算子时延趋势</h2>",
-        "<p class='note'>同一坐标上的曲线是各算子在每个 batch 的 analytic 时间。圆点颜色是该点的主导 bound，"
-        "和曲线本身的颜色无关。</p>",
+        "<p class='note'>点一个算子标签只看它自己的曲线，纵轴按这条曲线缩放，底色是它的主导 bound。再点「全部」回到对比。</p>",
+        _operator_tags(top),
         _top_trend_chart(report),
-        _top_latency_table(report),
         "<h3>单个算子</h3>",
-        "<div class='grid'>",
+        "<div class='grid' id='op-cards'>",
     ]
     for name in top:
         series = _operator_series(report.points, name)
         caption = describe_bounds(series, lambda sample: sample.bound, name)
-        body.append("<article class='card'>")
+        body.append(f"<article class='card op-card' data-op='{html.escape(name, quote=True)}'>")
         body.append("<h3>" + html.escape(name) + "</h3>")
         body.append("<p class='note'>" + html.escape(caption) + "</p>")
         body.append(
@@ -363,7 +362,9 @@ def render_html(report: LatencyReport) -> str:
             )
         )
         body.append("</article>")
-    body.append("</div></section>")
+    body.append("</div>")
+    body.append(_top_latency_table(report))
+    body.append("</section>")
     payload = json.dumps(report_payload(report), ensure_ascii=False)
     return (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
@@ -372,7 +373,9 @@ def render_html(report: LatencyReport) -> str:
         + _STYLE
         + "</style></head><body>"
         + "".join(body)
-        + "<script type='application/json' id='report-data'>"
+        + "<script>"
+        + _FILTER_SCRIPT
+        + "</script><script type='application/json' id='report-data'>"
         + payload.replace("<", "\\u003c")
         + "</script></body></html>\n"
     )
@@ -454,6 +457,17 @@ def report_from_payload(payload: Mapping[str, Any]) -> LatencyReport:
         points=points,
         top_k=len(payload.get("top_operators") or []) or 10,
     )
+
+
+def _operator_tags(names: Sequence[str]) -> str:
+    buttons = ["<button type='button' class='tag on' data-op='*'>全部</button>"]
+    for index, name in enumerate(names):
+        color = SERIES_COLORS[index % len(SERIES_COLORS)]
+        buttons.append(
+            f"<button type='button' class='tag' data-op='{html.escape(name, quote=True)}'>"
+            f"<i style='background:{color}'></i>{html.escape(name)}</button>"
+        )
+    return "<div class='tags' id='op-tags'>" + "".join(buttons) + "</div>"
 
 
 def _legend() -> str:
@@ -608,7 +622,6 @@ def _top_trend_chart(report: LatencyReport) -> str:
         parts.append(
             f"<text x='{x_at(index):.1f}' y='{height - 12}' text-anchor='middle' class='tick'>{batch}</text>"
         )
-    legend = []
     for series_index, (name, values, bounds) in enumerate(prepared):
         color = SERIES_COLORS[series_index % len(SERIES_COLORS)]
         segment: list[str] = []
@@ -617,7 +630,7 @@ def _top_trend_chart(report: LatencyReport) -> str:
         for index, value in enumerate(values):
             if value is None:
                 if len(segment) > 1:
-                    parts.append(
+                    dots.append(
                         f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>"
                     )
                 segment = []
@@ -638,18 +651,16 @@ def _top_trend_chart(report: LatencyReport) -> str:
                 f"stroke='{color}' stroke-width='1.5'><title>{html.escape(label)}</title></circle>"
             )
         if len(segment) > 1:
-            parts.append(f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>")
-        parts.extend(dots)
-        legend.append(
-            f"<span><i style='background:{color}'></i>{html.escape(name)}</span>"
+            dots.insert(0, f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>")
+        parts.append(
+            f"<g class='op-series' data-op='{html.escape(name, quote=True)}'>" + "".join(dots) + "</g>"
         )
     parts.append(f"<text x='{pad_l}' y='12' class='axis'>ms</text>")
     return (
-        f"<svg viewBox='0 0 {width} {height}' role='img' aria-label='top operator latency trends'>"
+        "<div id='op-compare'><svg viewBox='0 0 "
+        + f"{width} {height}' role='img' aria-label='top operator latency trends'>"
         + "".join(parts)
-        + "</svg><div class='legend series'>"
-        + "".join(legend)
-        + "</div>"
+        + "</svg></div>"
     )
 
 
@@ -674,7 +685,9 @@ def _top_latency_table(report: LatencyReport) -> str:
             for change in changes
         )
         rows.append(
-            "<tr><td class='op'>"
+            "<tr class='op-row' data-op='"
+            + html.escape(name, quote=True)
+            + "'><td class='op'>"
             + html.escape(name)
             + "</td>"
             + "".join(cells)
@@ -761,7 +774,13 @@ h3{font-size:1rem;margin:.8rem 0 .2rem}
 .meta,.note{color:#5e584f}
 .summary{background:#fffcf7;border:1px solid #e3ddd2;border-radius:10px;padding:.8rem 1rem}
 .legend{display:flex;flex-wrap:wrap;gap:.8rem 1.2rem;padding:.4rem 1.2rem 1rem}
-.legend.series{padding:.2rem 0 .8rem}
+.tags{display:flex;flex-wrap:wrap;gap:.45rem;margin:.2rem 0 .8rem}
+.tag{display:inline-flex;align-items:center;gap:.35rem;border:1px solid #e3ddd2;background:#fffcf7;
+color:#1c1915;border-radius:999px;padding:.28rem .7rem;font:13px/1.3 ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.tag i{width:.7rem;height:.7rem;border-radius:2px;display:inline-block}
+.tag.on{background:#1c1915;color:#fffcf7;border-color:#1c1915}
+.grid.solo{grid-template-columns:1fr}
+[hidden]{display:none !important}
 table.ops td.op,table.ops th:first-child{text-align:left}
 .legend span{display:inline-flex;align-items:center;gap:.4rem}
 .legend i{width:.85rem;height:.85rem;border-radius:2px;display:inline-block}
@@ -775,4 +794,20 @@ table{border-collapse:collapse;width:100%;background:#fffcf7;margin:.6rem 0 1rem
 th,td{text-align:right;padding:.35rem .5rem;border-bottom:1px solid #e3ddd2;font-variant-numeric:tabular-nums}
 th:nth-child(3),td:nth-child(3),th:last-child,td:last-child{text-align:left}
 th{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#5e584f;font-weight:600}
+"""
+
+_FILTER_SCRIPT = """
+const tags=document.querySelectorAll('#op-tags .tag');
+function selectOp(name){
+  const all=name==='*';
+  document.querySelectorAll('.op-series,.op-card,.op-row').forEach(el=>{
+    el.hidden=!all && el.dataset.op!==name;
+  });
+  const compare=document.getElementById('op-compare');
+  if(compare) compare.hidden=!all;
+  const cards=document.getElementById('op-cards');
+  if(cards) cards.classList.toggle('solo', !all);
+  tags.forEach(btn=>btn.classList.toggle('on', btn.dataset.op===name));
+}
+tags.forEach(btn=>btn.addEventListener('click',()=>selectOp(btn.dataset.op)));
 """

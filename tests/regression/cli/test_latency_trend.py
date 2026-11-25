@@ -87,6 +87,9 @@ def test_html_marks_the_bound_change_and_top_operators() -> None:
 
     assert "从 batch 8 起转为矩阵计算 compute" in page
     assert "算子时延趋势" in page
+    assert "id='op-tags'" in page
+    assert "data-op='*'" in page
+    assert "data-op='aten.mm'" in page
     assert page.count("<polyline") >= 3
     assert "aten.mm" in page
     assert "aten.add" in page
