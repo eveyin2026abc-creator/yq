@@ -57,6 +57,19 @@ BOUND_COLORS = {
     UNKNOWN_BOUND: "#8a8175",
 }
 
+SERIES_COLORS = (
+    "#1c1915",
+    "#0f6e8c",
+    "#c47b2b",
+    "#1d7a46",
+    "#6d5bd0",
+    "#8d2f2f",
+    "#3f7cac",
+    "#b85c38",
+    "#2f6f4e",
+    "#7a4e8a",
+)
+
 _COMPONENT_STATS = {
     "memory": "memory_access_time_s",
     "communication": "comm_time_s",
@@ -325,7 +338,12 @@ def render_html(report: LatencyReport) -> str:
         _mix_chart(batches, [point.classified for point in report.points]),
         _network_table(report),
         "</section>",
-        "<section><h2>Top " + str(len(top)) + " 算子</h2>",
+        "<section><h2>Top " + str(len(top)) + " 算子时延趋势</h2>",
+        "<p class='note'>同一坐标上的曲线是各算子在每个 batch 的 analytic 时间。圆点颜色是该点的主导 bound，"
+        "和曲线本身的颜色无关。</p>",
+        _top_trend_chart(report),
+        _top_latency_table(report),
+        "<h3>单个算子</h3>",
         "<div class='grid'>",
     ]
     for name in top:
@@ -382,6 +400,59 @@ def _meta_line(report: LatencyReport) -> str:
         f"{report.model_id} · {report.device} · {report.phase} · "
         f"query={report.query_length} context={report.context_length} · "
         f"TP={report.tp_size} · quant={report.quantize_linear} · {report.performance_model}"
+    )
+
+
+def _share_from_percent(percent: Mapping[str, float], scale: float) -> BoundShare:
+    weight = scale if scale > 0 else 1.0
+
+    def _part(key: str) -> float:
+        return float(percent.get(key, 0.0) or 0.0) / 100.0 * weight
+
+    return BoundShare(
+        memory_s=_part(MEMORY_BOUND),
+        communication_s=_part(COMMUNICATION_BOUND),
+        mma_s=_part(COMPUTE_BOUND_MMA),
+        gp_s=_part(COMPUTE_BOUND_GP),
+    )
+
+
+def report_from_payload(payload: Mapping[str, Any]) -> LatencyReport:
+    """Rebuild a report from the JSON written next to the HTML file."""
+    points = []
+    for raw_point in payload["points"]:
+        operators = []
+        for raw_operator in raw_point.get("operators", []):
+            latency_s = float(raw_operator["latency_ms"]) / 1e3
+            operators.append(
+                OperatorSample(
+                    name=raw_operator["name"],
+                    latency_s=latency_s,
+                    calls=int(raw_operator.get("calls", 0)),
+                    share=_share_from_percent(raw_operator.get("components_percent", {}), latency_s),
+                )
+            )
+        latency_s = float(raw_point["latency_ms"]) / 1e3
+        points.append(
+            SweepPoint(
+                batch_size=int(raw_point["batch_size"]),
+                latency_s=latency_s,
+                classified=_share_from_percent(raw_point.get("classified_percent", {}), latency_s),
+                components=_share_from_percent(raw_point.get("components_percent", {}), latency_s),
+                operators=tuple(operators),
+            )
+        )
+    return LatencyReport(
+        model_id=payload["model_id"],
+        device=payload["device"],
+        phase=payload["phase"],
+        query_length=int(payload["query_length"]),
+        context_length=int(payload["context_length"]),
+        tp_size=int(payload["tp_size"]),
+        quantize_linear=payload["quantize_linear"],
+        performance_model=payload["performance_model"],
+        points=points,
+        top_k=len(payload.get("top_operators") or []) or 10,
     )
 
 
@@ -487,6 +558,139 @@ def _latency_chart(
     )
 
 
+def _series_values(report: LatencyReport, name: str) -> tuple[list[Optional[float]], list[str]]:
+    values: list[Optional[float]] = []
+    bounds: list[str] = []
+    for point in report.points:
+        match = next((sample for sample in point.operators if sample.name == name), None)
+        if match is None:
+            values.append(None)
+            bounds.append(UNKNOWN_BOUND)
+        else:
+            values.append(match.latency_s * 1e3)
+            bounds.append(match.bound)
+    return values, bounds
+
+
+def _top_trend_chart(report: LatencyReport) -> str:
+    """One shared-axis chart of the top operators' latency versus batch size."""
+    names = report.top_operators()
+    batches = [point.batch_size for point in report.points]
+    if not names or not batches:
+        return "<p class='note'>没有算子数据。</p>"
+    width, height = 960, 420
+    pad_l, pad_r, pad_t, pad_b = 58, 16, 18, 36
+    plot_w = width - pad_l - pad_r
+    plot_h = height - pad_t - pad_b
+    prepared = [(name, *_series_values(report, name)) for name in names]
+    finite = [value for _name, values, _bounds in prepared for value in values if value is not None]
+    y_max = max(finite) * 1.12 if finite else 1.0
+    if y_max <= 0:
+        y_max = 1.0
+
+    def x_at(index: int) -> float:
+        if len(batches) == 1:
+            return pad_l + plot_w / 2
+        return pad_l + plot_w * index / (len(batches) - 1)
+
+    def y_at(value: float) -> float:
+        return pad_t + plot_h * (1 - value / y_max)
+
+    parts = []
+    for step in range(4):
+        value = y_max * step / 3
+        y = y_at(value)
+        parts.append(
+            f"<line x1='{pad_l}' y1='{y:.1f}' x2='{width - pad_r}' y2='{y:.1f}' stroke='#e4ddd2'/>"
+            f"<text x='{pad_l - 8}' y='{y + 4:.1f}' text-anchor='end' class='tick'>{value:.3g}</text>"
+        )
+    for index, batch in enumerate(batches):
+        parts.append(
+            f"<text x='{x_at(index):.1f}' y='{height - 12}' text-anchor='middle' class='tick'>{batch}</text>"
+        )
+    legend = []
+    for series_index, (name, values, bounds) in enumerate(prepared):
+        color = SERIES_COLORS[series_index % len(SERIES_COLORS)]
+        segment: list[str] = []
+        dots: list[str] = []
+        previous = None
+        for index, value in enumerate(values):
+            if value is None:
+                if len(segment) > 1:
+                    parts.append(
+                        f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>"
+                    )
+                segment = []
+                previous = None
+                continue
+            x = x_at(index)
+            y = y_at(value)
+            segment.append(f"{x:.1f},{y:.1f}")
+            bound = bounds[index]
+            change = ""
+            if previous is not None and previous != bound:
+                change = f" · {BOUND_LABELS.get(previous, previous)} → {BOUND_LABELS.get(bound, bound)}"
+            previous = bound
+            label = f"{name} batch {batches[index]}: {value:.3f} ms · {BOUND_LABELS.get(bound, bound)}{change}"
+            radius = 5 if change else 3.5
+            dots.append(
+                f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{radius}' fill='{BOUND_COLORS.get(bound, color)}' "
+                f"stroke='{color}' stroke-width='1.5'><title>{html.escape(label)}</title></circle>"
+            )
+        if len(segment) > 1:
+            parts.append(f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(segment)}'/>")
+        parts.extend(dots)
+        legend.append(
+            f"<span><i style='background:{color}'></i>{html.escape(name)}</span>"
+        )
+    parts.append(f"<text x='{pad_l}' y='12' class='axis'>ms</text>")
+    return (
+        f"<svg viewBox='0 0 {width} {height}' role='img' aria-label='top operator latency trends'>"
+        + "".join(parts)
+        + "</svg><div class='legend series'>"
+        + "".join(legend)
+        + "</div>"
+    )
+
+
+def _top_latency_table(report: LatencyReport) -> str:
+    names = report.top_operators()
+    batches = [point.batch_size for point in report.points]
+    header = "<th>算子</th>" + "".join(f"<th>{batch}</th>" for batch in batches) + "<th>bound 变化</th>"
+    rows = []
+    for name in names:
+        values, bounds = _series_values(report, name)
+        cells = []
+        for value in values:
+            cells.append("<td>—</td>" if value is None else f"<td>{value:.3f}</td>")
+        changes = bound_transitions(
+            [item for item in zip(batches, bounds, values) if item[2] is not None],
+            lambda item: item[1],
+            lambda item: item[0],
+        )
+        change_text = "；".join(
+            f"batch {change.batch_size}: {BOUND_LABELS.get(change.previous, change.previous)} → "
+            f"{BOUND_LABELS.get(change.current, change.current)}"
+            for change in changes
+        )
+        rows.append(
+            "<tr><td class='op'>"
+            + html.escape(name)
+            + "</td>"
+            + "".join(cells)
+            + "<td>"
+            + html.escape(change_text)
+            + "</td></tr>"
+        )
+    return (
+        "<table class='ops'><thead><tr>"
+        + header
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
 def _mix_chart(batches: Sequence[int], shares: Sequence[BoundShare]) -> str:
     if not batches:
         return ""
@@ -557,6 +761,8 @@ h3{font-size:1rem;margin:.8rem 0 .2rem}
 .meta,.note{color:#5e584f}
 .summary{background:#fffcf7;border:1px solid #e3ddd2;border-radius:10px;padding:.8rem 1rem}
 .legend{display:flex;flex-wrap:wrap;gap:.8rem 1.2rem;padding:.4rem 1.2rem 1rem}
+.legend.series{padding:.2rem 0 .8rem}
+table.ops td.op,table.ops th:first-child{text-align:left}
 .legend span{display:inline-flex;align-items:center;gap:.4rem}
 .legend i{width:.85rem;height:.85rem;border-radius:2px;display:inline-block}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:.8rem}

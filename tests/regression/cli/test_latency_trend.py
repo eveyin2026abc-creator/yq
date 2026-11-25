@@ -86,6 +86,8 @@ def test_html_marks_the_bound_change_and_top_operators() -> None:
     page = render_html(_report())
 
     assert "从 batch 8 起转为矩阵计算 compute" in page
+    assert "算子时延趋势" in page
+    assert page.count("<polyline") >= 3
     assert "aten.mm" in page
     assert "aten.add" in page
     assert "memory →" not in page or "访存 memory → 矩阵计算 compute" in page
