@@ -162,6 +162,11 @@
       "commit": "f2f2acc2",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261126-0400.log": {
+      "commit": "afdacd45",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
