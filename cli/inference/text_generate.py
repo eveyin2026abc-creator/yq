@@ -81,7 +81,73 @@ def arg_parse(argv=None):
             result = validate_plugin(plugin_path)
             if not result:
                 parser.error(f"--fusion-plugin {plugin_path}: validation failed at {result.layer}: {result.detail}")
+    _normalize_num_queries(args, parser)
     return args
+
+
+def _normalize_num_queries(args, parser) -> None:
+    """Keep ``num_queries`` as one integer and remember a multi-batch sweep."""
+    raw = args.num_queries
+    sizes = [int(item) for item in raw] if isinstance(raw, list) else [int(raw)]
+    args.num_query_sweep = sizes
+    args.num_queries = sizes[0]
+    if len(sizes) > 1 and not getattr(args, "html_file", None):
+        parser.error("--num-queries has more than one batch; pass --html-file FILE")
+    if getattr(args, "html_port", None) and not getattr(args, "html_file", None):
+        parser.error("--html-port requires --html-file")
+
+
+def _scoped_output_path(path: str | None, batch_size: int, multiple: bool) -> str | None:
+    """Keep one output path for a single run, and split files when several batches run."""
+    if path is None or not multiple:
+        return path
+    from pathlib import Path
+
+    file = Path(path)
+    return str(file.with_name(f"{file.stem}.batch{batch_size}{file.suffix}"))
+
+
+def _html_server(directory, host: str, port: int):
+    """Serve one report directory. The caller decides how long it stays up."""
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(directory))
+    try:
+        return ThreadingHTTPServer((host, int(port)), handler)
+    except OSError as exc:
+        raise SystemExit(f"Cannot listen on {host}:{port}: {exc}") from exc
+
+
+def _serve_html_directory(directory, host: str, port: int, filename: str) -> None:
+    """Serve ``directory`` until interrupted. The report URL uses ``filename``."""
+    httpd = _html_server(directory, host, port)
+    bound_host, bound_port = httpd.server_address[:2]
+    shown_host = host if host != "0.0.0.0" else bound_host
+    print(f"Serving {directory} at http://{shown_host}:{bound_port}/{filename}")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("Stopped HTML server")
+    finally:
+        httpd.server_close()
+
+
+def _export_empirical_metrics(model_runner, path: str | None) -> None:
+    """Write the existing profiling metrics JSON. An empty path exports nothing."""
+    if not path:
+        return
+    from pathlib import Path
+
+    from tensor_cast.performance_model.empirical import EmpiricalPerformanceModel
+    from tensor_cast.performance_model.metrics_collector import MetricsCollector
+
+    for pm in model_runner.perf_models:
+        if isinstance(pm, EmpiricalPerformanceModel):
+            collector = MetricsCollector()
+            collector.collect_from_records(pm.op_records)
+            collector.export_hit_miss_report(output_path=Path(path))
+            return
 
 
 def align_decode_query_length(args, logger=None) -> None:
@@ -112,6 +178,30 @@ def align_decode_query_length(args, logger=None) -> None:
     args.query_length = decode_query_len
 
 
+def format_text_generate_command(arguments: list[str]) -> str:
+    """Render the public text-generate command, one flag group per line."""
+    import shlex
+
+    quoted = [shlex.quote(arg) for arg in arguments]
+    if not quoted:
+        return "msmodeling inference text-generate"
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for token in quoted[1:]:
+        if token.startswith("--") and current:
+            groups.append(current)
+            current = [token]
+        else:
+            current.append(token)
+    if current:
+        groups.append(current)
+    lines = [f"msmodeling inference text-generate {quoted[0]}"]
+    for group in groups:
+        lines[-1] += " \\"
+        lines.append("  " + " ".join(group))
+    return "\n".join(lines)
+
+
 def main():
     """
     Main function to parse arguments and run the inference simulation.
@@ -121,6 +211,10 @@ def main():
     module only holds the post-parse business logic.
     """
     args = arg_parse()
+    command = format_text_generate_command(sys.argv[1:])
+    if getattr(args, "html_file", None):
+        print(command)
+        print()
     print_logo()
     configure_std_logging(args, log_format=LOG_FORMAT)
     logger = logging.getLogger(__name__)
@@ -170,25 +264,49 @@ def main():
         )
     logger.info("ModelRunner initialization completed: %s", model_runner)
 
+    sweep = [int(size) for size in (getattr(args, "num_query_sweep", None) or [args.num_queries])]
+    html_file = getattr(args, "html_file", None)
+    if html_file:
+        from tools.latency_trend.cli import write_report
+        from tools.latency_trend.report import report_payload
+        from tools.latency_trend.sweep import sweep_loaded_runner
+
+        # HTML is an extra report. The metrics table still prints, and existing
+        # file outputs keep their own flags. Several batches must not overwrite
+        # one chrome trace or one empirical JSON, so those paths gain a batch suffix.
+        multiple = len(sweep) > 1
+        original_trace = getattr(user_input, "chrome_trace", None)
+
+        def _before_batch(batch_size: int) -> None:
+            user_input.chrome_trace = _scoped_output_path(original_trace, batch_size, multiple)
+
+        def _after_batch(batch_size: int, _metrics) -> None:
+            empirical_path = _scoped_output_path(args.export_empirical_metrics_file, batch_size, multiple)
+            _export_empirical_metrics(model_runner, empirical_path)
+
+        logger.info("Running latency trend for batches %s", " ".join(str(size) for size in sweep))
+        report = sweep_loaded_runner(
+            model_runner,
+            user_input,
+            sweep,
+            show_metrics=True,
+            before_batch=_before_batch,
+            after_batch=_after_batch,
+        )
+        user_input.chrome_trace = original_trace
+        report.command = command
+        html_path, json_path = write_report(report, html_file)
+        print(f"Wrote {html_path}")
+        print(f"Wrote {json_path}")
+        print(report_payload(report)["network_summary"])
+        if getattr(args, "html_port", None):
+            _serve_html_directory(html_path.parent, args.html_bind, args.html_port, html_path.name)
+        return 0
+
     logger.info("Running inference...")
     metrics = model_runner.run_inference(generate_inputs_func=generate_inputs)
     metrics.print_info()
-
-    # Export metrics JSON for offline M6 computation
-    if args.export_empirical_metrics_file:
-        from pathlib import Path
-
-        from tensor_cast.performance_model.empirical import EmpiricalPerformanceModel
-        from tensor_cast.performance_model.metrics_collector import MetricsCollector
-
-        for pm in model_runner.perf_models:
-            if isinstance(pm, EmpiricalPerformanceModel):
-                collector = MetricsCollector()
-                collector.collect_from_records(pm.op_records)
-                collector.export_hit_miss_report(
-                    output_path=Path(args.export_empirical_metrics_file),
-                )
-                break
+    _export_empirical_metrics(model_runner, args.export_empirical_metrics_file)
 
 
 if __name__ == "__main__":

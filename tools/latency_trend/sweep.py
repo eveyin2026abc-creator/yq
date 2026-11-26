@@ -78,7 +78,96 @@ def point_from_runtime(
         latency_s=execution_time_s,
         classified=_classified_share(breakdowns, model_name),
         components=_component_share(events, model_name),
-        operators=aggregate_operators(events, model_name),
+        operators=aggregate_operators(events, model_name, batch_size),
+    )
+
+
+def sweep_loaded_runner(
+    runner,
+    user_input,
+    batch_sizes: Sequence[int],
+    *,
+    top_k: int = 10,
+    show_metrics: bool = False,
+    before_batch=None,
+    after_batch=None,
+) -> LatencyReport:
+    """Resimulate ``batch_sizes`` on a runner already built by text-generate."""
+    from tensor_cast.core.input_generator import generate_inputs
+
+    sizes = [int(size) for size in batch_sizes]
+    if not sizes or any(size < 1 for size in sizes):
+        raise ValueError("batch_sizes must be positive integers")
+
+    points: list[SweepPoint] = []
+    model_name = "analytic"
+    for batch_size in sizes:
+        user_input.num_queries = batch_size
+        if before_batch is not None:
+            before_batch(batch_size)
+        runner.request_info_default = [user_input.get_request_info()]
+        captured: dict[str, Any] = {}
+
+        def _observe(runtime, captured=captured):
+            captured["runtime"] = runtime
+
+        logger.info("Simulating batch_size=%s", batch_size)
+        try:
+            metrics = runner.run_inference(generate_inputs_func=generate_inputs, runtime_observer=_observe)
+        except Exception as exc:
+            logger.warning("batch %s failed: %s", batch_size, exc)
+            points.append(
+                SweepPoint(
+                    batch_size=batch_size,
+                    latency_s=None,
+                    classified=BoundShare(),
+                    components=BoundShare(),
+                    oom=True,
+                )
+            )
+            break
+        if show_metrics:
+            metrics.print_info()
+        if after_batch is not None:
+            after_batch(batch_size, metrics)
+        runtime = captured.get("runtime")
+        if runtime is None:
+            raise RuntimeError(f"batch {batch_size} finished without a runtime")
+        model_name = metrics.perf_model_name or model_name
+        latency_s = float(metrics.execution_time_s.get(model_name, 0.0))
+        available = float(getattr(metrics, "device_memory_available_gb", 0.0))
+        point = point_from_runtime(
+            batch_size,
+            latency_s,
+            metrics.breakdowns,
+            runtime.event_list,
+            model_name,
+        )
+        point.memory_available_gb = available
+        point.oom = available < 0
+        logger.info(
+            "batch %s latency %.4f ms bound %s available %.3f GB oom %s",
+            batch_size,
+            latency_s * 1e3,
+            point.bound,
+            available,
+            point.oom,
+        )
+        points.append(point)
+
+    quantize = getattr(user_input, "quantize_linear_action", "DISABLED")
+    quantize_name = getattr(quantize, "name", None) or str(quantize)
+    return LatencyReport(
+        model_id=str(user_input.model_id),
+        device=str(user_input.device),
+        phase="decode" if getattr(user_input, "decode", False) else "prefill",
+        query_length=int(user_input.query_len),
+        context_length=int(user_input.context_length),
+        tp_size=int(getattr(user_input, "tp_size", 1) or 1),
+        quantize_linear=quantize_name,
+        performance_model=model_name,
+        points=points,
+        top_k=top_k,
     )
 
 
@@ -91,7 +180,6 @@ def run_sweep(config: SweepConfig) -> LatencyReport:
         raise ValueError("batch_sizes must be positive integers")
 
     import tensor_cast.device_profiles  # noqa: F401  (registers built-in profiles)
-    from tensor_cast.core.input_generator import generate_inputs
     from tensor_cast.core.model_runner import ModelRunner
     from tensor_cast.core.quantization.datatypes import QuantizeLinearAction
     from tensor_cast.core.user_config import UserInputConfig
@@ -113,41 +201,4 @@ def run_sweep(config: SweepConfig) -> LatencyReport:
     )
     logger.info("Building %s once for %d batch sizes", user_input.model_id, len(batch_sizes))
     runner = ModelRunner(user_input)
-    points: list[SweepPoint] = []
-    for batch_size in batch_sizes:
-        user_input.num_queries = batch_size
-        runner.request_info_default = [user_input.get_request_info()]
-        captured: dict[str, Any] = {}
-
-        def _observe(runtime, captured=captured):
-            captured["runtime"] = runtime
-
-        logger.info("Simulating batch_size=%s", batch_size)
-        metrics = runner.run_inference(generate_inputs_func=generate_inputs, runtime_observer=_observe)
-        runtime = captured.get("runtime")
-        if runtime is None:
-            raise RuntimeError(f"batch {batch_size} finished without a runtime")
-        model_name = metrics.perf_model_name or config.performance_model
-        latency_s = float(metrics.execution_time_s.get(model_name, 0.0))
-        point = point_from_runtime(
-            batch_size,
-            latency_s,
-            metrics.breakdowns,
-            runtime.event_list,
-            model_name,
-        )
-        logger.info("batch %s latency %.4f ms bound %s", batch_size, latency_s * 1e3, point.bound)
-        points.append(point)
-
-    return LatencyReport(
-        model_id=user_input.model_id,
-        device=config.device,
-        phase=config.phase,
-        query_length=config.query_length,
-        context_length=config.context_length,
-        tp_size=config.tp_size,
-        quantize_linear=config.quantize_linear,
-        performance_model=config.performance_model,
-        points=points,
-        top_k=config.top_k,
-    )
+    return sweep_loaded_runner(runner, user_input, batch_sizes, top_k=config.top_k)

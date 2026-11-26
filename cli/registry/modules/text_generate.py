@@ -30,11 +30,16 @@ from cli.registry.datatypes import ModuleSpec, Param, ValidatorRef
 NUM_QUERIES = Param(
     name="num-queries",
     data_type="integer",
+    nargs="+",
     required=True,
     min=1,
     group="Request",
     cli_metavar="<N>",
-    cli_help="Number of parallel inference queries to execute in a single batch.",
+    cli_help=(
+        "Batch size: number of parallel queries. Pass one integer for a single run, "
+        "or several integers such as 1 2 4 8 to simulate each batch. "
+        "Several batches require --html-file."
+    ),
 )
 
 QUERY_LENGTH = Param(
@@ -157,6 +162,44 @@ DUMP_OP_BOUND_RESULTS = Param(
     cli_action="store_true",
     group="Debug",
     cli_help="Dump per-operator memory/communication/MMA/GP bound ratios. [default: off]",
+)
+
+HTML_FILE = Param(
+    name="html-file",
+    data_type="string",
+    default=None,
+    group="Debug",
+    cli_metavar="<FILE>",
+    cli_help=(
+        "Write an HTML latency and bound report for the batches in --num-queries. "
+        "Required when more than one batch is given. "
+        "Leaves the metrics table, --dump-op-bound-results, --chrome-trace-file, "
+        "and --export-empirical-metrics-file unchanged. With several batches, "
+        "those files are written once per batch as name.batchN.ext."
+    ),
+)
+
+HTML_PORT = Param(
+    name="html-port",
+    data_type="integer",
+    default=None,
+    min=1,
+    max=65535,
+    group="Debug",
+    cli_metavar="<PORT>",
+    cli_help=(
+        "After writing --html-file, serve that file's directory on this port until interrupted. "
+        "Requires --html-file. Bind address defaults to 127.0.0.1."
+    ),
+)
+
+HTML_BIND = Param(
+    name="html-bind",
+    data_type="string",
+    default="127.0.0.1",
+    group="Debug",
+    cli_metavar="<ADDR>",
+    cli_help="Listen address for --html-port. [default: 127.0.0.1]",
 )
 
 NUM_HIDDEN_LAYERS_OVERRIDE = Param(
@@ -404,9 +447,17 @@ SPEC = ModuleSpec(
         "# Prefill one query of 128 tokens\n"
         "msmodeling inference text-generate Qwen/Qwen3-32B --num-queries 1 --query-length 128 --device TEST_DEVICE\n"
         "# Decode with tensor parallel\n"
-        "msmodeling inference text-generate Qwen/Qwen3-32B --num-queries 8 --query-length 1 --context-length 4096 --decode --tp-size 8"
+        "msmodeling inference text-generate Qwen/Qwen3-32B --num-queries 8 --query-length 1 "
+        "--context-length 4096 --decode --tp-size 8\n"
+        "# Latency and bound trend across batch sizes\n"
+        "msmodeling inference text-generate Qwen/Qwen3-32B --num-queries 1 2 4 8 "
+        "--query-length 1 --context-length 4096 --decode --device TEST_DEVICE "
+        "--dump-op-bound-results --html-file latency-trend.html --html-port 8771"
     ),
-    cli_output_help="Metrics table on stdout. Optional chrome trace via --chrome-trace-file.",
+    cli_output_help=(
+        "Metrics table on stdout. Optional chrome trace via --chrome-trace-file. "
+        "Optional HTML latency trend via --html-file. Optional local preview via --html-port."
+    ),
     log_options=True,
     requires_model_id=True,
     fields=[
@@ -447,6 +498,9 @@ SPEC = ModuleSpec(
         GRAPH_LOG_URL,
         DUMP_INPUT_SHAPES,
         DUMP_OP_BOUND_RESULTS,
+        HTML_FILE,
+        HTML_PORT,
+        HTML_BIND,
         S.CHROME_TRACE,
         NUM_HIDDEN_LAYERS_OVERRIDE,
         # Parallelism Options
