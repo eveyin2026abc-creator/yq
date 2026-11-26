@@ -177,6 +177,11 @@
       "commit": "afdacd45",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-26.3.0-20261127-0600.log": {
+      "commit": "c1c9ed0c",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
