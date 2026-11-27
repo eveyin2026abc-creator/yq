@@ -15,6 +15,9 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent
 TRACKING_PATH = Path(os.environ.get("NIGHTLY_BOARD_TRACKING", ROOT / "tracking.json"))
 LOG_DIR = Path(os.environ.get("NIGHTLY_BOARD_LOG_DIR", "/tmp"))
+ARCHIVE_DIR = Path(
+    os.environ.get("NIGHTLY_BOARD_ARCHIVE", ROOT / "public" / "data" / "day")
+)
 LOG_NAME = re.compile(r"^nightly-(?P<label>.+)-(?P<ymd>\d{8})-(?P<hhmm>\d{4})\.log$")
 EXIT_RE = re.compile(
     r"Nightly exit=(\d+): passed=(\d+) failed=(\d+) errors=(\d+) duration=(\d+)s"
@@ -141,19 +144,50 @@ def parse_log(path: Path) -> dict | None:
     }
 
 
+def archive_dir() -> Path:
+    """Day snapshots already published. /tmp only keeps the latest logs."""
+    if ARCHIVE_DIR.is_dir():
+        return ARCHIVE_DIR
+    sibling = Path.home() / "nightly-board-publisher" / "tools" / "nightly_board" / "public" / "data" / "day"
+    return sibling
+
+
+def archived_runs() -> list[dict]:
+    directory = archive_dir()
+    if not directory.is_dir():
+        return []
+    runs = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for run in payload.get("runs") or []:
+            if isinstance(run, dict) and run.get("log") and run.get("date"):
+                runs.append(run)
+    return runs
+
+
 def load_runs() -> list[dict]:
     tracking = load_tracking()["runs"]
-    runs = []
+    by_log: dict[str, dict] = {}
+    for run in archived_runs():
+        by_log[str(run["log"])] = run
     for path in sorted(LOG_DIR.glob("nightly-*.log")):
         run = parse_log(path)
         if run is None:
             continue
+        previous = by_log.get(path.name) or {}
         extra = tracking.get(path.name) or {}
-        run["commit"] = extra.get("commit") or ""
-        run["ci_miss_reason"] = extra.get("ci_miss_reason") or ""
-        run["issue_numbers"] = [int(item) for item in extra.get("issues") or []]
-        runs.append(run)
-    return runs
+        run["commit"] = extra.get("commit") or previous.get("commit") or ""
+        run["ci_miss_reason"] = extra.get("ci_miss_reason") or previous.get("ci_miss_reason") or ""
+        numbers = extra.get("issues")
+        if numbers:
+            run["issue_numbers"] = [int(item) for item in numbers]
+        else:
+            run["issue_numbers"] = [int(item) for item in previous.get("issue_numbers") or []]
+        by_log[path.name] = run
+    return list(by_log.values())
 
 
 def issue_state(number: int) -> dict:

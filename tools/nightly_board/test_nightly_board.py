@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import json
+import tempfile
 import unittest
 import sys
 from pathlib import Path
@@ -31,6 +33,32 @@ class NightlyBoardTests(unittest.TestCase):
                 {"branch": "26.2.0", "status": "fail", "failed": 1},
             ],
         )
+
+    def test_archived_day_stays_when_its_log_is_gone(self):
+        archived = {
+            "date": "2026-11-13",
+            "runs": [{
+                "log": "nightly-master-20261113-0530.log",
+                "branch": "master",
+                "label": "master",
+                "date": "2026-11-13",
+                "started": "2026-11-13 05:30",
+                "exit_code": 1,
+                "failed": 1,
+                "errors": 0,
+                "issue_numbers": [648],
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            day = Path(tmp)
+            (day / "2026-11-13.json").write_text(json.dumps(archived), encoding="utf-8")
+            with mock.patch.object(server, "archive_dir", return_value=day), mock.patch.object(
+                server, "LOG_DIR", day / "missing-logs"
+            ):
+                runs = server.load_runs()
+        self.assertEqual([run["date"] for run in runs], ["2026-11-13"])
+        self.assertEqual(runs[0]["issue_numbers"], [648])
+        self.assertIn("2026-11-13", server.month_payload(2026, 11, runs)["days"])
 
     def test_log_label_is_the_branch_name(self):
         self.assertEqual(server.LOG_NAME.match("nightly-26.1.0-20261116-0530.log").group("label"), "26.1.0")
