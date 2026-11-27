@@ -182,6 +182,11 @@
       "commit": "c1c9ed0c",
       "issues": [],
       "ci_miss_reason": ""
+    },
+    "nightly-master-20261128-0400.log": {
+      "commit": "506047dc",
+      "issues": [],
+      "ci_miss_reason": ""
     }
   }
 }
