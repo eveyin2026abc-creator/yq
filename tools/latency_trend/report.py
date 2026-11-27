@@ -203,6 +203,7 @@ class LatencyReport:
         return bound_transitions(self.points, lambda point: point.bound)
 
     def top_operators(self) -> list[str]:
+        unify_matmul_curves(self.points)
         return select_top_operators(self.points, self.top_k)
 
 
@@ -301,6 +302,119 @@ def _canonicalize_attention_pieces(pieces: list[list[str]], batch_size: int) -> 
         _mark_batch_extent(dims, batch_size, scale_multiples=True)
 
 
+def _is_matmul(op_name: str) -> bool:
+    """Gemm whose latency is ``2 * M * K * N``. The second tensor is the weight."""
+    return "aten.mm" in op_name or "static_quant_linear" in op_name
+
+
+def _canonicalize_matmul_pieces(pieces: list[list[str]], batch_size: int) -> None:
+    """One curve per weight. ``M`` is the batch or ``batch * query`` token count.
+
+    Only the activation's leading dimension is rewritten. A weight such as
+    ``[5120, 25600]`` stays numeric even when 5120 is divisible by the batch.
+    """
+    if pieces:
+        _mark_batch_extent(pieces[0], batch_size, scale_multiples=True)
+
+
+def _matmul_weight_key(op_name: str, input_shapes: str) -> Optional[tuple]:
+    """Identity of a matmul without the token count M."""
+    if not _is_matmul(op_name):
+        return None
+    pieces = _split_shape_pieces(input_shapes)
+    if not pieces or not pieces[0]:
+        return None
+    tail = [tuple(dims) for dims in pieces]
+    tail[0] = tuple(tail[0][1:])
+    return (op_name, tuple(tail))
+
+
+def _resolved_matmul_m(label: str, batch_size: int) -> Optional[int]:
+    if label == "B":
+        return batch_size
+    if label.startswith("B*") and label[2:].isdigit():
+        return batch_size * int(label[2:])
+    if label.isdigit():
+        return int(label)
+    return None
+
+
+def _stable_matmul_token(observations: Sequence[tuple[int, str]]) -> str:
+    """One label for every batch of the same weight.
+
+    ``B`` and ``B*query`` cover dense decode and prefill. Expert routing loads
+    a token count that is not a multiple of the batch, so those stay one curve
+    under ``tokens`` for any model.
+    """
+    quotients = []
+    for batch_size, label in observations:
+        if label == "tokens":
+            return "tokens"
+        value = _resolved_matmul_m(label, batch_size)
+        if value is None or batch_size < 1 or value % batch_size != 0:
+            return "tokens"
+        quotients.append(value // batch_size)
+    if len(set(quotients)) != 1:
+        return "tokens"
+    quotient = quotients[0]
+    return "B" if quotient == 1 else f"B*{quotient}"
+
+
+def _replace_matmul_m(input_shapes: str, token: str) -> str:
+    pieces = _split_shape_pieces(input_shapes)
+    if not pieces or not pieces[0]:
+        return input_shapes
+    pieces[0][0] = token
+    return _join_shape_pieces(pieces)
+
+
+def unify_matmul_curves(points: Sequence[SweepPoint]) -> None:
+    """Join matmul calls that share a weight and differ only by token count."""
+    grouped: dict[tuple, list[tuple[SweepPoint, OperatorSample]]] = {}
+    for point in points:
+        for sample in point.operators:
+            op_name = sample.op_name or sample.name.split(" ", 1)[0]
+            key = _matmul_weight_key(op_name, sample.input_shapes)
+            if key is None:
+                continue
+            grouped.setdefault(key, []).append((point, sample))
+    if not grouped:
+        return
+    tokens = {
+        key: _stable_matmul_token(
+            [(point.batch_size, _split_shape_pieces(sample.input_shapes)[0][0]) for point, sample in rows]
+        )
+        for key, rows in grouped.items()
+    }
+    for point in points:
+        merged: dict[tuple, OperatorSample] = {}
+        order: list[tuple] = []
+        kept: list[OperatorSample] = []
+        for sample in point.operators:
+            op_name = sample.op_name or sample.name.split(" ", 1)[0]
+            key = _matmul_weight_key(op_name, sample.input_shapes)
+            if key is None:
+                kept.append(sample)
+                continue
+            shapes = _replace_matmul_m(sample.input_shapes, tokens[key])
+            name = operator_series_name(op_name, shapes)
+            current = merged.get(key)
+            if current is None:
+                sample.input_shapes = shapes
+                sample.name = name
+                sample.op_name = op_name
+                merged[key] = sample
+                order.append(key)
+                continue
+            calls = current.calls + sample.calls
+            total_s = current.total_s + sample.total_s
+            current.calls = calls
+            current.latency_s = total_s / calls if calls else 0.0
+            current.share = current.share.add(sample.share)
+        ordered = [*kept, *(merged[key] for key in order)]
+        point.operators = tuple(sorted(ordered, key=lambda item: (-item.total_s, item.name)))
+
+
 def canonical_input_shapes(input_shapes: str, batch_size: int, op_name: str = "") -> str:
     """Mark a leading dimension equal to this batch as B so the same op stays one curve."""
     if not input_shapes or batch_size < 1:
@@ -310,6 +424,8 @@ def canonical_input_shapes(input_shapes: str, batch_size: int, op_name: str = ""
         return input_shapes
     if "attention" in op_name:
         _canonicalize_attention_pieces(pieces, batch_size)
+    elif _is_matmul(op_name):
+        _canonicalize_matmul_pieces(pieces, batch_size)
     else:
         for dims in pieces:
             if dims and dims[0] == str(batch_size):
@@ -466,6 +582,8 @@ def render_html(report: LatencyReport, *, download_name: Optional[str] = None) -
         "<p class='note'>每条曲线代表同一算子、同一输入 shape 的 analytic avg；"
         "随 batch 变化的维度用 B 表示，其余维度相同才连成一条曲线。"
         "Attention 的 KV cache 容量和 query_start_loc 随 batch 分配，记为同一 shape。"
+        "Matmul 的 M 等于 batch 或 batch×query 时写成 B 或 B*query，同一块权重连成一条曲线。"
+        "专家分到的 token 数不是 batch 的整数倍时，仍按权重合并，M 记为 tokens。"
         "优先展示任一 batch 上占整网达到 10% 的算子；不足 10 个时，按 analytic total 补足。"
         "圆点中的“占整网”为该组 analytic total 与整网调度时间的比值；多流重叠时可超过 100%。</p>",
         "<div class='section-tools'><p id='point-readout' class='section-readout'>"

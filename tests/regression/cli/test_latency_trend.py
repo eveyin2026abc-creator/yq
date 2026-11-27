@@ -293,6 +293,78 @@ def test_attention_cache_capacity_stays_one_shape() -> None:
     assert "[B*512, 2048]" in prefill_small.operators[0].name
 
 
+def _matmul_events(batch: int, rows: int, weight: tuple[int, int]):
+    import torch
+
+    result = PerformanceModel.Result(0.004, {"mma_ops_time_s": 0.004, "compute_time_s": 0.004})
+    activation = torch.empty(rows, weight[0])
+    matrix = torch.empty(*weight)
+    return [
+        SimpleNamespace(
+            is_spill=False,
+            perf_results={"analytic": result},
+            op_invoke_info=SimpleNamespace(func="aten.mm.default", args=(activation, matrix)),
+        )
+    ]
+
+
+def test_prefill_matmul_keeps_one_curve_per_weight() -> None:
+    small = point_from_runtime(4, 0.02, {}, _matmul_events(4, 4 * 512, (5120, 25600)), "analytic")
+    large = point_from_runtime(32, 0.08, {}, _matmul_events(32, 32 * 512, (5120, 25600)), "analytic")
+    other = point_from_runtime(32, 0.08, {}, _matmul_events(32, 32 * 512, (5120, 8192)), "analytic")
+    decode = point_from_runtime(32, 0.02, {}, _matmul_events(32, 32, (1024, 3072)), "analytic")
+
+    expected = "aten.mm.default [B*512, 5120], [5120, 25600]"
+    assert small.operators[0].name == expected
+    assert large.operators[0].name == expected
+    assert other.operators[0].name == "aten.mm.default [B*512, 5120], [5120, 8192]"
+    assert decode.operators[0].name == "aten.mm.default [B, 1024], [1024, 3072]"
+
+
+def test_routed_matmul_merges_by_weight_for_any_model() -> None:
+    routed = [
+        point_from_runtime(1, 0.01, {}, _matmul_events(1, 1, (2048, 768)), "analytic"),
+        point_from_runtime(8, 0.02, {}, _matmul_events(8, 1, (2048, 768)), "analytic"),
+        point_from_runtime(128, 0.08, {}, _matmul_events(128, 8, (2048, 768)), "analytic"),
+    ]
+    dense = [
+        point_from_runtime(8, 0.01, {}, _matmul_events(8, 8, (1024, 3072)), "analytic"),
+        point_from_runtime(32, 0.04, {}, _matmul_events(32, 32, (1024, 3072)), "analytic"),
+    ]
+    other = point_from_runtime(128, 0.08, {}, _matmul_events(128, 8, (768, 2048)), "analytic")
+    routed[-1].operators = (*routed[-1].operators, *other.operators)
+
+    routed_report = LatencyReport(
+        model_id="moe",
+        device="TEST_DEVICE",
+        phase="decode",
+        query_length=1,
+        context_length=4096,
+        tp_size=1,
+        quantize_linear="DISABLED",
+        performance_model="analytic",
+        points=routed,
+    )
+    dense_report = LatencyReport(
+        model_id="dense",
+        device="TEST_DEVICE",
+        phase="decode",
+        query_length=1,
+        context_length=4096,
+        tp_size=1,
+        quantize_linear="DISABLED",
+        performance_model="analytic",
+        points=dense,
+    )
+
+    routed_name = "aten.mm.default [tokens, 2048], [2048, 768]"
+    down_name = "aten.mm.default [tokens, 768], [768, 2048]"
+    assert routed_name in routed_report.top_operators()
+    assert down_name in routed_report.top_operators()
+    assert {sample.name for point in routed for sample in point.operators} == {routed_name, down_name}
+    assert dense_report.top_operators() == ["aten.mm.default [B, 1024], [1024, 3072]"]
+
+
 def test_point_from_runtime_sums_operator_components() -> None:
     memory = PerformanceModel.Result(0.002, {"memory_access_time_s": 0.002})
     compute = PerformanceModel.Result(0.005, {"mma_ops_time_s": 0.005, "compute_time_s": 0.005})
