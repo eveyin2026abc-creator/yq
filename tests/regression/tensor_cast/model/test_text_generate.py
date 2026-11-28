@@ -1688,17 +1688,6 @@ class TestTextGenerateNightly(TextGenerateTestMixin, unittest.TestCase):
 
     @parameterized.expand(
         [
-            ["baidu/ERNIE-4.5-300B-A47B-PT"],
-            [vendored_model_config_path("Qwen/Qwen3.5-397B-A17B")],
-            ["Qwen/Qwen3-235B-A22B"],
-            [vendored_model_config_path("Qwen/Qwen3-Next-80B-A3B-Instruct")],
-        ]
-    )
-    def test_gate_returns_precomputed_topk(self, model_id):
-        TestTextGenerate._run_test_gate_returns_precomputed_topk(self, model_id)
-
-    @parameterized.expand(
-        [
             [vendored_model_config_path("Qwen/Qwen3.5-397B-A17B")],
             [vendored_model_config_path("Qwen/Qwen3-Next-80B-A3B-Instruct")],
         ]
